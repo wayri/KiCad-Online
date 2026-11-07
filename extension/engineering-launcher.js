@@ -1,7 +1,7 @@
 /* Shared, bounded entry points for local engineering viewers. */
 ((root)=>{
  'use strict';
- const PAGES=new Set(['pdf-viewer.html','gerber-viewer.html','bom-viewer.html','calculator-viewer.html','analysis-viewer.html']);
+ const PAGES=new Set(['comparison-viewer.html','pdf-viewer.html','gerber-viewer.html','bom-viewer.html','calculator-viewer.html','analysis-viewer.html']);
  const path=value=>typeof value==='string'&&value.length<=1024&&!/[\\\x00-\x1f\x7f?#]/.test(value)&&!value.startsWith('/')&&!value.split('/').some(p=>!p||p==='.'||p==='..');
  function context(value={}){
   const result={};
@@ -52,7 +52,7 @@
   const make=(tag,text)=>{const n=d.createElement(tag);n.textContent=text;return n;},heading=make('header',''),title=make('h2','Engineering tools'),close=make('button','Close');
   close.type='button';close.onclick=()=>dialog.close();heading.className='bom-manager-heading';heading.append(title,close);
   const body=make('section','');body.className='bom-manager-controls';const status=make('p','');status.setAttribute('role','status');
-  for(const [label,page]of [['PDF viewer','pdf-viewer.html'],['Gerber viewer & analyzer','gerber-viewer.html'],['Import BoM / iBOM','bom-viewer.html'],['Engineering calculators','calculator-viewer.html']]){
+  for(const [label,page]of [['Compare designs / CSV BoMs','comparison-viewer.html'],['PDF viewer','pdf-viewer.html'],['Gerber viewer & analyzer','gerber-viewer.html'],['Import BoM / iBOM','bom-viewer.html'],['Engineering calculators','calculator-viewer.html']]){
    const button=make('button',label);button.type='button';button.onclick=()=>{try{const target={...source};if(page==='pdf-viewer.html'&&!/\.pdf$/i.test(target.file||'')||page==='gerber-viewer.html'&&!/\.(gbr|ger|gerber|gtl|gbl|gts|gbs|gto|gbo|gtp|gbp|gko|gm\d+|g\d+|drl|xln)$/i.test(target.file||'')||page==='bom-viewer.html'&&!/\.(json|csv|tsv|html?)$/i.test(target.file||''))delete target.file;open(page,target);dialog.close();}catch(e){status.textContent=e.message;}};body.append(button);
   }
   body.append(make('p','For simulation plots and overlays, select a saved results report in the project tree. Supported reports retain their source revision.'));

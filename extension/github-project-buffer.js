@@ -107,23 +107,36 @@
     const result=await download(Math.min(limit,(binary?32:64)*1024*1024),own,()=>readSession(repository,sha,binary?'asset':'file',path,Math.min(limit,(binary?32:64)*1024*1024),own));if(binary){if(result===null)return null;if(result?.sha?.toLowerCase()!==sha.toLowerCase()||typeof result.base64!=='string'||result.base64.length>Math.ceil(limit/3)*4||! /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(result.base64))throw Error('Invalid GitHub private asset response.');const decoded=root.atob?Uint8Array.from(root.atob(result.base64),c=>c.charCodeAt(0)):new Uint8Array(Buffer.from(result.base64,'base64'));if(decoded.byteLength>limit)throw Error('GitHub file exceeds its byte limit.');if(foregroundOnly)put(key,decoded,decoded.byteLength,IMMUTABLE_TTL,own);return decoded;}if(result===null)return null;if(result?.sha?.toLowerCase()!==sha.toLowerCase()||typeof result?.content!=='string'||encoder.encode(result.content).length>limit)throw Error('Invalid GitHub private file response.');const text=reader().rawText(result.content,path);if(foregroundOnly){const bytes=encoder.encode(text);put(key,bytes,bytes.byteLength,IMMUTABLE_TTL,own);}return text;
    },signal);
   }
+  const historyParser=()=>root.KiCadGitHubWebsiteHistory||(typeof require==='function'?require('./github-website-history.js'):null);
+  async function branches(repository,ref='HEAD',signal){
+   scope(repository,ref);await assertNetwork();if(signal?.aborted)throw cancelled();const key=JSON.stringify(['branches',repository]),cached=get(key);if(cached)return clone(cached);
+   return clone(await shared(key,async own=>{const value=await download(8*1024*1024,own,()=>readSession(repository,ref,'branches','',8*1024*1024,own));if(!value)throw sessionRequired();return metadata(key,historyParser().validateBranches(value,repository),MUTABLE_TTL,own);},signal));
+  }
+  async function commitParents(repository,sha,signal){
+   const key=JSON.stringify(['commit-parents',repository,sha]),cached=get(key);if(cached)return clone(cached);
+   return shared(key,async own=>{const value=await download(8*1024*1024,own,()=>readSession(repository,sha,'commit','',8*1024*1024,own));if(!value)throw sessionRequired();return metadata(key,historyParser().validateCommit(value,repository,sha),IMMUTABLE_TTL,own);},signal);
+  }
   async function history(repository,ref='HEAD',signal){
    scope(repository,ref);await assertNetwork();if(signal?.aborted)throw cancelled();
    const key=JSON.stringify(['history',repository,ref]),cached=get(key);if(cached)return clone(cached);
    return clone(await shared(key,async own=>{
-    const parser=root.KiCadGitHubWebsiteHistory||(typeof require==='function'?require('./github-website-history.js'):null);if(!parser)throw Error('Reload the extension to enable website commit history.');
-    const url='https://github.com/'+repository+'/commits/'+encodeURIComponent(ref)+'.atom',limit=parser.MAX_BYTES;
-    let content=foregroundOnly?null:await download(limit,own,async()=>{
-     let response;try{response=await fetcher(url,{credentials:'omit',redirect:'error',cache:'no-store',signal:own});}catch(error){if(own.aborted)throw cancelled();return null;}
-     if(!response.ok){await response.body?.cancel();return null;}if(response.url&&response.url!==url)throw Error('GitHub commit feed returned a different source.');
-     const type=response.headers?.get('content-type')||'';if(type&&!/atom|xml/i.test(type)){await response.body?.cancel();return null;}return decoder.decode(await bytes(response,limit,own));
-    });
-    if(content===null){const result=await download(limit,own,()=>readSession(repository,ref,'history','',limit,own));if(foregroundOnly&&!result)throw sessionRequired();if(result?.ref!==ref||typeof result.content!=='string')throw Error('GitHub website history unavailable. Keep a signed-in repository tab open and refresh history.');content=result.content;}
-    return metadata(key,parser.parseAtom(content,{repository,ref}),SHA.test(ref)?IMMUTABLE_TTL:MUTABLE_TTL,own);
+    const parser=historyParser();if(!parser)throw Error('Reload the extension to enable website commit history.');
+    const result=await download(parser.MAX_BYTES,own,()=>readSession(repository,ref,'history','',parser.MAX_BYTES,own));if(!result)throw sessionRequired();if(result.ref!==ref||typeof result.content!=='string')throw Error('Invalid GitHub website history response.');
+    const history=parser.parseAtom(result.content,{repository,ref}),started=now();let cursor=0;
+    // Never infer edges from feed order. Three workers share the transport's
+    // queue and abort signal; only thirty immutable commit pages can be read.
+    await Promise.all(Array.from({length:Math.min(3,history.commits.length)},async()=>{
+     while(cursor<history.commits.length&&now()-started<15000){if(own.aborted)throw cancelled();const commit=history.commits[cursor++];commit.parentsKnown=false;
+      try{const detail=await commitParents(repository,commit.sha,own);commit.parents=detail.parents;commit.parentsKnown=true;}catch(error){if(own.aborted||/different|mismatch|Invalid|Conflicting/i.test(error.message))throw error;}
+     }
+    }));
+    for(const commit of history.commits)if(commit.parentsKnown!==true)commit.parentsKnown=false;
+    const unknown=history.commits.filter(commit=>!commit.parentsKnown).length;if(unknown)history.warnings.push('Parent links are unavailable for '+unknown+' commit(s); disconnected rows do not imply root commits.');
+    return metadata(key,history,unknown?MUTABLE_TTL:SHA.test(ref)?IMMUTABLE_TTL:MUTABLE_TTL,own);
    },signal));
   }
   function base64(data){let result='';for(let i=0;i<data.length;i+=32768)result+=String.fromCharCode(...data.subarray(i,i+32768));return root.btoa?root.btoa(result):Buffer.from(data).toString('base64');}
-  return {context,resolve,directory,inventory,modelInventory,history,file:(repository,sha,path,limit=8*1024*1024,signal)=>read(repository,sha,path,limit,signal,false),asset:async(repository,sha,path,limit=32*1024*1024,signal)=>{const data=await read(repository,sha,path,limit,signal,true);return data===null?null:{base64:base64(data)};},clear,dispose(){clear();disposed=true;},stats(){return {entries:cache.size,bytes:cacheBytes,inFlight:flights.size,activeDownloads,reservedBytes,queued:queue.length};}};
+  return {context,resolve,directory,inventory,modelInventory,history,branches,file:(repository,sha,path,limit=8*1024*1024,signal)=>read(repository,sha,path,limit,signal,false),asset:async(repository,sha,path,limit=32*1024*1024,signal)=>{const data=await read(repository,sha,path,limit,signal,true);return data===null?null:{base64:base64(data)};},clear,dispose(){clear();disposed=true;},stats(){return {entries:cache.size,bytes:cacheBytes,inFlight:flights.size,activeDownloads,reservedBytes,queued:queue.length};}};
  }
  root.KiCadGitHubProjectBuffer={create,normalizeInventory};if(typeof module==='object'&&module.exports)module.exports=root.KiCadGitHubProjectBuffer;
 })(globalThis);

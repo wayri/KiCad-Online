@@ -21,6 +21,7 @@
         if(message.page!==undefined&&message.page!==1)throw Error('The GitHub website feed does not expose verified pagination. Enter a commit SHA to open older history.');
         const result=await buffer.history(repository,ref,signal);return {...result,...(type==='revision-commits'?{file,snapshotRef:SHA.test(ref)?ref.toLowerCase():result.commits[0]?.sha}: {})};
       }
+      if(type==='repository-branches'||type==='revision-branches')return buffer.branches(repository,ref,signal);
       const snapshot=SHA.test(ref)?{sha:ref.toLowerCase()}:await buffer.resolve(repository,ref,signal);
       const sha=snapshot.sha;
       if(type==='revision-resolve')return {repository,ref,sha};
@@ -58,7 +59,6 @@
         }
         Object.defineProperty(sources,'recentSnapshotRef',{value:sha});return sources;
       }
-      if(type==='repository-branches'||type==='revision-branches')return {repository,branches:[],warnings:['API-free viewing: select a branch on GitHub or enter its name directly.']};
       const scopedModels=type==='repo-model-index'&&file!==undefined&&typeof buffer.modelInventory==='function',rawInventory=scopedModels?await buffer.modelInventory(repository,sha,file,signal):await buffer.inventory(repository,sha,signal,['project-inventory','drawing-files','project-search-files'].includes(type)?{directory:file.split('/').slice(0,-1).join('/'),scoped:true}:{}),normalize=root.KiCadGitHubProjectBuffer?.normalizeInventory||(typeof require==='function'?require('./github-project-buffer.js').normalizeInventory:null),inventory=normalize?normalize(rawInventory,sha):rawInventory,warnings=[...(inventory.warnings||[])];
       const files=inventory.files.filter(item=>paths.filePath(item.path));
       if(type==='project-inventory')return {files,snapshotRef:sha,warnings};

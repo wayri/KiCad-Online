@@ -1,0 +1,109 @@
+{
+  "payload": {
+    "branches": [
+      {
+        "isDefault": true,
+        "name": "main",
+        "path": "/wayri/KiCad-Online"
+      },
+      {
+        "isDefault": false,
+        "name": "codex/release-0-12-85",
+        "path": "/wayri/KiCad-Online/tree/codex/release-0-12-85"
+      },
+      {
+        "isDefault": false,
+        "name": "gh-pages",
+        "path": "/wayri/KiCad-Online/tree/gh-pages"
+      },
+      {
+        "isDefault": false,
+        "name": "codex/release-0-12-84",
+        "path": "/wayri/KiCad-Online/tree/codex/release-0-12-84"
+      },
+      {
+        "isDefault": false,
+        "name": "codex/release-0-12-83",
+        "path": "/wayri/KiCad-Online/tree/codex/release-0-12-83"
+      },
+      {
+        "isDefault": false,
+        "name": "codex/release-0-12-82",
+        "path": "/wayri/KiCad-Online/tree/codex/release-0-12-82"
+      },
+      {
+        "isDefault": false,
+        "name": "dependabot/github_actions/android-actions/setup-android-4.0.4",
+        "path": "/wayri/KiCad-Online/tree/dependabot/github_actions/android-actions/setup-android-4.0.4"
+      },
+      {
+        "isDefault": false,
+        "name": "dependabot/github_actions/actions/setup-java-6.1.0",
+        "path": "/wayri/KiCad-Online/tree/dependabot/github_actions/actions/setup-java-6.1.0"
+      },
+      {
+        "isDefault": false,
+        "name": "dependabot/github_actions/actions/upload-artifact-7.0.2",
+        "path": "/wayri/KiCad-Online/tree/dependabot/github_actions/actions/upload-artifact-7.0.2"
+      },
+      {
+        "isDefault": false,
+        "name": "dependabot/github_actions/actions/checkout-7.0.1",
+        "path": "/wayri/KiCad-Online/tree/dependabot/github_actions/actions/checkout-7.0.1"
+      },
+      {
+        "isDefault": false,
+        "name": "dependabot/github_actions/actions/setup-python-7.1.0",
+        "path": "/wayri/KiCad-Online/tree/dependabot/github_actions/actions/setup-python-7.1.0"
+      },
+      {
+        "isDefault": false,
+        "name": "codex/release-0.12.69",
+        "path": "/wayri/KiCad-Online/tree/codex/release-0.12.69"
+      },
+      {
+        "isDefault": false,
+        "name": "codex/full-net-3d",
+        "path": "/wayri/KiCad-Online/tree/codex/full-net-3d"
+      },
+      {
+        "isDefault": false,
+        "name": "work/vscode-marketplace-0.12.47",
+        "path": "/wayri/KiCad-Online/tree/work/vscode-marketplace-0.12.47"
+      },
+      {
+        "isDefault": false,
+        "name": "work/release-0.12.46",
+        "path": "/wayri/KiCad-Online/tree/work/release-0.12.46"
+      },
+      {
+        "isDefault": false,
+        "name": "work/release-0.12.45",
+        "path": "/wayri/KiCad-Online/tree/work/release-0.12.45"
+      },
+      {
+        "isDefault": false,
+        "name": "work/release-0.12.44",
+        "path": "/wayri/KiCad-Online/tree/work/release-0.12.44"
+      },
+      {
+        "isDefault": false,
+        "name": "work/release-0.12.43",
+        "path": "/wayri/KiCad-Online/tree/work/release-0.12.43"
+      },
+      {
+        "isDefault": false,
+        "name": "work/release-0.12.42",
+        "path": "/wayri/KiCad-Online/tree/work/release-0.12.42"
+      },
+      {
+        "isDefault": false,
+        "name": "work/release-0.12.37",
+        "path": "/wayri/KiCad-Online/tree/work/release-0.12.37"
+      }
+    ],
+    "current_page": 1,
+    "has_more": true,
+    "per_page": 20
+  }
+}

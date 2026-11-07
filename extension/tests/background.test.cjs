@@ -1,3 +1,4 @@
+global.KiCadGitHubWebsiteHistory=require('../github-website-history.js');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
@@ -146,6 +147,8 @@ function withWebsite(t,repository,sources={},options={}) {
  const entries=directory=>{if(options.entries)return options.entries(directory);const rows=new Map();for(const path of files.keys()){const prefix=directory?directory+'/':'';if(!path.startsWith(prefix))continue;const tail=path.slice(prefix.length),name=prefix+tail.split('/')[0];rows.set(name,{path:name,type:tail.includes('/')?'directory':'file'});}return [...rows.values()];};
  const websiteFetch=async(url,init)=>{raw.push({url,init});assert.equal(init.credentials,'same-origin');assert.equal(init.headers?.Authorization,undefined);assert.equal(new URL(url).hostname,'github.com');let response;
   if(url.includes('/commits/'))response=new Response(websiteFeed(repository,options.sha||sha('a')),{headers:{'content-type':'application/atom+xml'}});
+  else if(url.endsWith('/branches/all'))response=new Response('<script type="application/json">'+JSON.stringify({payload:{branches:[{name:'main',isDefault:true,path:'/'+repository}],current_page:1,has_more:true,per_page:20}})+'</script>',{headers:{'content-type':'text/html'}});
+  else if(url.includes('/commit/'))response=new Response('<script type="application/json">'+JSON.stringify({payload:{commitRoute:{commit:{oid:options.sha||sha('a'),url:'/'+repository+'/commit/'+(options.sha||sha('a')),parents:[]}}}})+'</script>',{headers:{'content-type':'text/html'}});
   else if(options.raw)response=await options.raw(url,init);
   else{const prefix='https://github.com/'+repository+'/raw/'+(options.sha||sha('a'))+'/';assert.ok(url.startsWith(prefix),url);const content=files.get(decodeURIComponent(url.slice(prefix.length)));response=content===undefined?new Response('',{status:404}):new Response(content);}
   Object.defineProperty(response,'url',{value:url});return response;
@@ -968,10 +971,11 @@ test('revision listings validate exact viewer senders, paths and repository befo
  assert.equal(urls.length,0);
 });
 test('file commit browsing reads actual website feed metadata without GitHub API',async t=>{
- const fixture=withWebsite(t,'fork/board',{'board.kicad_pcb':'(kicad_pcb)'});const reply=await message({type:'revision-commits',repository:'fork/board',ref:'feature/pcb',file:'board.kicad_pcb'});assert.equal(reply.ok,true,reply.error);assert.equal(reply.result.ref,'feature/pcb');assert.deepEqual(reply.result.commits.map(c=>c.sha),[sha('a')]);assert.match(reply.result.warnings.join(' '),/website feed/);assert.equal(fixture.raw.length,1);
+ const fixture=withWebsite(t,'fork/board',{'board.kicad_pcb':'(kicad_pcb)'});const reply=await message({type:'revision-commits',repository:'fork/board',ref:'feature/pcb',file:'board.kicad_pcb'});assert.equal(reply.ok,true,reply.error);assert.equal(reply.result.ref,'feature/pcb');assert.deepEqual(reply.result.commits.map(c=>c.sha),[sha('a')]);assert.match(reply.result.warnings.join(' '),/website feed/);assert.equal(fixture.raw.length,2);
+ assert.equal(reply.result.commits[0].parentsKnown,true);assert.deepEqual(reply.result.commits[0].parents,[]);
 });
-test('branch browsing explains manual selection without token or API requests',async t=>{
- const fixture=withWebsite(t,'owner/board',{'board.kicad_pcb':'(kicad_pcb)'});const reply=await message({type:'revision-branches',repository:'owner/board',ref:'main',file:'board.kicad_pcb'});assert.equal(reply.ok,true,reply.error);assert.deepEqual(reply.result.branches,[]);assert.match(reply.result.warnings.join(' '),/API-free/);assert.equal(fixture.raw.length,0);assert.ok(fixture.session.every(r=>!r.token&&!r.Authorization));
+test('branch browsing reads website names without token or API requests',async t=>{
+ const fixture=withWebsite(t,'owner/board',{'board.kicad_pcb':'(kicad_pcb)'});const reply=await message({type:'revision-branches',repository:'owner/board',ref:'main',file:'board.kicad_pcb'});assert.equal(reply.ok,true,reply.error);assert.deepEqual(reply.result.branches,[{name:'main',isDefault:true}]);assert.match(reply.result.warnings.join(' '),/branch window/);assert.equal(fixture.raw.length,1);assert.ok(fixture.session.every(r=>!r.token&&!r.Authorization));
 });
 test('revision endpoints reject malformed website snapshot identities',async t=>{
  withWebsite(t,'owner/board',{}, {readSession:async()=>({ok:true,result:{sha:'invalid',items:[]}}),sha:'invalid'});for(const type of ['revision-resolve','revision-commits']){const reply=await message({type,repository:'owner/board',ref:'main',file:'board.kicad_pcb'});assert.equal(reply.ok,false);assert.match(reply.error,/session|snapshot|valid commits|website history/i);}
@@ -1139,7 +1143,7 @@ test('repository directory browsing walks immutable trees and pages full-path ch
  const sources=Object.fromEntries(Array.from({length:150},(_,i)=>['models/part'+String(i).padStart(3,'0')+'.step','STEP']));const fixture=withWebsite(t,'owner/board',sources);const reply=await message({type:'repository-tree',repository:'owner/board',ref:sha('a'),directory:'models',page:2});assert.equal(reply.ok,true,reply.error);assert.equal(reply.result.entries.length,50);assert.equal(reply.result.entries[0].path,'models/part100.step');assert.equal(reply.result.hasMore,false);assert.equal(reply.result.directory,'models');assert.equal(fixture.raw.length,0);assert.ok(fixture.session.every(x=>x.ref===sha('a')));
 });
 test('website repository history returns real commit fields and rejects unverified pagination',async t=>{
- const fixture=withWebsite(t,'fork/board',{'board.kicad_pcb':'(kicad_pcb)'});const request={type:'repository-history',repository:'fork/board',ref:'main'},reply=await message(request);assert.equal(reply.ok,true,reply.error);assert.equal(reply.result.commits[0].message,'Saved revision');assert.equal(reply.result.nextPage,null);assert.equal(fixture.raw.length,1);const next=await message({...request,page:2});assert.equal(next.ok,false);assert.match(next.error,/pagination/);assert.equal(fixture.raw.length,1);
+ const fixture=withWebsite(t,'fork/board',{'board.kicad_pcb':'(kicad_pcb)'});const request={type:'repository-history',repository:'fork/board',ref:'main'},reply=await message(request);assert.equal(reply.ok,true,reply.error);assert.equal(reply.result.commits[0].message,'Saved revision');assert.equal(reply.result.nextPage,null);assert.equal(fixture.raw.length,2);const next=await message({...request,page:2});assert.equal(next.ok,false);assert.match(next.error,/pagination/);assert.equal(fixture.raw.length,2);
 });
 test('repository browser validates viewer, scope, directory and paging before requests',async(t)=>{
  let reads=0;withFetch(t,async()=>{reads++;return json({});});for(const type of ['repository-tree','repository-history']){for(const sender of [options,githubTab(9,'/owner/board'),{id:'test-id',url:extensionOrigin+'pcb-viewer.html/evil'}])assert.notEqual((await message({type,repository:'owner/board',ref:sha('a')},sender)).ok,true);for(const change of [{repository:'../repo'},{ref:'bad\n'},{page:0},{page:101},{page:'2'},{directory:'../outside'}]){if(type==='repository-history'&&change.directory)continue;assert.equal((await message({type,repository:'owner/board',ref:sha('a'),...change})).ok,false);}}assert.equal(reads,0);
@@ -1149,7 +1153,7 @@ test('repository browser rejects mismatched website trees and never invents API 
 });
 
 test('repository branch metadata works without a drawing file and retains sender validation',async t=>{
- const fixture=withWebsite(t,'owner/board',{});const request={type:'repository-branches',repository:'owner/board',ref:sha('a')};const reply=await message(request);assert.equal(reply.ok,true,reply.error);assert.deepEqual(reply.result.branches,[]);assert.match(reply.result.warnings.join(' '),/API-free/);assert.equal((await message({...request,repository:'../bad'})).ok,false);assert.equal((await message(request,options)).ok,false);assert.equal(fixture.session.length+fixture.raw.length,0);
+ const fixture=withWebsite(t,'owner/board',{});const request={type:'repository-branches',repository:'owner/board',ref:sha('a')};const reply=await message(request);assert.equal(reply.ok,true,reply.error);assert.deepEqual(reply.result.branches,[{name:'main',isDefault:true}]);assert.match(reply.result.warnings.join(' '),/branch window/);assert.equal((await message({...request,repository:'../bad'})).ok,false);assert.equal((await message(request,options)).ok,false);assert.equal(fixture.session.length+fixture.raw.length,2);
 });
 const nextTurn=()=>new Promise(resolve=>setImmediate(resolve));
 test('Stop cancels only the exact viewer subscriber while a shared website read still serves another window',async t=>{

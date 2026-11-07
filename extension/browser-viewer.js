@@ -406,6 +406,7 @@
       };
       responsiveMode(); addEventListener("resize", responsiveMode);
     } else setMode("head");
+    if(!globalThis.KiCadVSCodeContext&&!globalThis.KiCadAndroidRuntime)control("Unified compare",null,()=>{const p=new URLSearchParams({repository:request.repository,headRepository:request.headRepository,provider,host:providerContext.host||'https://github.com',head:request.head,file:request.file,...(request.base?{base:request.base}:{}),...(request.oldFile?{oldFile:request.oldFile}:{})});globalThis.open(chrome.runtime.getURL('comparison-viewer.html')+'?'+p,'_blank','noopener,noreferrer');});
     control("Fit drawings", null, () => sendCommand("fit-drawing"));
     control("Full sheets", null, () => sendCommand("fit-page"));
     $("changeSearch").addEventListener("input", renderChanges);

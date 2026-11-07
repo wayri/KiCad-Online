@@ -13,6 +13,15 @@ The browser and VS Code editions support Windows, Linux and macOS. Ordinary
 viewing does not require KiCad, Python or a rendering server. No standalone
 desktop installer or Google Play installation is included in this preview.
 
+## Local release candidate
+
+The unpublished 0.12.91 candidate is prepared locally as
+`kicad-visual-review-chrome-edge-brave-opera-vivaldi-chromium-0.12.91.zip`,
+`kicad-visual-review-firefox-0.12.91.zip` and
+`kicad-visual-review-vscode-0.12.91.vsix`, with Android 1.93. These files have
+not been uploaded to the stores or GitHub. Use the published links above for
+public downloads. Candidate installation uses the same manual steps below.
+
 ## Choose your platform
 
 | Platform | Recommended route | Other options |

@@ -433,7 +433,7 @@
       ($('sheetHome')?.parentElement||$('frameControls')).append(toggle);back.onclick=close;fitAll.onclick=fitOverview;
       const resizeOverview=()=>{if(opened&&overviewFitted)requestAnimationFrame(()=>{if(opened&&overviewFitted)fitOverview();});};globalThis.addEventListener?.('resize',resizeOverview);
       sheetOverview={setTerminalNumbers(visible){if(overviewView){overviewView.showTerminalNumbers=Boolean(visible);overviewView.draw();}},open,close,isOpen:()=>opened,toggle:()=>opened?close():open(),refreshTree:renderMiniature,refresh(){renderMiniature();if(opened)return rebuild();},dispose(){globalThis.removeEventListener?.('resize',resizeOverview);close();$('unselect').removeEventListener('click',clearOverviewSelection);$('clearHighlights').removeEventListener('click',clearOverviewSelection);gallery.remove();toggle.remove();miniature.remove();miniShow.remove();}};globalThis.KiCadSheetOverview=sheetOverview;
-      addEventListener('keydown',event=>{if(event.key==='Escape'&&opened){event.preventDefault();close();}});
+    addEventListener('keydown',event=>{if(event.key==='Escape'&&opened){event.preventDefault();close();}});
     }
 
     $('frameControls').hidden=false;label('fitDrawing',pcb?'Fit board':'Fit drawing');
@@ -549,6 +549,8 @@
       if(msg.command==='open-sheet'){workspace.followSheet?.(msg.file);return;}
       if(msg.command==='refresh-comments'){workspace.refreshComments?.();return;}
       if(msg.command==='highlight-related'){related(msg.selection);return;}
+      if(msg.command==='comparison-highlight'){if(msg.file===currentFile()&&Array.isArray(msg.uuids)&&msg.uuids.length<=200&&msg.uuids.every(v=>typeof v==='string'&&v.length<=128)&&(!msg.focusUuid||typeof msg.focusUuid==='string'&&msg.focusUuid.length<=128))workspace.highlightComparison?.(msg.file,msg.uuids,msg.focusUuid);return;}
+      if(msg.command==='fit-drawing'&&scene){scene.fit?.();return;}
       if(scene)return;
 
       if(msg.command==='fit-drawing')fit('drawing');else if(msg.command==='fit-page')fit('page');else if(msg.command==='focus')focus(msg.position);else if(msg.command==='report-view')report(true);
@@ -572,6 +574,7 @@
     if(params.get('view')==='3d'&&pcb&&!$('mode3d').disabled)$('mode3d').click();
     addEventListener('kicad-review:search-result',event=>{if(globalThis.KiCadVSCodeContext&&event.detail)workspace.openWorkspaceSearchResult?.(event.detail).catch(error=>{label('reviewNotice',error.message);$('reviewNotice').hidden=false;});});
     globalThis.KiCadVSCodeBridge?.workspaceReady?.();
+    parent.postMessage({type:'kicad-review:comparison-ready',file:currentFile(),ref},ownOrigin);
     if(params.has('focusX')&&params.has('focusY'))focus({x:Number(params.get('focusX')),y:Number(params.get('focusY'))});
 
   }

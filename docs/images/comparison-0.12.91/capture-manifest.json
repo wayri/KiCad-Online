@@ -1,0 +1,57 @@
+{
+  "version": "0.12.91",
+  "unpublished": true,
+  "captures": [
+    {
+      "file": "bom.jpg",
+      "sha256": "10132a5ab136c64dd012d0cf7b36885c31dc9f4a4e39a53a81093e5206a07ed4",
+      "kind": "production-viewer-local-import",
+      "controlledEdit": true
+    },
+    {
+      "file": "text.jpg",
+      "sha256": "eab25373e46687ac1d4d2811893ffe4ceec2268e2dda569ec6fe54d9479898db",
+      "kind": "production-viewer-local-import",
+      "controlledEdit": true
+    },
+    {
+      "file": "properties.jpg",
+      "sha256": "4eec7c9a694607ac0ecfc0e32bb771140a4b4582c68ec7aedfec354c65d702d0",
+      "kind": "production-viewer-local-import",
+      "controlledEdit": true
+    },
+    {
+      "file": "schematic.jpg",
+      "sha256": "7211e0681b0b3cd27504b02db2ed9404152546112d46027fba5a27e66053fea8",
+      "kind": "production-viewer-local-import",
+      "controlledEdit": true
+    },
+    {
+      "file": "layout.jpg",
+      "sha256": "b2efcc9f3ee3ec7f3772578d353364cec602674d2f6ea9a338a2d823591e9027",
+      "kind": "production-viewer-local-import",
+      "controlledEdit": true
+    },
+    {
+      "file": "3d.jpg",
+      "sha256": "f092d0c27a2e7fd377291dced81177156b619dc5e9540b08460e923ac40730e4",
+      "kind": "production-viewer-local-import",
+      "controlledEdit": true
+    },
+    {
+      "file": "git-tree.jpg",
+      "sha256": "5400e01ef2e356c7fb7bf00f6cd63eefa056be170951580a4d427dfa9408eee2",
+      "kind": "observed-public-metadata-replay",
+      "controlledEdit": false
+    }
+  ],
+  "scope": "Public retained PIC Programmer and public HP34401a iBOM-derived CSV, with labelled controlled value edits. PIC 3D has0linkedmodels/63parts and approximate bodies; not full STEP geometry. Graph is observed website metadata replay, not installed-extension acceptance.",
+  "checks": {
+    "csv": "R1 100k→110k;1modified",
+    "schematic": "C1 100µF→110µF-DEMO;1modified",
+    "pcb": "C1 100µF→100µF-DEMO;1modified",
+    "multiDomain": "3modified;0added;0removed",
+    "highlights": "Eachlayout/schematic/3D pane reports1object;layouttoggleoff reports0",
+    "git": "Observed20branches;d5791b0→f66c465verified;uncapturedparentsunknown"
+  }
+}

@@ -8,7 +8,7 @@ View schematics, PCB layouts and 3D models, follow connections across a project,
 
 KiCad Online is an independent viewer and review tool, formerly Pocket KiView / KiCad Visual Review. It is not affiliated with or endorsed by the KiCad project.
 
-[User guide](USER-GUIDE.md) · [Documentation](docs/README.md) · [Install](docs/INSTALL.md) · [Release notes](https://github.com/wayri/KiCad-Online/releases) · [Report an issue](https://github.com/wayri/KiCad-Online/issues)
+[Comparison guide](docs/COMPARISON.md) · [User guide](USER-GUIDE.md) · [Documentation](docs/README.md) · [Install](docs/INSTALL.md) · [Release notes](https://github.com/wayri/KiCad-Online/releases) · [Report an issue](https://github.com/wayri/KiCad-Online/issues)
 
 [![CI](https://github.com/wayri/KiCad-Online/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/wayri/KiCad-Online/actions/workflows/ci.yml)
 [![Release asset downloads](https://img.shields.io/github/downloads/wayri/KiCad-Online/total?label=release%20downloads&color=2ea44f)](docs/DOWNLOAD-STATS.md)

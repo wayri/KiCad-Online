@@ -8,6 +8,18 @@ test('history feed stays on exact repository website with no API and supports ex
  assert.deepEqual(await api.read({repository:repo,ref:'feature/board',action:'history'}),{ref:'feature/board',content:'<feed/>'});assert.equal(called,1);
  await assert.rejects(api.read({repository:'foreign/repo',ref:sha,action:'history'}),/tab/);assert.equal(called,1);
 });
+test('branch and commit metadata use exact website URLs, strip session fields and forbid redirects',async()=>{
+ const repository='wayri/KiCad-Online',branches=require('./fixtures/github-history/github-all-branches-observed.json'),commit=require('./fixtures/github-history/github-commit-observed.json'),ref=commit.payload.commitRoute.commit.oid,calls=[];
+ const api=create({location:{href:'https://github.com/'+repository},fetch:async(url,init)=>{calls.push(url);assert.equal(init.credentials,'same-origin');assert.equal(init.redirect,'error');assert.equal(init.headers,undefined);const value=url.endsWith('/branches/all')?branches:commit;return response('<script type="application/json">'+JSON.stringify({...value,csrf_tokens:{secret:'must-not-leave-tab'},currentUser:{login:'private'}})+'</script>',url,'text/html');}});
+ const listing=await api.read({repository,ref:'main',action:'branches'}),detail=await api.read({repository,ref,action:'commit'});assert.equal(listing.branches.length,20);assert.deepEqual(detail.parents,commit.payload.commitRoute.commit.parents);assert.equal(JSON.stringify([listing,detail]).includes('must-not-leave-tab'),false);assert.deepEqual(calls,['https://github.com/'+repository+'/branches/all','https://github.com/'+repository+'/commit/'+ref]);
+ for(const message of [{repository:'foreign/repo',ref,action:'commit'},{repository,ref:'main',action:'commit'},{repository,ref,action:'commit',path:'other'}])await assert.rejects(api.read(message));assert.equal(calls.length,2);
+ for(const target of ['https://github.com/login','https://github.com/foreign/repo/commit/'+ref]){const wrong=create({location:{href:'https://github.com/'+repository},fetch:async()=>response('html',target,'text/html')});await assert.rejects(wrong.read({repository,ref,action:'commit'}),/different/);}
+});
+test('commit metadata rejects oversized responses and Stop cancels a stalled body',async()=>{
+ const make=fetch=>create({location:{href:'https://github.com/'+repo},fetch});
+ const huge=make(async url=>{const value=response('',url,'text/html');value.headers.set('content-length',String(8*1024*1024+1));return value;});await assert.rejects(huge.read({repository:repo,ref:sha,action:'commit'}),/size limit/);
+ const controller=new AbortController();let cancelled=0;const stalled=create({location:{href:'https://github.com/'+repo},signal:controller.signal,fetch:async url=>response(new ReadableStream({cancel(){cancelled++;}}),url,'text/html')});const pending=stalled.read({repository:repo,ref:sha,action:'commit'});await new Promise(resolve=>setImmediate(resolve));controller.abort();await assert.rejects(pending,/cancelled/);assert.equal(cancelled,1);
+});
 test('session reads stay in the repository tab, pin branch revisions and strip page metadata',async()=>{
  const calls=[],api=create({location:{href:'https://github.com/owner/private/blob/feature/board/main.kicad_pcb'},parseHTML:()=>tree(),fetch:async(url,init)=>{calls.push({url,init});return response('html',url);}});
  const result=await api.read({repository:repo,ref:'feature/board',action:'resolve'});

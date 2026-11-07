@@ -106,8 +106,9 @@
       const {repository,ref,action,path='',limit=8*1024*1024}=message;scope(repository,ref);
       const here=new URL(location.href);
       if(here.origin!=='https://github.com'||here.pathname.split('/').slice(1,3).join('/').toLowerCase()!==repository.toLowerCase())throw Error('A signed-in tab for this repository must remain open.');
-      if(!['resolve','directory','file','asset','history','context'].includes(action)||!safePath(path,true))throw Error('Unsupported GitHub session read.');
-      if(!['resolve','history','context'].includes(action)&&!SHA.test(ref))throw Error('GitHub session reads require a pinned commit.');
+      if(!['resolve','directory','file','asset','history','branches','commit','context'].includes(action)||!safePath(path,true))throw Error('Unsupported GitHub session read.');
+      if(!['resolve','history','branches','context'].includes(action)&&!SHA.test(ref))throw Error('GitHub session reads require a pinned commit.');
+      if(['history','branches','commit'].includes(action)&&path!=='')throw Error('Invalid GitHub history path.');
       if(signal?.aborted)throw Error('Project loading cancelled.');
       const controller=new AbortController(),abort=()=>controller.abort(),timer=setTimeout(()=>controller.abort(),30000);
       signal?.addEventListener('abort',abort,{once:true});
@@ -130,6 +131,14 @@
             if(controller.signal.aborted)throw Error('Project loading cancelled.');return {repository,ref:hint.ref,directory:hint.directory,...result};};
           if(current===url&&!here.search){const result=await resolveContext(parseDocument());if(result)return result;}
           const objects=await pageObjects(url),result=await resolveContext(objects);return result||contextData(objects,repository,path);
+        }
+        if(action==='branches'||action==='commit'){
+          const parser=root.KiCadGitHubWebsiteHistory||(typeof require==='function'?require('./github-website-history.js'):null);if(!parser)throw Error('Reload the repository session to enable branch history.');
+          const url=`https://github.com/${repository}/${action==='branches'?'branches/all':'commit/'+ref}`,response=await fetcher(url,{credentials:'same-origin',redirect:'error',cache:'no-store',signal:controller.signal});
+          if(!response.ok)throw websiteError(response.status,await bounded(response,1024*1024,controller.signal));
+          if(response.url&&response.url!==url||!/text\/html/i.test(response.headers.get('content-type')||''))throw Error('GitHub website returned a different metadata location or format.');
+          const objects=htmlObjects(await bounded(response,8*1024*1024,controller.signal));
+          return action==='branches'?parser.parseBranches(objects,{repository}):parser.parseCommit(objects,{repository,ref});
         }
         if(action==='history'){
           const url=`https://github.com/${repository}/commits/${encodeURIComponent(ref)}.atom`,response=await fetcher(url,{credentials:'same-origin',redirect:'error',cache:'no-store',signal:controller.signal});

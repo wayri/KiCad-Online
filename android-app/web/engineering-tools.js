@@ -1,6 +1,6 @@
 /* Trusted packaged tools, available without an account or open drawing. */
 ((root)=>{'use strict';if(!root.document)return;
- const pages=new Set(['bom-viewer.html','calculator-viewer.html','gerber-viewer.html','pdf-viewer.html']);
+ const pages=new Set(['comparison-viewer.html','bom-viewer.html','calculator-viewer.html','gerber-viewer.html','pdf-viewer.html']);
  function init(){
   const d=root.document;
   const el=(tag,text)=>{const node=d.createElement(tag);if(text)node.textContent=text;return node;};
@@ -54,7 +54,7 @@
    const menu=d.querySelector('#appMenuDialog .android-sheet-content');
    for(const host of [welcome,menu])if(host){
     const actions=el('div');actions.className='android-welcome-actions';
-    actions.append(button('PDF viewer',()=>root.KiCadAndroid.openTools('pdf-viewer.html')),
+    actions.append(button('Compare designs / BoMs',()=>root.KiCadAndroid.openTools('comparison-viewer.html')),button('PDF viewer',()=>root.KiCadAndroid.openTools('pdf-viewer.html')),
      button('Gerber viewer & analyzer',()=>root.KiCadAndroid.openTools('gerber-viewer.html')),
      button('BoM & assembly',()=>root.KiCadAndroid.openTools('bom-viewer.html')),
      button('Engineering calculators',()=>root.KiCadAndroid.openTools('calculator-viewer.html')));

@@ -1,0 +1,69 @@
+{
+  "payload": {
+    "branches": {
+      "active": [
+        {
+          "isDefault": false,
+          "name": "codex/release-0-12-85",
+          "path": "/wayri/KiCad-Online/tree/codex/release-0-12-85"
+        },
+        {
+          "isDefault": false,
+          "name": "gh-pages",
+          "path": "/wayri/KiCad-Online/tree/gh-pages"
+        },
+        {
+          "isDefault": false,
+          "name": "codex/release-0-12-84",
+          "path": "/wayri/KiCad-Online/tree/codex/release-0-12-84"
+        },
+        {
+          "isDefault": false,
+          "name": "codex/release-0-12-83",
+          "path": "/wayri/KiCad-Online/tree/codex/release-0-12-83"
+        },
+        {
+          "isDefault": false,
+          "name": "codex/release-0-12-82",
+          "path": "/wayri/KiCad-Online/tree/codex/release-0-12-82"
+        }
+      ],
+      "default": {
+        "isDefault": true,
+        "name": "main",
+        "path": "/wayri/KiCad-Online"
+      },
+      "yours": [
+        {
+          "isDefault": false,
+          "name": "codex/release-0-12-85",
+          "path": "/wayri/KiCad-Online/tree/codex/release-0-12-85"
+        },
+        {
+          "isDefault": false,
+          "name": "gh-pages",
+          "path": "/wayri/KiCad-Online/tree/gh-pages"
+        },
+        {
+          "isDefault": false,
+          "name": "codex/release-0-12-84",
+          "path": "/wayri/KiCad-Online/tree/codex/release-0-12-84"
+        },
+        {
+          "isDefault": false,
+          "name": "codex/release-0-12-83",
+          "path": "/wayri/KiCad-Online/tree/codex/release-0-12-83"
+        },
+        {
+          "isDefault": false,
+          "name": "codex/release-0-12-82",
+          "path": "/wayri/KiCad-Online/tree/codex/release-0-12-82"
+        }
+      ]
+    },
+    "hasMore": {
+      "active": true,
+      "yours": true
+    }
+  }
+}
