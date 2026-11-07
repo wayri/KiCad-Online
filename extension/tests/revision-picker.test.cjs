@@ -7,8 +7,8 @@ test('comparison keeps fork/base identities, encoded paths and immutable revisio
  for(const [r,b,h] of [[request,'main',sha('b')],[request,sha('a'),'moving-branch'],[{...request,file:'../bad.kicad_pcb'},sha('a'),sha('b')],[{...request,repository:'../owner'},sha('a'),sha('b')],[{...request,pullNumber:9},sha('a'),sha('b')]])assert.throws(()=>comparisonQuery(r,b,h));
 });
 function harness(send,extra={}){
- const nodes=[],events={};const doc={defaultView:{innerWidth:1000,innerHeight:700},addEventListener(type,fn){events[type]=fn;},removeEventListener(type){delete events[type];},createElement(tag){const node={tag,ownerDocument:doc,style:{},children:[],listeners:{},value:'',textContent:'',append(...items){this.children.push(...items);},replaceChildren(...items){this.children=items;},setAttribute(key,value){this[key]=value;},addEventListener(key,fn){this.listeners[key]=fn;},remove(){this.removed=true;},get firstChild(){return this.children[0];}};nodes.push(node);return node;}};
- const holder=doc.createElement('div'),navigated=[];const picker=mount({holder,request,send,...extra,navigate:p=>navigated.push(p)});return {nodes,holder,navigated,picker,events};
+ const nodes=[],events={};const doc={defaultView:{innerWidth:1000,innerHeight:700},addEventListener(type,fn){events[type]=fn;},removeEventListener(type){delete events[type];},createElement(tag){const node={tag,ownerDocument:doc,style:{},dataset:{},children:[],listeners:{},value:'',textContent:'',append(...items){this.children.push(...items);},replaceChildren(...items){this.children=items;},setAttribute(key,value){this[key]=value;},addEventListener(key,fn){this.listeners[key]=fn;},showModal(){this.open=true;},close(){this.open=false;},remove(){this.removed=true;},get firstChild(){return this.children[0];}};nodes.push(node);return node;}};
+ doc.body=doc.createElement('body');const holder=doc.createElement('div'),navigated=[];const picker=mount({holder,request,send,...extra,navigate:p=>navigated.push(p)});return {nodes,holder,navigated,picker,events};
 }
 test('picker resolves each immutable source in its own repository before navigation',async()=>{
  const calls=[],h=harness(async message=>{calls.push(message);return {ok:true,result:{repository:message.repository,sha:message.repository==='owner/design'?sha('a'):sha('b')}};});
@@ -53,4 +53,63 @@ test('history popup stays inside short and narrow viewports and has explicit dis
  detail.open=true;h.events.pointerdown({target:{},composedPath:()=>[]});assert.equal(detail.open,false);
  detail.open=true;h.events.pointerdown({target:detail,composedPath:()=>[detail]});assert.equal(detail.open,true);
  h.picker.dispose();assert.equal(Object.keys(h.events).length,0);
+});
+
+test('main history action opens graph workspace with bound repository data and exact comparison refs',async()=>{
+ const previous=globalThis.KiCadHistoryTimeline,updates=[];let graph,closed=false;
+ globalThis.KiCadHistoryTimeline={mount(options){graph=options;return{update:value=>updates.push(value),dispose(){closed=true;}};}};
+ try{
+  const calls=[],pairs=[];
+  const h=harness(async m=>{calls.push(m);return{ok:true,result:m.type==='revision-branches'?{repository:m.repository,branches:[{name:'release/board',isDefault:true}],warnings:['Partial website branch window']}:{repository:m.repository,file:m.file,snapshotRef:sha('d'),commits:[{sha:sha('d'),parents:[sha('c')],parentsKnown:true,message:'feat: update regulator'}],warnings:[]}};},{getCurrentRef:()=>sha('d'),navigateComparison:p=>pairs.push(p)});
+  await h.picker.openGraph();
+  assert.equal(h.nodes.find(n=>n.tag==='dialog').open,true);
+  assert.deepEqual(calls.map(c=>c.type).sort(),['revision-branches','revision-commits']);
+  assert.ok(calls.every(c=>c.repository==='fork/design'&&c.file==='board.kicad_pcb'));
+  assert.equal(updates.at(-1).commits[0].parents[0],sha('c'));
+  assert.ok(h.nodes.some(n=>n.tag==='option'&&n.value==='release/board'));
+  graph.onCompare(sha('c'),sha('d'));
+  assert.equal(pairs[0].get('repository'),'fork/design');
+  assert.equal(pairs[0].get('base'),sha('c'));
+  assert.equal(pairs[0].get('head'),sha('d'));
+  h.picker.dispose();assert.equal(closed,true);graph.onCompare(sha('c'),sha('d'));assert.equal(pairs.length,1);
+ }finally{if(previous)globalThis.KiCadHistoryTimeline=previous;else delete globalThis.KiCadHistoryTimeline;}
+});
+test('graph branch selection resolves its exact name before reading parent history',async()=>{
+ const previous=globalThis.KiCadHistoryTimeline;globalThis.KiCadHistoryTimeline={mount(){return{update(){},dispose(){}};}};
+ try{
+  const calls=[],h=harness(async m=>{calls.push(m);return{ok:true,result:m.type==='revision-branches'?{repository:m.repository,branches:[{name:'hardware/rev-2'}]}:m.type==='revision-resolve'?{repository:m.repository,sha:sha('e')}:{repository:m.repository,file:m.file,snapshotRef:sha('e'),commits:[{sha:sha('e'),parentsKnown:false,message:'Update'}]}};});
+  await h.picker.openGraph();calls.length=0;const select=h.nodes.find(n=>n['aria-label']==='History branch');select.value='hardware/rev-2';await select.listeners.change();
+  assert.deepEqual(calls.map(c=>[c.type,c.ref]),[['revision-resolve','hardware/rev-2'],['revision-commits',sha('e')]]);
+  h.picker.dispose();
+ }finally{if(previous)globalThis.KiCadHistoryTimeline=previous;else delete globalThis.KiCadHistoryTimeline;}
+});
+test('unresolved branch names remain usable in manual comparison lists without invented SHAs',async()=>{
+ const h=harness(async m=>({ok:true,result:m.type==='revision-branches'?{repository:m.repository,branches:[{name:'topic/board'}]}:{repository:m.repository,file:m.file,snapshotRef:sha('a'),commits:[{sha:sha('a'),message:'Saved'}]}}));
+ await h.picker.populate();assert.ok(h.nodes.some(n=>n.tag==='option'&&n.value==='topic/board'&&n.textContent==='topic/board'));
+ h.picker.dispose();
+});
+
+test('dedicated History workspace stays inline, hides its old launcher and disposes cleanly',async()=>{
+ const previous=globalThis.KiCadHistoryTimeline;globalThis.KiCadHistoryTimeline={mount(){return{update(){},dispose(){}};}};
+ try{
+  const workspace={children:[],append(node){this.children.push(node);}};let opened=0,closed=0;
+  const h=harness(async m=>({ok:true,result:m.type==='revision-branches'?{repository:m.repository,branches:[]}:{repository:m.repository,file:m.file,snapshotRef:sha('d'),commits:[]}}),{workspaceHolder:workspace,getCurrentRef:()=>sha('d'),onOpenGraph:()=>opened++,onCloseGraph:()=>closed++});
+  await h.picker.openGraph();
+  assert.equal(h.nodes.some(n=>n.tag==='dialog'),false);
+  assert.equal(workspace.children[0].tag,'section');assert.equal(workspace.children[0].hidden,false);
+  assert.equal(h.nodes.find(n=>n.tag==='details').hidden,true);assert.equal(opened,1);
+  h.picker.closeGraph();assert.equal(workspace.children[0].hidden,true);assert.equal(closed,1);
+  h.picker.dispose();await h.picker.openGraph();h.picker.closeGraph();assert.equal(opened,1);assert.equal(closed,1);
+ }finally{if(previous)globalThis.KiCadHistoryTimeline=previous;else delete globalThis.KiCadHistoryTimeline;}
+});
+test('manual history branch entry appears only on request and labels the successfully resolved branch',async()=>{
+ const previous=globalThis.KiCadHistoryTimeline;globalThis.KiCadHistoryTimeline={mount(){return{update(){},dispose(){}};}};
+ try{
+  const h=harness(async m=>({ok:true,result:m.type==='revision-branches'?{repository:m.repository,branches:[]}:m.type==='revision-resolve'?{repository:m.repository,sha:sha('e')}:{repository:m.repository,file:m.file,snapshotRef:m.ref,commits:[{sha:m.ref,parentsKnown:false,message:'Saved'}]}}),{getCurrentRef:()=>sha('d')});
+  await h.picker.openGraph();const select=h.nodes.find(n=>n['aria-label']==='History branch'),input=h.nodes.find(n=>n['aria-label']==='History branch name or commit');
+  assert.equal(input.hidden,true);select.value=':manual';await select.listeners.change();assert.equal(input.hidden,false);
+  input.value='hardware/custom';await h.nodes.find(n=>n.textContent==='Browse branch').listeners.click();
+  assert.equal(input.hidden,true);assert.equal(select.value,'hardware/custom');assert.ok(select.children.some(n=>n.value==='hardware/custom'));
+  h.picker.dispose();
+ }finally{if(previous)globalThis.KiCadHistoryTimeline=previous;else delete globalThis.KiCadHistoryTimeline;}
 });

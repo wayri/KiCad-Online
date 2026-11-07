@@ -226,7 +226,7 @@ test('primary workspace tabs retain drawings while project settings are open', a
  const view=viewer({...parameters,base:''},()=>({ok:false,error:'unexpected read'}));
  const frame=view.get('headDrawing').children[0];
  const tab=name=>view.get('workspaceTabs').children.find(button=>button.getAttribute('aria-label')===name+' view');
- assert.deepEqual(view.get('workspaceTabs').children.map(button=>button.getAttribute('aria-label')),['Project view','Schematic view','Layout view','3D view','Draftsman view','Simulation view']);
+ assert.deepEqual(view.get('workspaceTabs').children.map(button=>button.getAttribute('aria-label')),['Project view','Schematic view','Layout view','3D view','Draftsman view','Simulation view','History view']);
  tab('Project').click();assert.equal(view.get('comparison').hidden,true);
  const project=view.get('projectWorkspace').children[0];assert.equal(new URL(project.src).searchParams.get('projectOnly'),'1');
  tab('Schematic').click();assert.equal(view.get('comparison').hidden,false);assert.equal(view.get('headDrawing').children[0],frame);
@@ -375,4 +375,23 @@ test('failed mutable revision opens a single error pane rather than stale Base a
  const view=viewer({repository:'wayri/board',head:'main',file:'board.kicad_pcb'},()=>({ok:false,error:'Website session unavailable.'}));
  assert.equal(view.get('basePanel').hidden,true);assert.equal(view.get('comparison').dataset.blob,'true');
  await tick();assert.equal(view.get('basePanel').hidden,true);assert.match(view.get('headDrawing').textContent,/could not be loaded/);assert.match(view.get('status').textContent,/Website session unavailable/);assert.doesNotMatch(view.get('headDrawing').textContent,/Loading/);
+});
+
+test('History is a top-level workspace tab and returning preserves the existing drawing frame',async()=>{
+ let picker;
+ const view=viewer({...parameters,base:''},()=>({ok:false,error:'No drawing lookup expected'}),{KiCadRevisionPicker:{mount(options){picker=options;return{openGraph(){options.onOpenGraph();return Promise.resolve();}};}}});
+ const tab=name=>view.get('workspaceTabs').children.find(b=>b.getAttribute('aria-label')===name+' view');
+ const frame=view.get('headDrawing').children[0];
+ tab('History').click();await tick();
+ assert.equal(picker.workspaceHolder,view.get('historyWorkspace'));
+ assert.equal(view.get('historyWorkspace').hidden,false);
+ assert.equal(view.get('comparison').hidden,true);
+ assert.equal(tab('History').getAttribute('aria-pressed'),'true');
+ assert.equal(view.calls.length,0);
+ tab('Schematic').click();await tick();
+ assert.equal(view.get('historyWorkspace').hidden,true);
+ assert.equal(view.get('headDrawing').children[0],frame);
+ tab('History').click();await tick();picker.onCloseGraph();
+ assert.equal(view.get('historyWorkspace').hidden,true);
+ assert.equal(tab('Schematic').getAttribute('aria-pressed'),'true');
 });

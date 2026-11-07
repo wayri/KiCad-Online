@@ -1,6 +1,6 @@
 # Compare designs and BoMs
 
-Available in the **0.12.91 local release candidate**. Published store versions may differ.
+This guide describes development source for the **unreleased 0.12.91 candidate**. Existing prepared package snapshots have not yet been refreshed with the History tab. Published store versions may differ.
 
 Open **Engineering tools → Compare designs / CSV BoMs**, **Compare BoMs** in the BoM viewer, or **Unified compare** in a repository drawing review.
 
@@ -22,7 +22,11 @@ Imports accept up to 128 files and 96 MiB per revision. Drawing highlighting sho
 
 ## Repository branches and history
 
-Open **Repository** to browse files, select a branch and inspect the commit graph. Graph lines follow verified parent IDs; missing ancestry is labelled unknown. Browser-session discovery reads a bounded website window: up to 20 branch entries and the initial 30 commits. Partial listings are identified explicitly. No branch tip or parent is inferred from ordering.
+Choose the **History** tab in the top bar, beside Schematic, Layout and 3D, to see the full commit timeline. Switching back retains the open drawing and its view. Search by message, author, branch or SHA; nonmatching cards remain dimmed so connections stay readable. Choose **Set base** and **Set head**, then **Compare selected**. **Swap** reverses the comparison direction. **View commit** opens a saved revision, while **Compare with current** uses the displayed pinned revision.
+
+The branch selector resolves a selected branch through the existing repository session before loading its history. Branch badges appear only when a tip SHA is verified. Commit cards show saved messages and metadata; they do not invent component counts, release events or design-analysis results.
+
+Open **Repository** to browse files alongside the repository graph. Graph lines follow verified parent IDs; missing ancestry is labelled unknown. Browser-session discovery reads a bounded website window: up to 20 branch entries and the initial 30 commits. Partial listings are identified explicitly. No branch tip or parent is inferred from ordering.
 
 ## Fresh comparison examples
 
@@ -38,6 +42,8 @@ These captures use retained public demo files with **controlled, labelled edits*
 
 ![Text comparison](images/comparison-0.12.91/text.jpg)
 
-The graph capture below is explicitly a **replay of observed public website metadata**, using the production graph UI. It is not an installed-extension end-to-end test. It shows the verified parent of commit `d5791b0` in `wayri/KiCad-Online`; uncaptured parent metadata remains unknown.
+The History capture below is a **replay of real public Git objects**, shown through the production top-bar History tab. It includes the two verified parents of merge `8c98e6e` in `wayri/KiCad-Online`. This is a UI acceptance check, not an installed-extension transport test or proof of historical design contents.
 
-![Observed public GitHub metadata in the branch graph](images/comparison-0.12.91/git-tree.jpg)
+![Dedicated History tab with a real recorded merge and selected revisions](images/history-0.12.91/history-desktop.jpg)
+
+[Mobile layout](images/history-0.12.91/history-mobile.jpg) · [Light theme](images/history-0.12.91/history-light.jpg) · [Capture provenance](images/history-0.12.91/capture-manifest.json)

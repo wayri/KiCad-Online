@@ -6,7 +6,7 @@ import zipfile
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
-LEGAL_FILES = {'unified-comparison.js', 'comparison-viewer.html', 'comparison-viewer.css', 'comparison-viewer.js', 'comparison-worker.js', 'terms.html', 'LICENSE.txt'}
+LEGAL_FILES = {'terms.html', 'LICENSE.txt'}
 MODEL_FILES = {'embedded-models.js', 'vendor/fzstd/fzstd.js', 'vendor/fzstd/LICENSE'}
 FILES = {'analysis-data.js', 'analysis-viewer.html', 'analysis-viewer.css', 'analysis-viewer.js', 'touch-canvas.js', 'merge-conflicts.js', 'conflict-viewer.html', 'conflict-viewer.js', 'conflict-viewer.css', 'conflict-properties.js', 'bom-manager.js', 'bom-manager.css', 'part-fields.js', 'BRAND-ASSETS.md', 'step-decoder.js', 'step-worker.js', 'vendor/occt/occt-import-js.js', 'vendor/occt/occt-import-js.wasm', 'vendor/occt/license.occt-import-js.txt', 'vendor/occt/license.occt.txt', 'vendor/occt/NOTICE.md', 'vendor/occt/OCCT_LGPL_EXCEPTION.txt', 'vendor/occt/EMSCRIPTEN-LICENSE.txt', 'gitlab-review-api.js', 'gitlab-hosts.js', 'gitlab-options.js', 'gitlab-provider.js', 'loading-ui.js', 'load-worker.js', 'bom-analytics.js', 'file-compatibility.js', 'html-preview.js', 'html-sandbox.html', 'html-sandbox.js', 'revision-picker.js', 'project-viewer.html', 'project-viewer.css', 'project-viewer.js', 'project-settings.js', 'project-settings-ui.js', 'gerber-renderer.js', 'manifest.json',  'browser-data.js', 'legacy-kicad.js', 'design-diff.js',
          'design-model.js', 'net-model.js', 'overview-connectivity.js', 'ratsnest.js', 'paired-review.js', 'project-search.js', 'rule-reports.js', 'review-navigation.js', 'ui-icons.js', 'worksheet.js', 'view-state.js', 'review-comments.js', 'comment-compose.js', 'review-workspace.js', 'github-review-api.js', 'mention-users.js', 'options.html', 'options.js', 'review-file-store.js', 'review-file-settings.js',
@@ -15,6 +15,7 @@ FILES = {'analysis-data.js', 'analysis-viewer.html', 'analysis-viewer.css', 'ana
          'schematic-renderer.js', 'pcb-renderer.js', 'vendor/spike-board3d.bundle.js',
          'vendor/SPIKE-ENGINE-NOTICE.md', 'vendor/THREE-LICENSE', 'credential-vault.js',
          'credential-vault-host.html', 'credential-vault-host.js', 'credential-vault-worker.js'}
+FILES.update({'history-timeline.js', 'history-timeline.css', 'unified-comparison.js', 'comparison-viewer.html', 'comparison-viewer.css', 'comparison-viewer.js', 'comparison-worker.js'})
 FILES.update({'repository-sessions.js','inline-project-view.js','net-quick-view.js','github-website-history.js','github-session-reader.js','gitlab-session-reader.js','parsing.js','repository-session-bridge.js'})
 FILES.update({'github-session-review.js','github-website-reviews.js','session-reviews.html','session-reviews.js','session-reviews.css'})
 FILES.update({'window-link.js','detached-view.js','github-project-buffer.js','github-project-view.js','workspace-search.js'})

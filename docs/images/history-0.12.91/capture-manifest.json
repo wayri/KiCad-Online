@@ -1,0 +1,45 @@
+{
+  "version": "0.12.91-development",
+  "replay": true,
+  "sourceRepository": "wayri/KiCad-Online",
+  "historySnapshot": "8c98e6e26bf65bc51d20a0da4e0c25fac951a8fa",
+  "verifiedParents": [
+    "90326d689e314649bb959aaac7a60a8659c0d210",
+    "35641b8b4a25514ab5359c679d1b7a43d003cd0d"
+  ],
+  "source": "Exact Git objects reachable from previously observed public main d5791b0495996e11772effd418fbff0c197fbccd.",
+  "ui": "Production browser-viewer.html History tab; no modal.",
+  "checks": [
+    "16 recorded real commits; real two-parent merge",
+    "Base/head selection and swap",
+    "Search kept47SVGpaths and16rows",
+    "Branch selection and manual branch resolution",
+    "Drawing frame retained while changing tabs",
+    "Global light/dark theme",
+    "400CSSpixel mobile layout; activeHistorytabvisible"
+  ],
+  "desktopCssPixels": {
+    "width": 1707,
+    "height": 960
+  },
+  "mobileCssWidth": 400,
+  "limitations": [
+    "Recorded metadata replay, not installed-extension transport verification",
+    "Local public example drawing is not evidence of pinned design content for historical commits",
+    "No build, package refresh, installation or publication in this update"
+  ],
+  "captures": [
+    {
+      "file": "history-desktop.jpg",
+      "sha256": "5c4f7fe48c4c4e665c91c39881da3d1dd62645b904ecdbdfc14c7e45cc5fa35c"
+    },
+    {
+      "file": "history-mobile.jpg",
+      "sha256": "993402273ab9a0b3a67017d309149dee3aa423f1559b14ca8cbf60484458aba0"
+    },
+    {
+      "file": "history-light.jpg",
+      "sha256": "21810cca2dca684b5bfbac528c82b2061724e3661c091e6269323674a219e988"
+    }
+  ]
+}
