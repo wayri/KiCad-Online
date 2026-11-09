@@ -2,7 +2,9 @@
 
 KiCad Online releases are available from GitHub and the platform stores. Stores review updates independently, so their installable versions can differ from the GitHub preview.
 
-| Channel | Recorded state on 6 November 2026 | Download |
+**Latest GitHub preview — 9 November 2026:** [KiCad Online 0.12.91 / Android 1.93](https://github.com/wayri/KiCad-Online/releases/tag/v0.12.91) is published with 23 assets. All remote sizes and SHA-256 digests match the audited packages from source `3094638994f0d349905da0a9958ef548f57a2943`. Store submissions and reviews were not changed.
+
+| Channel | Earlier store/channel snapshot: 6 November 2026 | Download |
 | --- | --- | --- |
 | GitHub | **0.12.90 / Android 1.92** preview published | [Release files and checksums](https://github.com/wayri/KiCad-Online/releases/tag/v0.12.90) |
 | Chrome Web Store | **0.12.90 pending review**; previously published 0.12.88 | [Chrome listing](https://chromewebstore.google.com/detail/klfdjlbngpoopegjmbajaidgodpmjaoc) |
@@ -21,6 +23,8 @@ There is no Google Play release; the AAB is unsigned. Altium beta is separate fr
 <summary>Release evidence and historical distribution records</summary>
 
 The following records preserve observations made during earlier releases. References to “current” or “pending” in these entries apply to their recorded dates.
+
+**0.12.91 / Android 1.93 published (9 November 2026):** [GitHub preview](https://github.com/wayri/KiCad-Online/releases/tag/v0.12.91), source/tag `3094638994f0d349905da0a9958ef548f57a2943`; all 23 remote assets (152,391,769 bytes) match local sizes and SHA-256 digests. Development-source gate: all 2,490 JavaScript checks passed. Clean tagged checkout: 2,489 passes plus one optional retained-public-model fixture skip; that check passed after supplying the exact retained fixture. Python: 149 passes and one Windows symbolic-link privilege skip. Android offline assemble/lint/bundle and exact 437-asset payload audit passed, with 19 lint warnings and no errors. APK is non-debuggable and uses the same development signer as Android 1.92; AAB is unsigned, not Play-ready. Includes the BoM tab, clearer sheet arrows, History/comparison, comment startup/readback and bounded stale-session recovery. KERO UI captures use locally buffered public source; installed-Chrome live KERO comment sync and private SSO acceptance remain unverified. No new store upload or phone installation is claimed. Altium beta excluded.
 
 **0.12.90 store submissions (6 November 2026):** VS Code Marketplace **0.12.90 is Public**, verification finished. Chrome **0.12.90 is Pending review**, automatic publication selected; release text updated and three authentic feature captures added (comment composer, public Marble layer-color cross-probe, top Draftsman controls), bringing the listing to five screenshots. Existing Chrome 0.12.88 had published before this update; no review was cancelled. Mozilla **0.12.90 is Awaiting Review** (version 6673742, file 5217835), zero validation errors/warnings, desktop and Android compatibility declared, readable source attached (View current). Store submission is not approval. Altium beta excluded; Android 1.92 remains the GitHub APK, with no phone installation or Google Play publication in this attempt.
 
