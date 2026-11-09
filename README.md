@@ -21,11 +21,11 @@ KiCad Online is an independent viewer and review tool, formerly Pocket KiView / 
 | --- | --- | --- |
 | Chrome / Chromium | [Chrome Web Store](https://chromewebstore.google.com/detail/klfdjlbngpoopegjmbajaidgodpmjaoc) | Desktop browser; [manual ZIP installation](docs/INSTALL.md#chrome--chromium--windows-linux-and-macos) is also available. Edge, Brave, Opera and Vivaldi compatibility varies. |
 | VS Code | [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=wayri.kicad-visual-review) | VS Code 1.95+ on Windows, Linux or macOS |
-| Firefox | [Mozilla Add-ons](https://addons.mozilla.org/en-US/firefox/addon/pocket-kiview-kicad-review/) | Desktop Firefox 140+ / Android 142+ declared for 0.12.90; [Firefox installation and mobile limits](docs/FIREFOX.md) |
-| Android app | [Download APK 1.92](https://github.com/wayri/KiCad-Online/releases/download/v0.12.90/pocket-kivi-android-phone-tablet-1.92-development.apk) | Android 8+; development-signed preview, manually installed and updated |
+| Firefox | [Mozilla Add-ons](https://addons.mozilla.org/en-US/firefox/addon/pocket-kiview-kicad-review/) | Desktop Firefox 140+ / Android 142+ declared for 0.12.91; [Firefox installation and mobile limits](docs/FIREFOX.md) |
+| Android app | [Download APK 1.93](https://github.com/wayri/KiCad-Online/releases/download/v0.12.91/pocket-kivi-android-phone-tablet-1.93-development.apk) | Android 8+; development-signed preview, manually installed and updated |
 | Safari development package | [Download 0.12.85](https://github.com/wayri/KiCad-Online/releases/download/v0.12.85/kicad-visual-review-safari-0.12.85.zip) | macOS, Xcode conversion and signing; [setup and limits](docs/SAFARI.md) |
 
-The [0.12.90 GitHub preview](https://github.com/wayri/KiCad-Online/releases/tag/v0.12.90) includes the Chromium ZIP, Firefox development ZIP, offline VSIX and matching Android 1.92 APK. [Verify downloads](docs/INSTALL.md#verify-downloads) with the release checksums. GitHub's automatic source archives are not installable packages.
+The [0.12.91 GitHub preview](https://github.com/wayri/KiCad-Online/releases/tag/v0.12.91) includes the Chromium ZIP, Firefox development ZIP, offline VSIX and matching Android 1.93 APK. [Verify downloads](docs/INSTALL.md#verify-downloads) with the release checksums. GitHub's automatic source archives are not installable packages.
 
 Stores approve updates separately. The [dated channel status](docs/RELEASE-STATUS.md) distinguishes available downloads from pending submissions. There is no Google Play or Apple App Store release. The experimental Altium viewer is distributed separately.
 

@@ -46,3 +46,11 @@ test('history time budget leaves remaining edges unknown and mismatched parent i
  const result=await api.history(repository,sha);assert.equal(details,3);assert.equal(result.commits[3].parentsKnown,false);assert.equal(result.commits[3].parents,undefined);api.dispose();
  const wrong=create({foregroundOnly:true,readSession:async(repo,ref,action)=>action==='history'?{ref,content:feed(entry())}:{repository:'foreign/repo',sha,parents:[],parentsKnown:true}});await assert.rejects(wrong.history(repository,sha),/Invalid/);assert.equal(wrong.stats().entries,0);wrong.dispose();
 });
+
+test('short commit input resolves only a verified full website commit with that prefix',()=>{
+ const repository='owner/board',sha='a'.repeat(40),value={payload:{commitRoute:{commit:{oid:sha,url:'/'+repository+'/commit/'+sha,parents:[]}}}};
+ assert.equal(parser.parseCommit([value],{repository,ref:sha.slice(0,8)}).sha,sha);
+ assert.equal(parser.validateCommit({repository,sha,parents:[],parentsKnown:true},repository,sha.slice(0,8)).sha,sha);
+ assert.throws(()=>parser.parseCommit([value],{repository,ref:'b'.repeat(8)}),/different/);
+ assert.throws(()=>parser.parseCommit([{payload:{commitRoute:{commit:{...value.payload.commitRoute.commit,parents:[sha]}}}}],{repository,ref:sha.slice(0,8)}),/parents/);
+});

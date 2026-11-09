@@ -210,6 +210,12 @@ Saved design fields remain read-only. Management drafts are scoped to the saved 
 
 The Chrome table capture uses the local loopback workspace; the VS Code capture uses the installed extension.
 
+### Find saved CSV BoMs
+
+Choose **BoM** in the workspace top bar. It ranks CSV/TSV files such as `BoM.csv`, the drawing name (`Encoder.csv`), and names containing the drawing name plus `BOM` or `bill-of-materials`. Nearby project files rank first; small spelling differences are included. Multiple matches require a choice. Use **Show all CSV / TSV files** for other filenames. Only the selected file is read and validated as a BoM.
+
+Filtering and assembly progress stay in the BoM workspace while you visit other tabs. **Back to project** returns to the drawing. **BoM from drawing** opens the saved schematic/PCB field table with drawing cross-selection. A standalone CSV has no board geometry unless its import format supplies it.
+
 ### Import an existing BoM
 
 In Android/browser project tools, open **BoM & assembly** and import supported KiCad/generic CSV or TSV, InteractiveHtmlBom JSON/recognized standalone HTML, or WayriCAD BoM Studio saved exports. Imported report HTML is extracted as bounded data; repository scripts are not executed. Keep references and saved board identity consistent to locate parts. An exported BoM Studio variant cannot recreate variants absent from its file. [Exact import formats and limits](docs/BOM-IMPORT.md).
@@ -496,13 +502,19 @@ Draftsman documents must still match their original source fingerprints.
 
 Use **Variant** beside the selection filter to switch saved assembly overlays. **Manage variants** remains in View options. No source geometry is changed by the selection.
 
-Open **History / compare → Browse commit history** to see the available website feed. **Load commit** opens that immutable revision; **Compare with current** compares it with the current saved revision, rather than whichever branch happens to be latest. Feed history is bounded to its available initial window. Use an exact SHA for older revisions.
+Open the **History** tab to see the branch timeline and available website commit feed. **Load commit** opens that immutable revision; **Compare with current** compares it with the current saved revision, rather than whichever branch happens to be latest. Feed history is bounded to its available initial window. Use an exact SHA for older revisions.
+
+In the development viewer, **Open revision** accepts a commit SHA, `#PR` number, or a same-repository GitHub PR/commit URL. **Browse pull requests** lists the initial website window. Opening the extension on a commit or PR page retains that revision context. PR heads are pinned to a saved commit; when website metadata does not supply a verified merge base, the viewer shows the head with a notice instead of a comparison. Fork heads require a separately authorized website session for the fork.
 
 Highlight a net, then choose **Net instances** for the list of loaded occurrences. Open up to four mini views, drag their headers, rotate clockwise/counterclockwise, fit or Locate. These windows reuse loaded saved geometry; they do not download the repository again.
 
 
+The development viewer loads its first conversation list and location annotations when the project opens in the foreground. Comments options include **Back to comments**. Browser-session discovery is bounded: older issues may need **Open by number**, and an ordinary issue comment has no drawing marker unless it includes saved location metadata.
+
 ### Probe navigation and keyboard controls
 
 Select a part, pin or net and press **P** to open a miniature probe (multiple matches show the occurrence list). A schematic probe has its own sheet dropdown plus **Previous / Next occurrence** for the selected net's connected sheets. Manually browsing another sheet leaves the main drawing unchanged. Probe options contain flip and 15-degree rotation; focus a probe and use **F**, **R / Shift+R**, or **[ / ]**. **P** opens a sibling probe from that probe, all owned by the main window.
+
+Use the **? help icon** in the drawing’s top toolbar to open Keyboard & navigation. Press **?** to toggle the guide; **Close**, **Esc**, or a click outside dismisses it.
 
 Main drawing shortcuts: **D** opens the selected component's datasheet (HTTP/HTTPS only), **C** starts a comment at the selected object, **P** opens a probe, **F** flips, **R / Shift+R** rotates clockwise/counterclockwise. **T** toggles drawing theme; **Shift+F** fits the drawing. Editable text fields retain normal typing. Main PCB **[ / ]** still cycles layers.

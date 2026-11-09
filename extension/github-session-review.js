@@ -87,13 +87,17 @@
    const {repository,action,number}=message;scope(repository,location);
    if(!['inspect','read','prepare','verify','commit','list'].includes(action)||action!=='list'&&!integer(number))throw problem('Unsupported website review operation.');
    if(action==='list'){
-    const doc=await page(repository,'/issues?q=is%3Aissue'),account=login(doc);if(!account)throw problem('Sign in to GitHub in the matching repository tab.');
+    const doc=await page(repository,'/issues?q=is%3Aissue'),account=login(doc);
     const threads=new Map();for(const item of objects(doc)){
      if(!integer(item.number)||typeof item.title!=='string'||item.url!=='https://github.com/'+repository+'/issues/'+item.number)continue;
      const state=String(item.state||'').toLowerCase();if(!['open','closed'].includes(state))continue;
      threads.set(item.number,{kind:'issue',number:item.number,title:item.title.slice(0,1024),url:item.url,state,updatedAt:item.updatedAt||item.createdAt||'',author:LOGIN.test(item.author?.login||'')?item.author.login:null});
     }
-    return {threads:[...threads.values()].slice(0,50),account,hasMore:false,transport:'website-session',warnings:['Website issue listing is limited to the current result page; use Open by number for other conversations.']};
+    // A website-owned, same-repository next link establishes partial coverage.
+    // The extension does not follow arbitrary pagination URLs or infer completeness
+    // from the number of issue records embedded in this page.
+    const hasMore=[...doc.querySelectorAll('a[rel~="next"],a.next_page')].slice(0,100).some(link=>{try{const href=new URL(link.getAttribute('href')||'', 'https://github.com/'+repository+'/issues');return href.origin==='https://github.com'&&!href.username&&!href.password&&href.pathname==='/'+repository+'/issues'&&/^[2-9][0-9]*$/.test(href.searchParams.get('page')||'');}catch{return false;}});
+    return {threads:[...threads.values()].slice(0,50),account,hasMore,pagination:'website-only',transport:'website-session',warnings:['Website issue listing is limited to the current result page'+(hasMore?'; more Issues are available on GitHub':'')+'; use Open by number for other conversations.']};
    }
    const exactPage=()=>{scope(repository,location);const url=new URL(location.href);if(url.pathname!=='/'+repository+'/issues/'+number||url.search)throw problem('Keep the selected issue open in the matching GitHub tab.');};
    if(action==='verify'){
@@ -123,8 +127,10 @@
     throw Object.assign(Error('Send was attempted, but GitHub has not confirmed the result. Inspect the issue before retrying; no automatic resend will occur.'),{code:'WEBSITE_REVIEW_UNCERTAIN'});
    }
    const doc=await page(repository,'/issues/'+number),account=login(doc);
+   // Reading public website snapshots does not require a connected account.
+   // Mutations still require a website login and their exact composer checks.
+   if(action==='read'){const thread=threadData(doc,repository,number);return {...thread,account,...(!account?{capabilities:{...thread.capabilities,create:false,reply:false}}:{})};}
    if(!account)throw problem('Sign in to GitHub in the matching repository tab.');
-   if(action==='read')return {...threadData(doc,repository,number),account};
    if(action==='prepare'){
     const thread=threadData(doc,repository,number);if(!thread.capabilities.create)throw problem('GitHub does not allow comments on this issue.');
     if(typeof message.body!=='string'||!message.body.trim()||new TextEncoder().encode(message.body).length>60000)throw problem('Invalid website review message.');

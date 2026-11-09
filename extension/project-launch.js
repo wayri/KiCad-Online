@@ -6,6 +6,12 @@
   const parse=root.KiCadGitHub||(typeof require==='function'?require('./parsing.js'):null);
   let url;try{url=new URL(value);}catch{return null;}
   if(url.protocol!=='https:'||url.username||url.password)return null;
+  const revision=parse.revisionRoute(url.href);
+  if(revision){
+   const source=url.origin+url.pathname.replace(/\/$/,'');
+   return{kind:'repository',source,repository:revision.repository,ref:revision.kind==='commit'?revision.ref:null,revisionKind:revision.kind,...(revision.kind==='pull'?{pullNumber:revision.number}:revision.number?{revisionPullNumber:revision.number}:{})};
+  }
+  if(url.origin==='https://github.com'&&/^\/[^/]+\/[^/]+\/(?:commit|pull)(?:\/|$)/.test(url.pathname))throw Error('This commit or pull request URL cannot be resolved safely. Open its commit or pull request overview, then click the extension again.');
   const options={gitlabHosts:[url.origin]},repo=parse.repositoryRoute(url.href,options),blob=parse.route(url.href,options);
   if(blob?.kind==='blob'){
    const info=parse.blobRequest(blob,hint);
@@ -25,7 +31,11 @@
  }
  function viewerURL(info,file,getURL){
   if(typeof file!=='string'||!root.KiCadGitHub?.filePath(file)||!(/(?:\.kicad_(?:pro|sch|pcb)|\.(?:sch|brd|pro))$/i.test(file)||fabrication(file)))throw Error('Invalid KiCad project path.');
-  const head=info.sha||info.head,params=new URLSearchParams({repository:info.repository,ref:head,head,file});
+  const project=/(?:\.kicad_pro|\.pro)$/i.test(file),head=info.sha||info.head,params=new URLSearchParams({repository:project?info.headRepository||info.repository:info.repository,ref:head,head,file});
+  if(info.pullNumber!==undefined){
+   const parse=root.KiCadGitHub||(typeof require==='function'?require('./parsing.js'):null),review=parse.viewerParams({repository:info.repository,headRepository:info.headRepository,file,head,base:info.base,pullNumber:info.pullNumber,pullRepository:info.pullRepository||info.repository});
+   for(const key of ['headRepository','base','pullNumber','pullRepository'])if(review.has(key))params.set(key,review.get(key));
+  }
   if(info.provider==='gitlab'){params.set('provider','gitlab');params.set('host',info.host||'https://gitlab.com');}
   return getURL(fabrication(file)?'gerber-viewer.html':/(?:\.kicad_pro|\.pro)$/i.test(file)?'project-viewer.html':'browser-viewer.html')+'?'+params;
  }

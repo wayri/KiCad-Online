@@ -16,7 +16,7 @@ FILES = {'analysis-data.js', 'analysis-viewer.html', 'analysis-viewer.css', 'ana
          'vendor/SPIKE-ENGINE-NOTICE.md', 'vendor/THREE-LICENSE', 'credential-vault.js',
          'credential-vault-host.html', 'credential-vault-host.js', 'credential-vault-worker.js'}
 FILES.update({'history-timeline.js', 'history-timeline.css', 'unified-comparison.js', 'comparison-viewer.html', 'comparison-viewer.css', 'comparison-viewer.js', 'comparison-worker.js'})
-FILES.update({'repository-sessions.js','inline-project-view.js','net-quick-view.js','github-website-history.js','github-session-reader.js','gitlab-session-reader.js','parsing.js','repository-session-bridge.js'})
+FILES.update({'repository-sessions.js','inline-project-view.js','net-quick-view.js','github-website-history.js','github-website-pulls.js','github-session-reader.js','gitlab-session-reader.js','parsing.js','repository-session-bridge.js'})
 FILES.update({'github-session-review.js','github-website-reviews.js','session-reviews.html','session-reviews.js','session-reviews.css'})
 FILES.update({'window-link.js','detached-view.js','github-project-buffer.js','github-project-view.js','workspace-search.js'})
 FILES.update({'fast-pi.js','fast-pi-worker.js','fast-pi-field.js','fast-pi-workspace.js','fast-pi-workspace.css'})
@@ -33,7 +33,7 @@ FILES.update(MODEL_FILES)
 FILES.update({'repository-explorer.js','repository-explorer.css','layer-colors.js'})
 FILES.update({'engineering-launcher.js', 'review-handoff.js', 'local-project.js', 'local-import.js', 'local-runtime.js', 'local-viewer.html', 'local-viewer.js', 'local-viewer.css', 'local-layout.js'})
 FILES.update({'analysis-spatial.js', 'analysis-overlay.js'})
-FILES.update({'variant-manager.js', 'bom-import.js', 'bom-viewer.html', 'bom-viewer.js','bom-workspace.js', 'bom-field-table.js', 'bom-viewer.css', 'calculator-tools.js', 'calculator-viewer.html', 'calculator-viewer.js', 'calculator-viewer.css', 'analysis-bom-link.js', 'gerber-analysis.js', 'gerber-viewer.html', 'gerber-viewer.js', 'gerber-viewer.css'})
+FILES.update({'variant-manager.js', 'bom-import.js', 'bom-browser.js', 'bom-browser.css', 'bom-viewer.html', 'bom-viewer.js','bom-workspace.js', 'bom-field-table.js', 'bom-viewer.css', 'calculator-tools.js', 'calculator-viewer.html', 'calculator-viewer.js', 'calculator-viewer.css', 'analysis-bom-link.js', 'gerber-analysis.js', 'gerber-viewer.html', 'gerber-viewer.js', 'gerber-viewer.css'})
 FILES.update({'calculator-catalog.js','calculator-visuals.js'})
 FILES.update({'tool-header.css','tool-header.js'})
 FILES.update({'startup-health.js','environment-diagnostics.js','environment-options.js'})

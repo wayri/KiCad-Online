@@ -22,3 +22,11 @@ test('launcher rejects credential-bearing locations and unsafe project paths',()
  for(const file of ['../board.kicad_pro','/board.kicad_pro','javascript:bad.kicad_pro','file.txt'])assert.throws(()=>launch.viewerURL({repository:'owner/repo',sha:'a'.repeat(40)},file,p=>p));
  const url=launch.viewerURL({repository:'owner/repo',sha:'a'.repeat(40)},'design/board.kicad_pro',p=>'chrome-extension://test/'+p);assert.equal(new URL(url).pathname,'/project-viewer.html');
 });
+
+test('direct commit and PR launches retain exact website revision context',()=>{
+ const sha='a'.repeat(40);for(const suffix of ['commit/'+sha,'pull/12/commits/'+sha]){const info=launch.context('https://github.com/owner/repo/'+suffix);assert.equal(info.ref,sha);assert.equal(info.revisionKind,'commit');}
+ for(const suffix of ['pull/12','pull/12/files','pull/12/checks']){const info=launch.context('https://github.com/owner/repo/'+suffix);assert.equal(info.ref,null);assert.equal(info.pullNumber,12);}
+ for(const suffix of ['commit/not-a-sha','pull/0','pull/12/other'])assert.throws(()=>launch.context('https://github.com/owner/repo/'+suffix),/cannot be resolved/);
+ const info={repository:'owner/repo',headRepository:'fork/board',sha,pullNumber:12,pullRepository:'owner/repo'};
+ for(const file of ['board.kicad_pro','board.kicad_pcb']){const u=new URL(launch.viewerURL(info,file,p=>'chrome-extension://test/'+p));assert.equal(u.searchParams.get('head'),sha);assert.equal(u.searchParams.get('pullNumber'),'12');assert.equal(u.searchParams.get('pullRepository'),'owner/repo');assert.equal(u.searchParams.get('headRepository'),'fork/board');assert.equal(u.searchParams.has('base'),false);}
+});

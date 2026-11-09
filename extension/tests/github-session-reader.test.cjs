@@ -176,3 +176,24 @@ test('classic nested context cancellation stops between branch resolution and fo
  const api=create({location:{href:'https://github.com/'+repo+'/tree/main/hw'},signal:controller.signal,parseDocument:()=>[{githubFileTableContext:{repository:repo,ref:'main',directory:'hw'}}],fetch:async url=>{calls++;return response('metadata',url);},parseHTML:()=>{controller.abort();return branch;}});
  await assert.rejects(api.read({repository:repo,ref:'HEAD',action:'context',path:'tree/main/hw'}),/cancelled/);assert.equal(calls,1);
 });
+
+test('nested HARDWARE folder uses its rendered file table when hydration contains only a route shell',async()=>{
+ const {documentObjects}=require('../github-session-reader.js'),repository='wayri/testrepo1',directory='HARDWARE/ESP32-PoE-hardware-revision-M2',href='https://github.com/'+repository+'/tree/main/'+directory;
+ const shell={payload:{codeViewTreeRoute:{path:directory,refInfo:{name:'main',currentOid:sha}}}};
+ const link=href=>({getAttribute:()=>href}),row=href=>({querySelectorAll:()=>[link(href)]});
+ function doc(pinned=false){return {querySelectorAll:s=>s.startsWith('script')?[{textContent:JSON.stringify(shell)}]:[],querySelector:s=>s.startsWith('table')?{textContent:'Files',querySelectorAll:()=>[row('/'+repository+'/blob/'+(pinned?sha:'main')+'/'+directory+'/ESP32-PoE_Rev_M2.kicad_pcb')]}:{textContent:'main'}};}
+ const calls=[],branch=tree();branch[0].payload.codeViewTreeRoute.refInfo.name='main';
+ const api=create({location:{href},parseDocument:()=>documentObjects(doc(),href),fetch:async(url,init)=>{calls.push(url);assert.equal(init.credentials,'same-origin');return response('metadata',url);},parseHTML:(_html,url)=>url.endsWith('/tree/main')?branch:documentObjects(doc(true),url)});
+ const result=await api.read({repository,ref:'HEAD',action:'context',path:'tree/main/'+directory});
+ assert.equal(result.ref,'main');assert.equal(result.sha,sha);assert.equal(result.directory,directory);
+ assert.deepEqual(result.items,[{path:directory+'/ESP32-PoE_Rev_M2.kicad_pcb',type:'file'}]);
+ assert.deepEqual(calls,['https://github.com/'+repository+'/tree/main','https://github.com/'+repository+'/tree/'+sha+'/'+directory]);
+});
+
+test('reader exposes fixed error categories for browser network and missing metadata failures',async()=>{
+ const request={repository:repo,ref:'HEAD',action:'context',path:'tree/main/HARDWARE'};
+ const missing=create({location:{href:'https://github.com/'+repo},parseDocument:()=>[],parseHTML:()=>[],fetch:async url=>response('empty page',url)});
+ await assert.rejects(missing.read(request),error=>error.code==='GITHUB_TREE_UNAVAILABLE');
+ const network=create({location:{href:'https://github.com/'+repo},parseDocument:()=>[],fetch:async()=>{throw TypeError('Failed to fetch: PRIVATE URL must stay in reader');}});
+ await assert.rejects(network.read(request),error=>error.code==='GITHUB_WEBSITE_NETWORK');
+});

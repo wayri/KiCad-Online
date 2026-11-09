@@ -291,9 +291,9 @@ body[data-workspace="true"] #projectButton,body[data-workspace="true"] #viewOppo
 .sheet-tree-miniature>header{display:flex;align-items:center;gap:4px;padding:4px 6px;font-size:11px}
 .sheet-tree-miniature>header strong{flex:1}.sheet-tree-miniature>header button{min-width:25px;min-height:24px;padding:0 5px;font-size:15px}
 .sheet-tree-miniature-body{max-height:180px;overflow:auto;padding:4px;overscroll-behavior:contain}
-.sheet-tree-miniature-body svg{display:block}.sheet-tree-miniature-link{fill:none;stroke:#58a89f;stroke-width:8}
+.sheet-tree-miniature-body svg{display:block;width:100%;min-width:0}.sheet-tree-miniature-link{fill:none;stroke:#58a89f;stroke-width:6;stroke-linejoin:round}
 .sheet-tree-miniature-node{cursor:pointer;outline:none}.sheet-tree-miniature-node rect{fill:var(--surface,#14212a);stroke:#728c9d;stroke-width:5}
-.sheet-tree-miniature-node text{fill:var(--text,#dde7ed);font:45px sans-serif;text-anchor:middle;dominant-baseline:middle;pointer-events:none}
+.sheet-tree-miniature-node text{fill:var(--text,#dde7ed);font:60px sans-serif;text-anchor:middle;dominant-baseline:middle;pointer-events:none}
 .sheet-tree-miniature-node.current rect{stroke:#63b7f2;stroke-width:10}.sheet-tree-miniature-node.highlighted rect{fill:#645320;stroke:#edc14b;stroke-width:10}.sheet-tree-miniature-node:focus rect,.sheet-tree-miniature-node:hover rect{stroke:#78dacb;stroke-width:12}
 .sheet-tree-miniature-node.highlighted text{fill:#fff3bc}
 #sheetOverview>header{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:4px 2px 10px}
@@ -393,3 +393,5 @@ body[data-workspace="true"] #projectButton,body[data-workspace="true"] #viewOppo
 .state-closed{border-left-color:#aa79d4!important}
 .review-state-badge{display:inline-flex;align-items:center;gap:3px;max-width:100%;padding:1px 6px;border:1px solid;border-radius:10px;font-size:10px;line-height:1.5;color:var(--text);white-space:nowrap}.note>.review-state-badge{margin:4px 0}
 .chat-catalog-actions #commentConversationState{min-width:0;width:90px;font-size:11px}.chat-thread-badge{flex-shrink:0}
+
+.navigation-help-dialog{color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:9px;width:min(640px,calc(100vw - 24px));max-height:calc(100dvh - 24px);padding:16px;overflow:auto;box-sizing:border-box}.navigation-help-dialog::backdrop{background:#0008}.navigation-help-dialog>header{display:flex;align-items:center;justify-content:space-between;gap:12px;position:sticky;top:-16px;background:var(--panel);padding:8px 0;z-index:1}.navigation-help-dialog h2{font-size:17px;margin:0}.navigation-help-dialog .shortcut-help{border:0;padding:0;font-size:13px}.navigation-help-dialog .shortcut-help p{line-height:1.7;overflow-wrap:anywhere}

@@ -19,13 +19,18 @@
    if(!reply?.ok)throw Error(reply?.accessIssue?[reply.accessIssue.title,reply.accessIssue.message,reply.accessIssue.action].join(' '):reply?.error||'Repository discovery failed. Reload the extension and try again.');
    const result=reply.result;
    if(!/^[a-f0-9]{40}$/i.test(result?.sha||'')||!Array.isArray(result.projects)||result.projects.length>100)throw Error('Invalid repository discovery response.');
-   details.textContent=context.source+' · '+(result.ref||context.ref||result.sha.slice(0,12));
-   const files=result.projects;for(const file of files)KiCadProjectLaunch.viewerURL({...context,sha:result.sha},file,p=>chrome.runtime.getURL(p));
-   if(files.length===1&&!result.truncated){location.replace(KiCadProjectLaunch.viewerURL({...context,sha:result.sha},files[0],p=>chrome.runtime.getURL(p)));return;}
+   if(result.headRepository!==undefined&&!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(result.headRepository)||result.base!==undefined&&!/^[a-f0-9]{40}$/i.test(result.base))throw Error('Invalid pull request discovery response.');
+   if(context.revisionKind==='commit'&&!result.sha.toLowerCase().startsWith(context.ref.toLowerCase()))throw Error('The discovered commit does not match the requested commit.');
+   if(context.revisionKind==='pull'&&(result.pullNumber!==context.pullNumber||result.pullRepository!==context.repository))throw Error('The discovered pull request does not match the requested pull request.');
+   const info={...context,sha:result.sha,...(result.headRepository?{headRepository:result.headRepository}:{}),...(result.base?{base:result.base}:{}),...(result.pullNumber?{pullNumber:result.pullNumber,pullRepository:result.pullRepository}:{})};
+   const warnings=Array.isArray(result.warnings)?result.warnings.slice(0,8).map(value=>String(value).slice(0,400)).join(' '):'';
+   details.textContent=context.source+' · '+(result.ref||context.ref||result.sha.slice(0,12))+(warnings?' · '+warnings:'');
+   const files=result.projects;for(const file of files)KiCadProjectLaunch.viewerURL(info,file,p=>chrome.runtime.getURL(p));
+   if(files.length===1&&!result.truncated){location.replace(KiCadProjectLaunch.viewerURL(info,files[0],p=>chrome.runtime.getURL(p)));return;}
    title.textContent=files.length?'Choose a KiCad project':result.truncated?'Project discovery incomplete':'No KiCad project detected';
    status.textContent=files.length?files.length+' projects or standalone drawings found.':result.truncated?'No KiCad project detected in the partial listing. Additional folders may contain projects.':'No KiCad project detected in this repository revision.';
    if(result.truncated){retry.hidden=false;details.textContent+=' · Partial listing; additional projects may exist.';if(Array.isArray(result.warnings))details.textContent+=' '+result.warnings.slice(0,8).map(value=>String(value).slice(0,400)).join(' ');}
-   for(const file of files){const link=document.createElement('a');link.textContent=file;link.href=KiCadProjectLaunch.viewerURL({...context,sha:result.sha},file,p=>chrome.runtime.getURL(p));projects.append(link);}
+   for(const file of files){const link=document.createElement('a');link.textContent=file;link.href=KiCadProjectLaunch.viewerURL(info,file,p=>chrome.runtime.getURL(p));projects.append(link);}
   }catch(error){title.textContent='Project discovery unavailable';status.className='error';status.textContent='! '+error.message;localAlternative();retry.hidden=false;}
   finally{busy=false;}
  }

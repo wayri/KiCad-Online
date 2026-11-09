@@ -59,7 +59,7 @@ function workspaceRuntime(respond=async()=>[], hooks={}){
   const receipts=new Map(hooks.unacceptedRules?[]:[['kivi:content-rules','2026-10-10-terms-1']]),localStorage={getItem:key=>receipts.get(key)||null,setItem:(key,value)=>receipts.set(key,value),removeItem:key=>receipts.delete(key)};
   const keyHandlers=new Set();
   let resizeCallback;
-  const context={URL,innerWidth:hooks.width||800,innerHeight:hooks.frameHeight||600,EventTarget,CustomEvent,TextEncoder,Map,Set,console,crypto:require('node:crypto').webcrypto,localStorage,document:{body,addEventListener(){},removeEventListener(){},querySelectorAll:selector=>{const found=[];const visit=n=>{if(selector==='dialog[open]'&&n.tagName==='DIALOG'&&n.open)found.push(n);for(const c of n.children)visit(c);};visit(body);return found;},getElementById:id=>{const node=elements.get(id);return node&&body.contains(node)?node:null;},createElement:tag=>new Element(tag),createElementNS:(_,tag)=>new Element(tag)},addEventListener:(type,fn)=>{if(type==='keydown')keyHandlers.add(fn);if(type==='resize')resizeCallback=fn;},removeEventListener:(type,fn)=>{if(type==='keydown')keyHandlers.delete(fn);},matchMedia:()=>({matches:true}),
+  const context={URL,innerWidth:hooks.width||800,innerHeight:hooks.frameHeight||600,EventTarget,CustomEvent,TextEncoder,Map,Set,console,crypto:require('node:crypto').webcrypto,localStorage,document:{hidden:hooks.hidden===true,body,addEventListener(){},removeEventListener(){},querySelectorAll:selector=>{const found=[];const visit=n=>{if(selector==='dialog[open]'&&n.tagName==='DIALOG'&&n.open)found.push(n);for(const c of n.children)visit(c);};visit(body);return found;},getElementById:id=>{const node=elements.get(id);return node&&body.contains(node)?node:null;},createElement:tag=>new Element(tag),createElementNS:(_,tag)=>new Element(tag)},addEventListener:(type,fn)=>{if(type==='keydown')keyHandlers.add(fn);if(type==='resize')resizeCallback=fn;},removeEventListener:(type,fn)=>{if(type==='keydown')keyHandlers.delete(fn);},matchMedia:()=>({matches:true}),
     KiCadCommentFocus:require('../comment-focus.js'),KiCadAnalysisData:require('../analysis-data.js'),KiCadViewState:require('../view-state.js'),KiCadBomManager:require('../bom-manager.js'),KiCadReviewHandoff:hooks.handoff,KiCadEngineeringLauncher:hooks.engineeringLauncher,KiCadCommentCompose:{...require('../comment-compose.js'),...(hooks.compose||{})},KiCadReviewTools:require('../review-tools.js'),KiCadDesignModel:require('../design-model.js'),KiCadNetModel:hooks.netModelAPI||require('../net-model.js'),KiCadReviewComments:require('../review-comments.js'),KiCadBrowserData:require('../browser-data.js'),KiCadOwnedCanvas:require('../owned-canvas.js'),
     top:hooks.top||{},KiCadRevisionActions:require('../revision-actions.js'),KiCadRepositoryExplorer:hooks.repositoryExplorer,KiCadRatsnest:require('../ratsnest.js'),KiCadTestpointTools:hooks.testpointTools,KiCadPhotoReview:hooks.photoReview,KiCadComponentLinks:require('../component-links.js'),KiCadPairedReview:require('../paired-review.js'),KiCadBomAnalytics:require('../bom-analytics.js'),
     chrome:{storage:{local:hooks.chromeStorage||{get:async()=>({}),set:async()=>{}}},runtime:{sendMessage:async message=>({ok:true,result:await respond(message)})}},setTimeout,clearTimeout,URL,Blob};
@@ -151,9 +151,9 @@ test('top sheet navigation and optional review tools preserve their existing con
  const view=workspaceRuntime(undefined,{pcb:false,files:[{path:'root.kicad_sch',content:'(kicad_sch (uuid root))'}]});
  assert.equal(view.get('sheetLabel').parentElement.id,'topSheetNavigation');assert.equal(view.get('sheetBack').parentElement.id,'topSheetNavigation');
  assert.equal(view.get('variantBar').parentElement.id,'extraReviewControls');assert.equal(view.get('highlightControls').parentElement.id,'extraReviewControls');assert.equal(view.get('extraReviewControls').hidden,true);
- assert.equal(view.get('shortcutHelp').parentElement.id,'extraReviewControls');assert.equal(view.get('diagnostics').parentElement.id,'extraReviewControls');
+ assert.equal(view.get('shortcutHelp').parentElement.id,'navigationHelpDialog');assert.equal(view.get('diagnostics').parentElement.id,'extraReviewControls');
  view.get('reviewToolsButton').click();assert.equal(view.get('extraReviewControls').hidden,false);view.key('Escape');assert.equal(view.get('extraReviewControls').hidden,true);
- view.key('?');assert.equal(view.get('shortcutHelp').open,true);assert.equal(view.get('extraReviewControls').hidden,false);
+ view.key('?');assert.equal(view.get('navigationHelpDialog').open,true);assert.equal(view.get('extraReviewControls').hidden,true);view.key('Escape');assert.equal(view.get('navigationHelpDialog').open,false);
 });
 test('opposite drawing uses explicit or discovered saved paths and asks when several are available',async()=>{
  const calls=[];const view=workspaceRuntime(async message=>{calls.push(message);if(message.type==='drawing-files')return{files:['board.kicad_pcb','one.kicad_sch','two.kicad_sch']};return[];});
@@ -1298,12 +1298,14 @@ test('GitLab annotation polling mounts with foreground lifecycle and source-scop
  view.workspace.dispose();assert.equal(disposed,true);
 });
 
-test('GitHub drawing startup stays API-free and only visible Comments permit annotation polling',async()=>{
+test('foreground project startup loads conversations and annotation metadata once, then polls only visible Comments',async()=>{
  const calls=[];let sync,started,visibility=0;
- const view=workspaceRuntime(async m=>{calls.push(m);if(m.type==='github-annotations')return{notes:[],warnings:[]};return[];},{reviewSync:{create:options=>{sync=options;const service=require('../review-sync.js').create({...options,setTimer:()=>1,clearTimer(){}});return{...service,start(scope){started=scope;service.start(scope);},visibilityChanged(){visibility++;service.visibilityChanged();}};}}});
- view.load();await new Promise(setImmediate);assert.ok(sync);assert.equal(started.file,'board.kicad_pcb');assert.equal(sync.isVisible(),false);
- assert.equal(calls.some(m=>['comment-policy-status','github-annotations','chat-thread-list'].includes(m.type)),false);
- view.get('commentsButton').click();assert.equal(sync.isVisible(),true);assert.ok(visibility>0);await new Promise(setImmediate);assert.ok(calls.some(m=>m.type==='github-annotations'));view.workspace.dispose();
+ const note={id:'initial-review',text:'Saved drawing review',createdAt:'2026-10-04T00:00:00Z',severity:'info',anchor:{repository:'wayri/fixture',ref:'main',file:'board.kicad_pcb',position:{x:3,y:4}}};
+ const view=workspaceRuntime(async m=>{calls.push(m);if(m.type==='chat-thread-list')return{threads:m.kind==='issue'?[{kind:'issue',number:7,title:'Existing design discussion',state:'open'}]:[],hasMore:true};if(m.type==='github-annotations')return{notes:[note],warnings:[]};return[];},{reviewSync:{create:options=>{sync=options;const service=require('../review-sync.js').create({...options,setTimer:()=>1,clearTimer(){}});return{...service,start(scope){started=scope;service.start(scope);},visibilityChanged(){visibility++;service.visibilityChanged();}};}}});
+ view.load();await new Promise(setImmediate);assert.ok(sync);assert.equal(started.file,'board.kicad_pcb');assert.equal(view.get('commentsSidebar').hidden,true);assert.equal(sync.isVisible(),false,'initial read finishes without leaving background polling active');
+ assert.match(view.get('commentThreadReader').textContent,/Existing design discussion/);assert.match(view.get('commentList').textContent,/Saved drawing review/);assert.equal(view.get('commentList').textContent.includes('Existing design discussion'),false,'ordinary issues have no fabricated drawing location');
+ assert.equal(calls.filter(m=>m.type==='chat-thread-list').length,2);assert.equal(calls.filter(m=>m.type==='github-annotations').length,1);assert.equal(calls.some(m=>['comment-policy-status','chat-message-write','github-publish-comment'].includes(m.type)),false);
+ view.get('commentsButton').click();assert.equal(sync.isVisible(),true);assert.ok(visibility>0);await new Promise(setImmediate);assert.equal(calls.filter(m=>m.type==='chat-thread-list').length,2,'opening Comments reuses the loaded conversation page');view.workspace.dispose();
 });
 
 
@@ -1437,8 +1439,8 @@ test('discussion catalog new-comment action prepares a new Discussion without po
 test('foreground annotation and catalog read failures propagate to sync backoff',async()=>{
  for(const failing of ['github-annotations','chat-thread-list']){
   let sync,mode='ok';const calls=[];const view=workspaceRuntime(async m=>{calls.push(m);if(mode==='fail'&&m.type===failing)throw Error('Provider unavailable');if(m.type==='github-annotations')return{notes:[],warnings:[]};if(m.type==='chat-thread-list')return{threads:[],hasMore:false};return[];},{reviewSync:{create:options=>{sync=options;return{start(){},visibilityChanged(){},dispose(){}};}}});
-  view.load();view.get('commentsButton').click();await new Promise(setImmediate);mode='fail';await assert.rejects(sync.load(),/Provider unavailable/);assert.ok(calls.some(m=>m.type===failing));
-  if(failing==='chat-thread-list'){const before=calls.filter(m=>m.type===failing).length;await assert.rejects(sync.load(),/Provider unavailable/);assert.ok(calls.filter(m=>m.type===failing).length>before,'failed catalog refresh never advances success timestamp');}
+  view.load();view.get('commentsButton').click();await new Promise(setImmediate);mode='fail';await assert.rejects(async()=>sync.onUpdate(await sync.load()),/Provider unavailable/);assert.ok(calls.some(m=>m.type===failing));
+  if(failing==='chat-thread-list'){const before=calls.filter(m=>m.type===failing).length;await assert.rejects(async()=>sync.onUpdate(await sync.load()),/Provider unavailable/);assert.ok(calls.filter(m=>m.type===failing).length>before,'failed catalog refresh never advances success timestamp');}
   view.workspace.dispose();
  }
 });
@@ -1620,4 +1622,35 @@ test('net color choice persists independently of context dimming and reaches the
  const colors=[];view.workspace.setScene({setPopulation(){},setSelection(){},setNetHighlightColor:value=>colors.push(value)});
  view.get('netHighlightColor').value='layer';view.get('netHighlightColor').onchange();assert.equal(colors.at(-1),'layer');assert.equal(view.receipts.get('kicad:net-highlight-color:v1'),'layer');assert.equal(view.get('keepContextColors').checked,true);
  view.get('keepContextColors').checked=false;view.get('keepContextColors').onchange();assert.equal(colors.at(-1),'layer');view.get('netHighlightColor').value='accent';view.get('netHighlightColor').onchange();assert.equal(colors.at(-1),'accent');view.workspace.dispose();
+});
+
+test('comment options always provide a visible return action even when category navigation is hidden',()=>{
+ const view=workspaceRuntime();view.load();const menu=view.get('commentThreadReader').querySelector('.chat-catalog-more');action(menu,'Comment settings').click();assert.equal(view.get('commentSettings').hidden,false);assert.equal(view.get('backToComments').parentElement.parentElement.id,'commentSettings');view.get('backToComments').click();assert.equal(view.get('commentSettings').hidden,true);assert.equal(view.get('commentSettingsButton').attributes['aria-expanded'],'false');assert.equal(view.get('newConversation').focused,true);view.workspace.dispose();
+});
+test('failed initial conversation loading can retry by reopening Comments',async()=>{
+ let fail=true;const calls=[];const view=workspaceRuntime(async m=>{calls.push(m);if(m.type==='chat-thread-list'){if(fail)throw Error('Session temporarily unavailable');return{threads:[{kind:'issue',number:9,title:'Recovered issue'}],hasMore:false};}return{notes:[],warnings:[]};},{reviewSync:{create:options=>({start(){void options.load().catch(error=>options.onState({status:'error',error}));},visibilityChanged(){},dispose(){}})}});view.load();await new Promise(setImmediate);assert.match(view.get('commentThreadStatus').textContent,/Session temporarily unavailable/);fail=false;view.get('commentsButton').click();await new Promise(setImmediate);assert.match(view.get('commentThreadReader').textContent,/Recovered issue/);assert.equal(calls.filter(m=>m.type==='chat-thread-list').length,4);view.workspace.dispose();
+});
+
+test('hidden project defers initial review reads until foreground and website-only pagination never loops page one',async()=>{
+ const calls=[];let sync;const view=workspaceRuntime(async m=>{calls.push(m);if(m.type==='chat-thread-list')return{threads:[{kind:'issue',number:7,title:'Initial page'}],hasMore:true,pagination:'website-only',warnings:['More Issues are available on GitHub; use Open by number.']};return{notes:[],warnings:[]};},{hidden:true,reviewSync:{create:options=>{sync=require('../review-sync.js').create({...options,setTimer:()=>1,clearTimer(){}});return sync;}}});view.load();await new Promise(setImmediate);assert.equal(calls.some(m=>m.type==='chat-thread-list'||m.type==='github-annotations'),false);view.document.hidden=false;sync.visibilityChanged();await new Promise(setImmediate);assert.match(view.get('commentThreadReader').textContent,/Initial page/);assert.match(view.get('commentThreadStatus').textContent,/More Issues/);assert.equal(action(view.get('commentThreadReader'),'Load more').hidden,true);assert.equal(sync.snapshot().status,'synced');assert.equal(calls.filter(m=>m.type==='github-annotations').length,1);view.workspace.dispose();
+});
+
+test('conversation catalogue failure does not suppress drawing annotation refresh',async()=>{
+ const calls=[];const view=workspaceRuntime(async m=>{calls.push(m);if(m.type==='chat-thread-list')throw Error('Issue catalogue unavailable');return{notes:[],warnings:[]};},{reviewSync:{create:options=>({start(){void options.load().then(options.onUpdate).catch(error=>options.onState({status:'error',error}));},visibilityChanged(){},dispose(){}})}});
+ view.load();await new Promise(setImmediate);assert.equal(calls.filter(m=>m.type==='github-annotations').length,1);assert.match(view.get('commentThreadStatus').textContent,/Issue catalogue unavailable/);view.workspace.dispose();
+});
+
+test('startup discovers ordinary Issues without review markers and opens their body and replies',async()=>{
+ const time='2026-11-04T06:00:00Z',url='https://github.com/wayri/fixture/issues/19',calls=[];
+ const thread={kind:'issue',number:19,title:'Review the encoder bank',state:'open',author:'reviewer',body:'Ordinary issue description without location metadata',createdAt:time,updatedAt:time,url,comments:[{id:'42',body:'Existing reply from GitHub',author:'colleague',createdAt:time,updatedAt:time,url:url+'#issuecomment-42',replyTo:null}],warnings:[]};
+ const view=workspaceRuntime(async m=>{calls.push(m);if(m.type==='chat-thread-list')return{threads:m.kind==='issue'?[thread]:[],hasMore:false};if(m.type==='github-annotations')return{notes:[],warnings:[]};if(m.type==='github-thread-read')return thread;return[];},{reviewSync:{create:options=>require('../review-sync.js').create({...options,setTimer:()=>1,clearTimer(){}})}});
+ view.load();await new Promise(setImmediate);view.get('commentsButton').click();await new Promise(setImmediate);
+ const row=descendants(view.get('commentThreadReader')).find(n=>n.className==='chat-conversation');assert.ok(row,'ordinary issues are listed even when there are zero drawing markers');assert.match(row.textContent,/Review the encoder bank/);await row.click();
+ assert.match(view.get('commentThreadMessages').textContent,/Ordinary issue description without location metadata/);assert.match(view.get('commentThreadMessages').textContent,/Existing reply from GitHub/);assert.doesNotMatch(view.get('commentList').textContent,/Ordinary issue description|Existing reply/);assert.equal(calls.some(m=>/publish|message-write/.test(m.type)),false);view.workspace.dispose();
+});
+
+test('catalogue errors preserve successfully fetched drawing annotations and remain visible for retry',async()=>{
+ const note={id:'partial-review',text:'Successfully fetched marker',createdAt:'2026-10-04T00:00:00Z',severity:'info',anchor:{repository:'wayri/fixture',ref:'main',file:'board.kicad_pcb',position:{x:3,y:4}}};let sync;
+ const view=workspaceRuntime(async m=>{if(m.type==='chat-thread-list')throw Error('Catalogue temporarily unavailable');if(m.type==='github-annotations')return{notes:[note],warnings:[]};return[];},{reviewSync:{create:options=>{sync=require('../review-sync.js').create({...options,setTimer:()=>1,clearTimer(){}});return sync;}}});
+ view.load();await new Promise(setImmediate);assert.match(view.get('commentList').textContent,/Successfully fetched marker/);assert.match(view.get('commentStatus').textContent,/Catalogue temporarily unavailable/);assert.equal(sync.snapshot().status,'error');view.workspace.dispose();
 });

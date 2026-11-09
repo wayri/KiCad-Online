@@ -113,3 +113,22 @@ test('manual history branch entry appears only on request and labels the success
   h.picker.dispose();
  }finally{if(previous)globalThis.KiCadHistoryTimeline=previous;else delete globalThis.KiCadHistoryTimeline;}
 });
+
+
+test('revision lookup accepts exact scoped commit and PR targets without a HEAD fallback',()=>{
+ const {revisionTarget}=require('../revision-picker.js'),r={repository:'owner/design'};
+ assert.equal(revisionTarget(r,'#123'),'https://github.com/owner/design/pull/123');
+ assert.equal(revisionTarget(r,'abc1234'),'https://github.com/owner/design/commit/abc1234');
+ assert.equal(revisionTarget(r,'https://github.com/owner/design/pull/123/files'),'https://github.com/owner/design/pull/123/files');
+ for(const value of ['main','https://github.com/other/design/pull/1','https://github.com/owner/design/issues/1','https://github.com/owner/design/pull/1?x=1','https://evil.test/owner/design/pull/1','https://user@github.com/owner/design/pull/1','#0'])assert.throws(()=>revisionTarget(r,value));
+ assert.throws(()=>revisionTarget({...r,provider:'gitlab'},'#12'));
+});
+test('History finds PRs through bounded foreground listing and opens exact canonical target',async()=>{
+ const previous=globalThis.KiCadHistoryTimeline;globalThis.KiCadHistoryTimeline={mount(){return{update(){},dispose(){}};}};
+ try{const launched=[],calls=[],h=harness(async message=>{calls.push(message);return {ok:true,result:{repository:message.repository,pulls:[{number:42,title:'Board revision',state:'open',url:'https://github.com/owner/design/pull/42'}],hasMore:true,warnings:[]}};},{openRevision:url=>launched.push(url)});
+ await h.nodes.find(n=>n.textContent==='Browse pull requests').listeners.click();assert.equal(calls[0].type,'revision-pulls');assert.equal(calls[0].repository,'owner/design');
+ h.nodes.find(n=>n.textContent==='#42 · Board revision · open').listeners.click();assert.equal(launched[0],'https://github.com/owner/design/pull/42');
+ assert.ok(h.nodes.some(n=>n.textContent.includes('More results are available on GitHub')));
+ const input=h.nodes.find(n=>n['aria-label']==='Commit SHA, pull request number or URL');input.value='abc1234';h.nodes.find(n=>n.textContent==='Open revision').listeners.click();assert.equal(launched[1],'https://github.com/owner/design/commit/abc1234');h.picker.dispose();
+ }finally{if(previous)globalThis.KiCadHistoryTimeline=previous;else delete globalThis.KiCadHistoryTimeline;}
+});

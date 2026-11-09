@@ -75,3 +75,38 @@ test('many instances of the same saved source link produce one bounded visual ed
   assert.equal(graph.links[0].label, '4095 placements');
   assert.equal(graph.omitted, 0);
 });
+
+
+test('sibling branches share an ordered gutter rail with separate child drops and no redundant labels',()=>{
+ const graph=build(pages(['root.kicad_sch','left.kicad_sch','mid.kicad_sch','right.kicad_sch'],[link('root.kicad_sch','left.kicad_sch','l'),link('root.kicad_sch','mid.kicad_sch','m'),link('root.kicad_sch','right.kicad_sch','r')]));
+ assert.equal(graph.links.length,3);
+ assert.ok(graph.links.every(edge=>edge.tree&&edge.showLabel===false));
+ assert.equal(new Set(graph.links.map(edge=>edge.from.x+':'+edge.from.y)).size,1,'one parent stem');
+ assert.equal(new Set(graph.links.map(edge=>edge.to.x)).size,3,'distinct child drops');
+ assert.equal(new Set(graph.links.map(edge=>edge.points[1].y)).size,1,'shared generation rail');
+ for(const edge of graph.links){assert.ok(edge.from.y<edge.points[1].y);assert.ok(edge.points[1].y<edge.to.y);}
+});
+
+test('miniature drops reach the node boundary while overview arrows leave room for sheet headings',()=>{
+ const sheetPages=pages(['root.kicad_sch','child.kicad_sch'],[link('root.kicad_sch','child.kicad_sch','c')]),overview=build(sheetPages),mini=build(sheetPages,{headingGap:0}),child=sheetPages.find(page=>page.path==='child.kicad_sch');
+ assert.equal(overview.links[0].to.y,child.y-16);assert.equal(mini.links[0].to.y,child.y);
+});
+
+test('hierarchy strokes remain visible when fit-to-all makes the final arrow segment short',()=>{
+ let strokes=0,labels=0;const ctx={save(){},restore(){},beginPath(){},moveTo(){},lineTo(){},quadraticCurveTo(){},setLineDash(){},stroke(){strokes++;},closePath(){},fill(){},measureText(){return {width:20};},fillRect(){},fillText(){labels++;}};
+ require('../sheet-hierarchy-links.js').draw({ctx,viewport:{camera:{world_to_screen:p=>({x:p.x*.1,y:p.y*.1})}}},{links:[{from:{x:0,y:0},to:{x:100,y:20},points:[{x:0,y:0},{x:0,y:10},{x:100,y:10},{x:100,y:20}],label:'Child',showLabel:false}]});
+ assert.equal(strokes,2,'paper casing separates hierarchy and net crossings');assert.equal(labels,0);
+});
+
+
+test('net guides display saved net names, skip blank badges and retain dashed identity',()=>{
+ const labels=[],strokes=[],dashes=[];const ctx={save(){},restore(){},beginPath(){},moveTo(){},lineTo(){},quadraticCurveTo(){},setLineDash(v){dashes.push(v);},stroke(){strokes.push(this.strokeStyle);},closePath(){},fill(){},measureText(){return {width:20};},fillRect(){},fillText(text){labels.push(text);}};
+ const edge={from:{x:0,y:0},to:{x:100,y:100},points:[{x:0,y:0},{x:0,y:50},{x:100,y:50},{x:100,y:100}]};
+ require('../sheet-hierarchy-links.js').draw({ctx,viewport:{camera:{world_to_screen:p=>p}}},{links:[{...edge,name:'VCC'},edge]},false,{dashed:true,color:'#9e7b29a0'});
+ assert.deepEqual(labels,['VCC']);assert.equal(strokes.length,2);assert.ok(dashes.every(dash=>dash.length===2));
+});
+
+test('repeated source parent instances remain a single source edge with all exact child placements',()=>{
+ const graph=build(pages(['root.kicad_sch','channel.kicad_sch','leaf.kicad_sch'],[link('root.kicad_sch','channel.kicad_sch','left','Left'),link('root.kicad_sch','channel.kicad_sch','right','Right'),link('channel.kicad_sch','leaf.kicad_sch','power','Power')]));
+ const edge=graph.links.find(edge=>edge.parentPath==='channel.kicad_sch');assert.ok(edge.tree);assert.equal(edge.count,2);assert.equal(edge.parentIds.length,2);assert.equal(new Set(edge.childIds).size,2);assert.equal(graph.unresolved,0);
+});

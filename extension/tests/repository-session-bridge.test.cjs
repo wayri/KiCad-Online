@@ -7,6 +7,12 @@ test('default installation has no permanent repository host grants or automatic 
 
 
 test('bridge preserves only static known denial codes without leaking provider text',async()=>{const h=harness(async()=>{throw Object.assign(Error('SECRET SAML PAYLOAD'),{code:'GITLAB_SAML_REQUIRED'});});const reply=await h.send({type:'github-session-read'});assert.equal(reply.code,'GITLAB_SAML_REQUIRED');assert.match(reply.error,/SSO/);assert.doesNotMatch(reply.error,/SECRET/);});
+test('GitHub diagnostics distinguish missing tree metadata, network failure, stale revisions and real denials without leaking private errors',async()=>{
+ for(const [code,pattern]of [['GITHUB_TREE_UNAVAILABLE',/branch\/folder metadata/],['GITHUB_WEBSITE_NETWORK',/network layer/],['GITHUB_REVISION_MISMATCH',/different revision/],['GITHUB_WEBSITE_DENIED',/401\/403/],['GITHUB_WEBSITE_NOT_FOUND',/404/],['GITHUB_READ_TIMEOUT',/timed out/]]){
+  const h=harness(async()=>{throw Object.assign(Error('SECRET signed-url=token'),{code});}),reply=await h.send({type:'github-session-read'});
+  assert.equal(reply.code,code);assert.match(reply.error,pattern);assert.doesNotMatch(reply.error,/SECRET|signed-url|token/);
+ }
+});
 test('bridge bounds concurrent bytes before starting readers and releases reservation after completion',async()=>{const finish=[];const h=harness(()=>new Promise(resolve=>finish.push(resolve))),request={type:'github-session-read',limit:64*1024*1024},a=h.send(request),b=h.send(request);await new Promise(setImmediate);const denied=await h.send(request);assert.equal(denied.ok,false);assert.match(denied.error,/budget/);assert.equal(h.calls.length,2);finish.splice(0).forEach(resolve=>resolve(null));await Promise.all([a,b]);await new Promise(setImmediate);const c=h.send(request);await new Promise(setImmediate);assert.equal(h.calls.length,3);finish[0](null);assert.equal((await c).ok,true);});
 test('website review mutations accept only the background worker and sanitize unknown errors',async()=>{
  const h=harness();h.context.chrome.runtime.getURL=path=>'chrome-extension://ours/'+path;

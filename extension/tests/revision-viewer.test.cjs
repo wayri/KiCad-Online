@@ -144,6 +144,7 @@ test('sheet tree floats below the drawing, minimizes, closes, reopens from setti
  v.get('viewerSettings').children.find(node=>node.id==='showSheetTree').click();assert.equal(miniature.hidden,false);assert.equal(body.hidden,false);assert.equal(v.get('viewerSettings').hidden,true);
  await v.context.KiCadSheetOverview.open();
  const svg=body.children[0],node=svg.children.find(node=>node.attributes.role==='button'&&node.attributes['aria-label']==='Go to Power supply');
+ assert.equal(svg.attributes.width,'100%');assert.ok(Number(svg.attributes.height)<=160);assert.ok(svg.children.some(child=>child.tagName==='defs'||child.children?.some(item=>item.attributes.id==='sheetTreeArrow')),'directional miniature arrow definition');
  assert.ok(node);const before={...v.camera.bbox};node.click();assert.notDeepEqual(v.camera.bbox,before);assert.equal(v.context.KiCadSheetOverview.isOpen(),true);
  v.context.KiCadSheetOverview.close();
 });

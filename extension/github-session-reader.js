@@ -10,7 +10,7 @@
   function treeData(objects, ref, directory) {
     if(!Array.isArray(objects))throw Error('Invalid GitHub website payload.');
     const routes=[...new Set(objects.flatMap(v=>[v?.payload?.codeViewTreeRoute,v?.payload?.codeViewRepoRoute,
-      v?.payload?.tree&&v?.payload?.refInfo?v.payload:null]))].filter(v=>v && (v.path??'/')===(directory||'/'));
+      v?.payload?.tree&&v?.payload?.refInfo?v.payload:null]))].filter(v=>v && v.tree!==undefined && (v.path??'/')===(directory||'/'));
     if(!routes.length)throw Error('The GitHub website did not expose a readable repository tree. Check repository website access, then retry.');
     const items=new Map();let sha=null;
     for(const route of routes){
@@ -54,7 +54,9 @@
   // hydration JSON. Read only that named table and its exact repository links.
   function documentObjects(doc,href){
     const objects=[...(doc?.querySelectorAll('script[type="application/json"]')||[])].map(n=>{try{return JSON.parse(n.textContent);}catch{return null;}});
-    if(objects.some(v=>v?.payload?.codeViewTreeRoute||v?.payload?.codeViewRepoRoute||v?.payload?.tree&&v?.payload?.refInfo))return objects;
+    // A route shell without a tree is not directory data. GitHub can retain
+    // these shells beside a fully server-rendered file table.
+    if(objects.some(v=>v?.payload?.codeViewTreeRoute?.tree!==undefined||v?.payload?.codeViewRepoRoute?.tree!==undefined||v?.payload?.tree&&v?.payload?.refInfo))return objects;
     const page=new URL(href),parts=page.pathname.split('/').filter(Boolean).map(decodeURIComponent),repository=parts.slice(0,2).join('/');
     if(page.origin!=='https://github.com'||parts.length<2||parts.length>2&&parts[2]!=='tree')return objects;
     const table=doc?.querySelector('table[aria-labelledby="folders-and-files"]'),selector=doc?.querySelector('[id="ref-picker-repos-header-ref-selector"]');
@@ -82,7 +84,7 @@
     objects.push({payload:{codeViewTreeRoute:{path:directory||'/',refInfo:{name:ref,currentOid:sha},tree:{items:[...items.values()],totalCount:items.size,truncated:false}}}});return objects;
   }
   function websiteError(status,html=''){
-    const text=String(html).slice(0,1024*1024),failure=message=>Object.assign(Error(message),{source:'github-website',status,accessIssue:{kind:status===429?'website-rate-limit':'website-access',confirmed:status===429,title:status===429?'GitHub website temporarily limited':'GitHub website access unavailable',message,action:'Check this repository directly on GitHub and retry. Project discovery reads the website, not the GitHub API.'}});
+    const text=String(html).slice(0,1024*1024),failure=message=>Object.assign(Error(message),{code:status===429?'GITHUB_WEBSITE_RATE_LIMIT':status===404?'GITHUB_WEBSITE_NOT_FOUND':status===401||status===403?'GITHUB_WEBSITE_DENIED':'GITHUB_WEBSITE_UNREADABLE',source:'github-website',status,accessIssue:{kind:status===429?'website-rate-limit':'website-access',confirmed:status===429,title:status===429?'GitHub website temporarily limited':'GitHub website access unavailable',message,action:'Check this repository directly on GitHub and retry. Project discovery reads the website, not the GitHub API.'}});
     if(status===429||/too many requests|secondary rate limit/i.test(text))return failure('GitHub website requests are temporarily limited. Retry shortly. This project read does not use the GitHub API.');
     if(/ERR_BLOCKED_BY_ADMINISTRATOR|blocked by (?:your )?(?:organization|administrator)|organization policy|administrator policy/i.test(text))return failure('Browser or organization policy blocked the GitHub website request. Allow this repository website in the browser policy, then retry.');
     if(status===401||status===403||/SAML|single sign.on|access denied/i.test(text))return failure('GitHub website access was denied'+(status?' (HTTP '+status+')':'')+'. Open this repository on GitHub and complete its sign-in or organization access requirement, then retry.');
@@ -101,13 +103,16 @@
     if(signal?.aborted)throw Error('Project loading cancelled.');
     const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}return binary?bytes:new TextDecoder('utf-8',{fatal:true}).decode(bytes);
   }
-  function create({fetch:fetcher=root.fetch,location=root.location,signal,parseDocument=()=>documentObjects(root.document,location.href),parseHTML=(html,url)=>documentObjects(new DOMParser().parseFromString(html,'text/html'),url)}={}) {
+  function create({fetch:fetcher=root.fetch,location=root.location,signal,parseDocument=()=>documentObjects(root.document,location.href),parseHTML=(html,url)=>documentObjects(new DOMParser().parseFromString(html,'text/html'),url),parsePullHTML=(html)=>new DOMParser().parseFromString(html,'text/html')}={}) {
     async function read(message) {
       const {repository,ref,action,path='',limit=8*1024*1024}=message;scope(repository,ref);
       const here=new URL(location.href);
       if(here.origin!=='https://github.com'||here.pathname.split('/').slice(1,3).join('/').toLowerCase()!==repository.toLowerCase())throw Error('A signed-in tab for this repository must remain open.');
-      if(!['resolve','directory','file','asset','history','branches','commit','context'].includes(action)||!safePath(path,true))throw Error('Unsupported GitHub session read.');
-      if(!['resolve','history','branches','context'].includes(action)&&!SHA.test(ref))throw Error('GitHub session reads require a pinned commit.');
+      if(!['resolve','directory','file','asset','history','branches','commit','context','pull','pulls'].includes(action)||!safePath(path,true))throw Error('Unsupported GitHub session read.');
+      if(!['resolve','history','branches','context','commit','pull','pulls'].includes(action)&&!SHA.test(ref))throw Error('GitHub session reads require a pinned commit.');
+      if(action==='commit'&&!/^[a-f0-9]{7,40}$/i.test(ref))throw Error('Invalid GitHub commit ID.');
+      if(action==='pulls'&&(ref!=='HEAD'||path!==''))throw Error('Invalid GitHub PR list request.');
+      if(action==='pull'&&(ref!=='HEAD'||! /^[1-9][0-9]{0,9}$/.test(path)||!Number.isSafeInteger(Number(path))))throw Error('Invalid GitHub PR number.');
       if(['history','branches','commit'].includes(action)&&path!=='')throw Error('Invalid GitHub history path.');
       if(signal?.aborted)throw Error('Project loading cancelled.');
       const controller=new AbortController(),abort=()=>controller.abort(),timer=setTimeout(()=>controller.abort(),30000);
@@ -131,6 +136,14 @@
             if(controller.signal.aborted)throw Error('Project loading cancelled.');return {repository,ref:hint.ref,directory:hint.directory,...result};};
           if(current===url&&!here.search){const result=await resolveContext(parseDocument());if(result)return result;}
           const objects=await pageObjects(url),result=await resolveContext(objects);return result||contextData(objects,repository,path);
+        }
+        if(action==='pull'||action==='pulls'){
+          const parser=root.KiCadGitHubWebsitePulls||(typeof require==='function'?require('./github-website-pulls.js'):null),url='https://github.com/'+repository+(action==='pull'?'/pull/'+path:'/pulls');
+          if(!parser)throw Error('Reload the repository session to enable PR discovery.');
+          const response=await fetcher(url,{credentials:'same-origin',redirect:'error',cache:'no-store',signal:controller.signal});
+          if(!response.ok)throw websiteError(response.status,await bounded(response,1024*1024,controller.signal));
+          if(response.url&&response.url!==url||!/text\/html/i.test(response.headers.get('content-type')||''))throw Error('GitHub returned a different PR location or format.');
+          const doc=parsePullHTML(await bounded(response,8*1024*1024,controller.signal));return action==='pull'?parser.fromDocument(doc,{repository,number:Number(path),url}):parser.listFromDocument(doc,{repository});
         }
         if(action==='branches'||action==='commit'){
           const parser=root.KiCadGitHubWebsiteHistory||(typeof require==='function'?require('./github-website-history.js'):null);if(!parser)throw Error('Reload the repository session to enable branch history.');
@@ -172,6 +185,20 @@
         const response=await fetcher(url,{credentials:'same-origin',redirect:'error',cache:'no-store',signal:controller.signal});
         if(!response.ok)throw websiteError(response.status,await bounded(response,1024*1024,controller.signal));
         return treeData(parseHTML(await bounded(response,8*1024*1024,controller.signal),url),ref,directory);
+      } catch(error) {
+        // Only fixed diagnostic codes cross the session bridge. Raw HTML,
+        // private paths, signed URLs and arbitrary provider text stay here.
+        if(typeof error?.code!=='string'){
+          let code;
+          if(controller.signal.aborted)code=signal?.aborted?'GITHUB_READ_CANCELLED':'GITHUB_READ_TIMEOUT';
+          else if(error instanceof TypeError)code=/fetch|network|load failed/i.test(error.message)?'GITHUB_WEBSITE_NETWORK':'GITHUB_READ_FORMAT';
+          else if(/context is unavailable|readable repository tree/.test(error?.message))code='GITHUB_TREE_UNAVAILABLE';
+          else if(/different revision|different branch|different repository location|conflicting directory revisions/.test(error?.message))code='GITHUB_REVISION_MISMATCH';
+          else if(/incomplete/.test(error?.message))code='GITHUB_TREE_INCOMPLETE';
+          else if(/size limit|too many JSON/.test(error?.message))code='GITHUB_READ_TOO_LARGE';
+          if(code)error=Object.assign(Error(error?.message||'GitHub website read failed.'),{code});
+        }
+        throw error;
       } finally {clearTimeout(timer);signal?.removeEventListener('abort',abort);}
     }
     return {read};

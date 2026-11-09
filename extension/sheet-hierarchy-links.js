@@ -5,7 +5,8 @@
   const MAX_PLACEMENTS = 4096;
   const MAX_LINKS = 512;
 
-  function build(pages) {
+  function build(pages, options = {}) {
+    const headingGap = options.headingGap === 0 ? 0 : 16;
     const result = {links: [], omitted: 0, unresolved: 0};
     if (!Array.isArray(pages)) return result;
     const instances = new Map(), duplicates = new Set();
@@ -61,10 +62,42 @@
         : {x: child.x + child.w / 2 + shift, y: child.y + (dy >= 0 ? 0 : child.h)};
       const names = [...new Set(group.placements.map(p => String(p.label || p.sheetId || p.path).split(' / ').at(-1)))];
       const label = names.length <= 2 ? names.join(', ') : `${group.placements.length} placements`;
-      result.links.push({from, to, label, count: group.placements.length, parentPath: group.parentPath, childPath: group.childPath,
+      result.links.push({from, to, label, showLabel: group.placements.length > 1, count: group.placements.length, parentPath: group.parentPath, childPath: group.childPath,
         parentIds: [...new Set(group.placements.map(p => p.parentId))], childIds: group.placements.map(p => p.id)});
     }
-    if(root.KiCadOverviewRouting){const routed=root.KiCadOverviewRouting.route(pages,result.links);result.links=routed.links;result.omitted+=routed.omitted;result.routing=routed;}return result;
+    // A shared parent stem and one child drop form a tree, rather than a bundle
+    // of competing shortest paths. Keep the rail in the empty rank gutter.
+    const families = new Map(), fallback = [];
+    for (const link of result.links) {
+      if (!families.has(link.parentPath)) families.set(link.parentPath, []);
+      families.get(link.parentPath).push(link);
+    }
+    const routedLinks = [];
+    for (const children of families.values()) {
+      const parent = instances.get(children[0].parentIds[0])?.page;
+      const childPages = children.map(link => pages.find(page => page.path === link.childPath));
+      const firstTop = Math.min(...childPages.map(page => page.y));
+      const bottom = parent.y + parent.h;
+      if (firstTop - bottom < 24) {fallback.push(...children); continue;}
+      const rail = bottom + (firstTop - headingGap - bottom) / 2;
+      const start = {x: parent.x + parent.w / 2, y: bottom};
+      const routes = children.map((link, index) => {
+        const child = childPages[index], end = {x: child.x + child.w / 2, y: child.y - headingGap};
+        const points = [start, {x:start.x,y:rail}, {x:end.x,y:rail}, end]
+          .filter((point, i, all) => !i || point.x !== all[i-1].x || point.y !== all[i-1].y);
+        return {...link, from:start, to:end, points, tree:true};
+      });
+      const intersects = routes.some(link => link.points.slice(1).some((to, index) => {
+        const from = link.points[index];
+        return pages.some(page => page !== parent && page.path !== link.childPath &&
+          (from.x === to.x ? from.x > page.x-4 && from.x < page.x+page.w+4 && Math.max(from.y,to.y)>page.y-12 && Math.min(from.y,to.y)<page.y+page.h+4 : from.y>page.y-12 && from.y<page.y+page.h+4 && Math.max(from.x,to.x)>page.x-4 && Math.min(from.x,to.x)<page.x+page.w+4));
+      }));
+      if (intersects) fallback.push(...children); else routedLinks.push(...routes);
+    }
+    const router = root.KiCadOverviewRouting;
+    if (fallback.length && router) {const routed=router.route(pages,fallback);routedLinks.push(...routed.links);result.omitted+=routed.omitted;result.routing=routed;}
+    else routedLinks.push(...fallback);
+    result.links=routedLinks;return result;
   }
 
   function draw(view, graph, dark = false, style = {}) {
@@ -74,18 +107,24 @@
     for (const link of graph.links) {
       const path=(link.points||[link.from,link.to]).map(p=>camera.world_to_screen(p)),a=path[0],b=path.at(-1),tail=path.at(-2)||a;
       const length = Math.hypot(b.x - tail.x, b.y - tail.y);
-      if (length < 12) continue;
+      if (length < .1) continue;
       const ux = (b.x - tail.x) / length, uy = (b.y - tail.y) / length;
-      const tip = {x: b.x - ux * 4, y: b.y - uy * 4};
+      const inset=Math.min(2,length/4),head=Math.min(6,Math.max(3,length*.65)),wing=head*.45;
+      const tip = {x: b.x - ux * inset, y: b.y - uy * inset};
       ctx.beginPath(); ctx.moveTo(a.x, a.y);
       for(let i=1;i<path.length-1;i++){const prev=path[i-1],p=path[i],next=path[i+1],before=Math.hypot(p.x-prev.x,p.y-prev.y),after=Math.hypot(next.x-p.x,next.y-p.y),radius=Math.min(12,before/3,after/3);if(!before||!after)continue;ctx.lineTo(p.x-(p.x-prev.x)/before*radius,p.y-(p.y-prev.y)/before*radius);if(ctx.quadraticCurveTo)ctx.quadraticCurveTo(p.x,p.y,p.x+(next.x-p.x)/after*radius,p.y+(next.y-p.y)/after*radius);else ctx.lineTo(p.x,p.y);}
       ctx.lineTo(tip.x, tip.y);
-      ctx.setLineDash(style.dashed?[4,4]:[]); ctx.strokeStyle = style.color||(dark ? '#69c4ba99' : '#398d8499'); ctx.lineWidth = 1.25; ctx.stroke();
+      // A narrow paper-colored casing makes crossings unambiguous: a hierarchy
+      // branch passes over a net guide instead of looking electrically joined.
+      if(!style.dashed){ctx.setLineDash([]);ctx.strokeStyle=dark?'#192a34':'#ffffff';ctx.lineWidth=4;ctx.lineJoin='round';ctx.stroke();}
+      ctx.setLineDash(style.dashed?[4,4]:[]); ctx.strokeStyle = style.color||(dark ? '#69c4ba' : '#398d84'); ctx.lineWidth = 1.5; ctx.lineJoin='round'; ctx.stroke();
       ctx.beginPath(); ctx.moveTo(tip.x, tip.y);
-      ctx.lineTo(tip.x - ux * 7 - uy * 3, tip.y - uy * 7 + ux * 3);
-      ctx.lineTo(tip.x - ux * 7 + uy * 3, tip.y - uy * 7 - ux * 3);
-      ctx.closePath(); ctx.fillStyle = style.color||(dark ? '#69c4ba99' : '#398d8499'); ctx.fill();
-      const segment=path.slice(1).map((p,i)=>({a:path[i],b:p,length:Math.hypot(p.x-path[i].x,p.y-path[i].y)})).sort((a,b)=>b.length-a.length)[0];const text=String(link.label||'').slice(0,96),x=(segment.a.x+segment.b.x)/2,y=(segment.a.y+segment.b.y)/2-12;
+      ctx.lineTo(tip.x - ux * head - uy * wing, tip.y - uy * head + ux * wing);
+      ctx.lineTo(tip.x - ux * head + uy * wing, tip.y - uy * head - ux * wing);
+      ctx.closePath(); ctx.fillStyle = style.color||(dark ? '#69c4ba' : '#398d84'); ctx.fill();
+      const label=String(link.label||link.name||'').trim();
+      if(link.showLabel === false || !label) continue;
+      const segment=path.slice(1).map((p,i)=>({a:path[i],b:p,length:Math.hypot(p.x-path[i].x,p.y-path[i].y)})).sort((a,b)=>b.length-a.length)[0];const text=label.slice(0,96),x=(segment.a.x+segment.b.x)/2,y=(segment.a.y+segment.b.y)/2-12;
       ctx.font = '500 10px sans-serif';
       const width = Math.min(250, ctx.measureText(text).width + 12);
       ctx.fillStyle = dark ? '#10212b' : '#ffffff'; ctx.fillRect(x - width / 2, y - 10, width, 20);

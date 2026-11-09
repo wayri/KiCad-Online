@@ -5,6 +5,21 @@
   const ownerPattern = /^[A-Za-z0-9_.-]+$/;
   const repoPattern = /^[A-Za-z0-9_.-]+$/;
 
+  // Toolbar revision launches are independent of inline drawing/file-diff routes.
+  function revisionRoute(url) {
+    let page;try{page=new URL(url);}catch{return null;}
+    if(page.origin!=='https://github.com'||page.username||page.password)return null;
+    const parts=page.pathname.split('/').filter(Boolean).map(decodeSegment);
+    if(parts.length<4||!parts.every(Boolean)||!parts.slice(0,2).every(part=>ownerPattern.test(part)))return null;
+    const repository=parts.slice(0,2).join('/'),commit=ref=>/^[a-f0-9]{7,40}$/i.test(ref||'');
+    if(parts[2]==='commit'&&parts.length===4&&commit(parts[3]))return{kind:'commit',repository,ref:parts[3]};
+    if(parts[2]!=='pull'||!Number.isSafeInteger(Number(parts[3]))||! /^[1-9][0-9]*$/.test(parts[3]))return null;
+    const number=Number(parts[3]);
+    if(parts.length===6&&parts[4]==='commits'&&commit(parts[5]))return{kind:'commit',repository,ref:parts[5],number};
+    if(parts.length===4||parts.length===5&&['files','commits','checks'].includes(parts[4]))return{kind:'pull',repository,number};
+    return null;
+  }
+
   // Repository landing/tree pages only. Keep this separate from drawing routes.
   function repositoryRoute(url, {gitlabHosts=[]}={}) {
     let page;try{page=new URL(url);}catch{return null;}
@@ -172,6 +187,6 @@
     return params;
   }
 
-  root.KiCadGitHub = { route, repositoryRoute, repositoryRef, detectedProjects, filePath, embeddedBlobData, blobRequest, viewerParams };
+  root.KiCadGitHub = { route, revisionRoute, repositoryRoute, repositoryRef, detectedProjects, filePath, embeddedBlobData, blobRequest, viewerParams };
   if (typeof module === "object" && module.exports) module.exports = root.KiCadGitHub;
 })(typeof globalThis === "object" ? globalThis : this);

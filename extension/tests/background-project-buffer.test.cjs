@@ -1,10 +1,11 @@
+global.KiCadGitHubWebsitePulls=require('../github-website-pulls.js');
 global.KiCadGitHubWebsiteHistory=require('../github-website-history.js');
 /* Actual worker dispatch + website snapshot transport, independent of legacy API helpers. */
 const test=require('node:test'),assert=require('node:assert/strict');
-const SHA='a'.repeat(40),origin='chrome-extension://buffer-test/';let listener,fixture;
+const SHA='a'.repeat(40),origin='chrome-extension://buffer-test/';let listener,fixture;let actionListener;
 global.KiCadGitHub=require('../parsing.js');global.KiCadBrowserData=require('../browser-data.js');global.KiCadGitHubSessionReader=require('../github-session-reader.js');global.KiCadGitHubProjectBuffer=require('../github-project-buffer.js');global.KiCadGitHubProjectView=require('../github-project-view.js');global.KiCadReviewComments=require('../review-comments.js');global.KiCadGitHubReviewApi=require('../github-review-api.js');global.KiCadProjectLaunch=require('../project-launch.js');
 global.importScripts=()=>{};const storage=()=>{const entries=new Map();return {get:async key=>({[key]:entries.get(key)}),set:async values=>{for(const [k,v]of Object.entries(values))entries.set(k,v);},remove:async key=>entries.delete(key)};};
-global.chrome={runtime:{id:'buffer-test',getURL:path=>origin+path,onMessage:{addListener:fn=>listener=fn}},storage:{local:storage(),session:storage()},action:{onClicked:{addListener(){}},setBadgeText:async()=>{},setBadgeBackgroundColor:async()=>{},setTitle:async()=>{}},tabs:{query:async()=>[{id:51,url:'https://github.com/'+fixture.repository+'/tree/main'}],sendMessage:async(id,message)=>{fixture.session.push(message);if(message.type!=='github-session-read')return {ok:true};if(fixture.sessionError)throw fixture.sessionError;if(message.action==='resolve')return {ok:true,result:{sha:SHA,items:fixture.tree('')}};if(message.action==='directory')return {ok:true,result:{sha:SHA,items:fixture.tree(message.path)}};if(message.action==='branches')return {ok:true,result:{repository:fixture.repository,branches:[{name:'main',isDefault:true}],partial:false,warnings:[]}};if(message.action==='commit')return {ok:true,result:{repository:fixture.repository,sha:message.ref,parents:[],parentsKnown:true}};if(message.action==='history')return {ok:true,result:{ref:message.ref,content:`<feed xmlns="http://www.w3.org/2005/Atom"><entry><id>tag:github.com,2008:Grit::Commit/${SHA}</id><link href="https://github.com/${fixture.repository}/commit/${SHA}"/><title>Saved board</title><updated>2026-10-30T00:00:00Z</updated><author><name>Designer</name></author></entry></feed>`}};if(message.action==='file')return {ok:true,result:fixture.sources.has(message.path)?{sha:SHA,content:fixture.sources.get(message.path)}:null};return {ok:true,result:null};}},windows:{create:async()=>({id:1})}};
+global.chrome={runtime:{id:'buffer-test',getURL:path=>origin+path,onMessage:{addListener:fn=>listener=fn}},storage:{local:storage(),session:storage()},action:{onClicked:{addListener(fn){actionListener=fn;}},setBadgeText:async()=>{},setBadgeBackgroundColor:async()=>{},setTitle:async()=>{}},tabs:{query:async()=>[{id:51,url:'https://github.com/'+fixture.repository+'/tree/main'}],sendMessage:async(id,message)=>{fixture.session.push(message);if(message.type!=='github-session-read')return {ok:true};if(fixture.sessionError)throw fixture.sessionError;if(message.action==='resolve')return {ok:true,result:{sha:SHA,items:fixture.tree('')}};if(message.action==='directory')return {ok:true,result:{sha:SHA,items:fixture.tree(message.path)}};if(message.action==='branches')return {ok:true,result:{repository:fixture.repository,branches:[{name:'main',isDefault:true}],partial:false,warnings:[]}};if(message.action==='commit')return {ok:true,result:{repository:fixture.repository,sha:fixture.commitSha||message.ref,parents:[],parentsKnown:true}};if(message.action==='pull')return {ok:true,result:fixture.pull};if(message.action==='pulls')return {ok:true,result:{repository:fixture.repository,pulls:[],hasMore:true,warnings:[]}};if(message.action==='history')return {ok:true,result:{ref:message.ref,content:`<feed xmlns="http://www.w3.org/2005/Atom"><entry><id>tag:github.com,2008:Grit::Commit/${SHA}</id><link href="https://github.com/${fixture.repository}/commit/${SHA}"/><title>Saved board</title><updated>2026-10-30T00:00:00Z</updated><author><name>Designer</name></author></entry></feed>`}};if(message.action==='file')return {ok:true,result:fixture.sources.has(message.path)?{sha:SHA,content:fixture.sources.get(message.path)}:null};return {ok:true,result:null};}},windows:{create:async()=>({id:1})}};
 global.fetch=async(url,options)=>{fixture.fetches.push({url:String(url),options});assert.equal(options.credentials,'omit');assert.equal(options.headers?.Authorization,undefined);if(new URL(url).hostname==='github.com'){assert.equal(String(url),`https://github.com/${fixture.repository}/commits/${SHA}.atom`);return new Response(`<feed xmlns="http://www.w3.org/2005/Atom"><entry><id>tag:github.com,2008:Grit::Commit/${SHA}</id><link href="https://github.com/${fixture.repository}/commit/${SHA}"/><title>Saved board</title><updated>2026-10-30T00:00:00Z</updated><author><name>Designer</name></author></entry></feed>`,{headers:{'content-type':'application/atom+xml'}});}assert.equal(new URL(url).hostname,'raw.githubusercontent.com','default project route must not call GitHub API');const prefix='https://raw.githubusercontent.com/'+fixture.repository+'/'+SHA+'/';assert.ok(String(url).startsWith(prefix));const path=decodeURIComponent(String(url).slice(prefix.length));if(fixture.private)return new Response('',{status:404});const source=fixture.sources.get(path);return source===undefined?new Response('',{status:404}):new Response(source);};
 require('../background.js');
 const viewer=(name='revision-viewer.html')=>({id:'buffer-test',url:origin+name,tab:{id:80},frameId:0,documentId:name});
@@ -63,4 +64,35 @@ test('saved hierarchy loads children across folders without crawling unrelated r
  assert.equal(opened.ok,true,opened.error);assert.deepEqual(opened.result.map(f=>f.path),['design/root.kicad_sch','shared/power.kicad_sch']);
  assert.equal(fixture.session.some(m=>m.action==='directory'&&m.path.startsWith('archive')),false);
  assert.equal(fixture.fetches.length,0);
+});
+
+test('direct commit discovery pins the selected full or short commit without default branch fallback',async()=>{
+ const scope=setup('launch/commit',{'board.kicad_pcb':'(kicad_pcb)'});fixture.commitSha=SHA;
+ for(const ref of [SHA,SHA.slice(0,8)]){const result=await message({type:'repository-detect',repository:scope.repository,ref,source:'https://github.com/'+scope.repository+'/commit/'+ref},viewer('project-launcher.html'));assert.equal(result.ok,true,result.error);assert.equal(result.result.sha,SHA);assert.deepEqual(result.result.projects,['board.kicad_pcb']);}
+ assert.equal(fixture.session.some(m=>m.action==='resolve'&&m.ref==='HEAD'),false);
+ const wrong=await message({type:'repository-detect',repository:scope.repository,ref:'b'.repeat(8),source:'https://github.com/'+scope.repository+'/commit/'+SHA.slice(0,8)},viewer('project-launcher.html'));assert.equal(wrong.ok,false);
+});
+test('PR discovery resolves its explicit website head and keeps comparison unavailable rather than inventing base',async()=>{
+ const scope=setup('launch/pull',{'board.kicad_pro':'{}'});fixture.pull={repository:scope.repository,pullNumber:4,url:'https://github.com/'+scope.repository+'/pull/4',headRepository:scope.repository,headRef:'feature/power',mergeBase:SHA};
+ const request={type:'repository-detect',repository:scope.repository,ref:null,source:'https://github.com/'+scope.repository+'/pull/4'};
+ const result=await message(request,viewer('project-launcher.html'));assert.equal(result.ok,true,result.error);assert.equal(result.result.pullNumber,4);assert.equal(result.result.sha,SHA);assert.equal(result.result.base,undefined);assert.match(result.result.warnings.join(' '),/merge-base/);assert.ok(fixture.session.some(m=>m.action==='resolve'&&m.ref==='feature/power'));
+ fixture.pull.headRepository='foreign/fork';const fork=await message(request,viewer('project-launcher.html'));assert.equal(fork.ok,false);assert.match(fork.error,/head repository|session|tab/i);
+});
+test('PR discovery list is restricted to the owned viewer repository',async()=>{
+ const scope=setup('launch/list',{'board.kicad_pcb':'(kicad_pcb)'}),sender=viewer('browser-viewer.html?repository='+scope.repository+'&head='+SHA+'&file=board.kicad_pcb');
+ const result=await message({type:'revision-pulls',repository:scope.repository},sender);assert.equal(result.ok,true,result.error);assert.equal(result.result.repository,scope.repository);assert.equal(result.result.hasMore,true);
+ const reads=fixture.session.length,wrong=await message({type:'revision-pulls',repository:'other/private'},sender);assert.equal(wrong.ok,false);assert.equal(fixture.session.length,reads);
+});
+
+test('worker retries a disconnected explicitly invoked repository once after reader recovery, without API fallback',async t=>{
+ const scope=setup('recovery/private',{'board.kicad_pcb':'(kicad_pcb)'}),original={get:chrome.tabs.get,create:chrome.tabs.create,scripting:chrome.scripting},url='https://github.com/'+scope.repository;
+ let injections=0;
+ chrome.tabs.get=async id=>({id,url});chrome.tabs.create=async()=>({id:80});
+ chrome.scripting={executeScript:async()=>{injections++;if(injections>1)fixture.sessionError=null;}};
+ t.after(()=>{chrome.tabs.get=original.get;chrome.tabs.create=original.create;chrome.scripting=original.scripting;});
+ await actionListener({id:51,url});assert.equal(injections,1);
+ fixture.sessionError=Error('Receiving end does not exist.');
+ const result=await message({...scope,type:'project-file'});
+ assert.equal(result.ok,true,result.error);assert.equal(result.result.content,'(kicad_pcb)');
+ assert.equal(injections,2);assert.equal(fixture.fetches.length,0);
 });

@@ -34,3 +34,23 @@ test('default standalone launch does not authorize website-embedded viewers; Git
  assert.deepEqual(await store.candidates('gitlab','https://gitlab.com','team/sub/board'),[{id:55,bound:true}]);
  assert.equal(store.frameAllowed({tab:{id:55,url:'https://gitlab.com/team/sub/board'},frameId:1,url:'chrome-extension://test/gerber-viewer.html?repository=team/sub/board&provider=gitlab&host=https://gitlab.com'}),true);
 });
+
+test('nested BoM reader stays bound to its explicit website repository',async()=>{const f=fixture(),store=create(f.api);await store.remember(tab,scope,true);const sender={tab,frameId:3,url:'chrome-extension://test/bom-viewer.html?repository=org/board&ref=main&file=bom.csv'};assert.equal(store.frameAllowed(sender),true);assert.equal(store.messageAllowed(sender,{repository:'org/board',ref:'main'}),true);assert.equal(store.frameAllowed({...sender,url:sender.url.replace('org/board','org/other')}),false);assert.equal(store.messageAllowed(sender,{repository:'org/other'}),false);});
+
+test('stale reader recovery stays in the explicitly invoked live repository tab',async()=>{
+ const f=fixture(),calls=[];let current=tab;
+ f.api.tabs.get=async id=>{assert.equal(id,42);return current;};
+ f.api.scripting={executeScript:async value=>calls.push(value)};
+ const store=create(f.api);await store.remember(tab,scope);
+ assert.equal(await store.recover(42,'github','https://github.com','org/board'),true);
+ assert.deepEqual(calls[0].target,{tabId:42,frameIds:[0]});
+ assert.ok(calls[0].files.includes('github-session-reader.js'));
+ assert.equal(calls[0].files.at(-1),'repository-session-bridge.js');
+ for(const url of ['https://github.com/org/board-other','https://github.com/org/other','https://evil.test/org/board','https://github.com/login']){
+  current={...tab,url};assert.equal(await store.recover(42,'github','https://github.com','org/board'),false);
+ }
+ for(const args of [[43,'github','https://github.com','org/board'],[42,'github','https://github.com','org/other'],[42,'gitlab','https://gitlab.com','org/board']])assert.equal(await store.recover(...args),false);
+ assert.equal(calls.length,1);
+ current=tab;f.api.scripting.executeScript=async()=>{throw Error('Policy blocked');};
+ assert.equal(await store.recover(42,'github','https://github.com','org/board'),false);
+});

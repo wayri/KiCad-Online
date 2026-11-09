@@ -374,9 +374,10 @@
       const renderMiniature=()=>{
         const entries=(workspace.overviewSheets?.()||[]).filter(entry=>entry.sheet).map(entry=>({path:entry.sheet.path,label:entry.sheet.label||entry.sheet.path,placements:entry.placements||[],design:{page:{width:297,height:210},primitives:[]},groups:[]}));
         const mini=KiCadReviewWorkspace.composeSheetOverview(entries),svg=document.createElementNS('http://www.w3.org/2000/svg','svg'),width=mini.design.page.width,height=mini.design.page.height;
-        svg.setAttribute('viewBox',`-12 -4 ${width+24} ${height+8}`);svg.setAttribute('width',String(Math.max(250,width*.22)));svg.setAttribute('height',String(Math.max(80,height*.22)));svg.setAttribute('aria-label','All sheets, parents above children');
-        const graph=globalThis.KiCadSheetHierarchyLinks?.build(mini.pages);
-        for(const link of graph?.links||[]){const line=document.createElementNS('http://www.w3.org/2000/svg','path'),points=link.points||[link.from,{x:link.from.x,y:(link.from.y+link.to.y)/2},{x:link.to.x,y:(link.from.y+link.to.y)/2},link.to];line.setAttribute('d',points.map((point,index)=>`${index?'L':'M'} ${point.x} ${point.y}`).join(' '));line.setAttribute('class','sheet-tree-miniature-link');svg.append(line);}
+        svg.setAttribute('viewBox',`-12 -4 ${width+24} ${height+8}`);svg.setAttribute('width','100%');svg.setAttribute('height',String(Math.max(100,Math.min(160,(height+8)/(width+24)*264))));svg.setAttribute('aria-label','All sheets, parents above children');
+        const graph=globalThis.KiCadSheetHierarchyLinks?.build(mini.pages,{headingGap:0});
+        const defs=document.createElementNS('http://www.w3.org/2000/svg','defs'),arrow=document.createElementNS('http://www.w3.org/2000/svg','marker'),tip=document.createElementNS('http://www.w3.org/2000/svg','path');arrow.setAttribute('id','sheetTreeArrow');arrow.setAttribute('viewBox','0 0 6 6');arrow.setAttribute('refX','5');arrow.setAttribute('refY','3');arrow.setAttribute('markerWidth','5');arrow.setAttribute('markerHeight','5');arrow.setAttribute('orient','auto');tip.setAttribute('d','M 0 0 L 6 3 L 0 6 Z');tip.setAttribute('fill','#58a89f');arrow.append(tip);defs.append(arrow);svg.append(defs);
+        for(const link of graph?.links||[]){const line=document.createElementNS('http://www.w3.org/2000/svg','path'),points=link.points||[link.from,{x:link.from.x,y:(link.from.y+link.to.y)/2},{x:link.to.x,y:(link.from.y+link.to.y)/2},link.to];line.setAttribute('d',points.map((point,index)=>`${index?'L':'M'} ${point.x} ${point.y}`).join(' '));line.setAttribute('class','sheet-tree-miniature-link');line.setAttribute('marker-end','url(#sheetTreeArrow)');svg.append(line);}
         for(const page of mini.pages){
           const node=document.createElementNS('http://www.w3.org/2000/svg','g'),rect=document.createElementNS('http://www.w3.org/2000/svg','rect'),label=document.createElementNS('http://www.w3.org/2000/svg','text'),tooltip=document.createElementNS('http://www.w3.org/2000/svg','title'),selection=workspace.overviewSelection?.(page.path);
           node.setAttribute('role','button');node.setAttribute('tabindex','0');node.setAttribute('aria-label',`Go to ${page.label}`);node.setAttribute('class','sheet-tree-miniature-node'+(selection?.netIds?.length?' highlighted':'')+(page.path===currentFile()?' current':''));rect.setAttribute('x',page.x);rect.setAttribute('y',page.y);rect.setAttribute('width',page.w);rect.setAttribute('height',page.h);rect.setAttribute('rx','15');label.setAttribute('x',page.x+page.w/2);label.setAttribute('y',page.y+page.h/2);label.textContent=page.label.length>12?page.label.slice(0,9)+'…':page.label;tooltip.textContent=page.path;
@@ -538,10 +539,11 @@
       if(msg.command==='search-result'){const value=msg.result;if(value&&globalThis.KiCadWorkspaceSearch?.safePath(value.path)&&['object','file','report','draft'].includes(value.kind))workspace.openWorkspaceSearchResult?.(value).catch(error=>{label('reviewNotice',error.message);$('reviewNotice').hidden=false;});return;}
       if(msg.command==='detach-sync'&&typeof msg.enabled==='boolean'){windowLink?.setEnabled(msg.enabled);return;}
       if(msg.command==='workspace-view'){
-        if(!['schematic','layout','3d','draftsman','simulation'].includes(msg.mode))return;
+        if(!['schematic','layout','3d','draftsman','simulation','bom'].includes(msg.mode))return;
         if(msg.mode==='3d'){if(pcb&&!scene)$('mode3d').click();return;}
         if(scene)$('mode3d').click();
         if(msg.mode==='draftsman')$('openDraftsman')?.click();
+        if(msg.mode==='bom')$('openBomManager')?.click();
         if(msg.mode==='simulation'){if(globalThis.KiCadWorkspaceChrome)dispatchEvent(new Event('kicad-review:simulation-view'));else $('openSavedReports')?.click();}
         return;
       }

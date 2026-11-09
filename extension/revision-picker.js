@@ -10,6 +10,18 @@
     if(request.pullNumber)throw new Error('Manual revision comparison is separate from the pull-request review.');
     return params;
   }
+  function revisionTarget(request,value){
+    if(request.provider==='gitlab')throw Error('Pull-request lookup currently supports GitHub projects. Use branch or commit comparison for GitLab.');
+    const repository=request.pullRepository||request.repository;if(!data.validRepository(repository))throw Error('Invalid repository.');
+    const text=String(value||'').trim();let path;
+    if(/^#?[1-9][0-9]{0,8}$/.test(text))path='pull/'+text.replace(/^#/,'');
+    else if(/^[0-9a-f]{7,40}$/i.test(text))path='commit/'+text;
+    else {let url;try{url=new URL(text);}catch{}if(!url||url.origin!=='https://github.com'||url.username||url.password||url.search||url.hash)throw Error('Enter a commit SHA, #PR number, or a GitHub PR/commit URL for this repository.');
+      const prefix='/'+repository+'/';if(!url.pathname.startsWith(prefix))throw Error('Choose a revision in '+repository+'.');path=url.pathname.slice(prefix.length).replace(/\/$/,'');
+      if(!/^(?:commit\/[0-9a-f]{7,40}|pull\/[1-9][0-9]{0,8}(?:\/(?:files|commits|checks))?)$/i.test(path))throw Error('Unsupported revision URL.');
+    }
+    return 'https://github.com/'+repository+'/'+path;
+  }
   function panelBounds(anchor,width,height,panelHeight=560){
     const pad=8,w=Math.max(1,Math.min(580,width-pad*2)),h=Math.max(1,Math.min(panelHeight,height-pad*2));
     return {left:Math.max(pad,Math.min(anchor.right-w,width-pad-w)),top:Math.max(pad,Math.min(anchor.bottom+4,height-pad-h)),width:w,maxHeight:h};
@@ -98,7 +110,7 @@
         timeline?.update({commits:graphCommits,branches:graphBranches,currentRef:options.getCurrentRef?.()||request.head});
       }catch(error){if(!disposed&&ticket===graphBranchTicket)graphBranchNote.textContent=error.message;}
     }
-    let graphBranchNote=null;
+    let graphBranchNote=null,discoveryTicket=0;
     function graphWorkspace(){
       if(!root.KiCadHistoryTimeline)return;
       const embedded=Boolean(options.workspaceHolder),dialog=make(embedded?'section':'dialog');dialog.className='history-workspace-dialog'+(embedded?' history-workspace-inline':'');dialog.hidden=embedded;dialog.setAttribute('aria-label','Repository history and visual comparison');
@@ -112,6 +124,17 @@
       branchInput.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();choose(branchInput.value.trim());}});
       refresh.addEventListener('click',()=>{loadHistory();loadGraphBranches();});
       tools.append(graphBranchSelect,branchInput,browse,refresh);
+      const discovery=make('section'),lookup=make('input'),openRevision=make('button','Open revision'),pullsButton=make('button','Browse pull requests'),pullList=make('div'),lookupStatus=make('p');discovery.className='revision-discovery';discovery.setAttribute('aria-label','Find a pull request or commit');lookup.placeholder='Commit SHA, #PR or GitHub URL';lookup.maxLength=2048;lookup.setAttribute('aria-label','Commit SHA, pull request number or URL');lookupStatus.setAttribute('role','status');pullList.className='revision-pull-list';openRevision.type=pullsButton.type='button';
+      const launch=value=>{try{const source=revisionTarget(request,value);if(!options.openRevision)throw Error('Revision launching is unavailable in this host.');options.openRevision(source);}catch(error){lookupStatus.textContent=error.message;}};
+      openRevision.addEventListener('click',()=>launch(lookup.value));lookup.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();launch(lookup.value);}});
+      pullsButton.hidden=request.provider==='gitlab';pullsButton.addEventListener('click',async()=>{const ticket=++discoveryTicket;pullsButton.disabled=true;lookupStatus.textContent='Loading pull requests from your repository website session…';try{
+        const repository=request.pullRepository||request.repository,response=await options.send({type:'revision-pulls',repository,ref:options.getCurrentRef?.()||request.head,file:request.file});if(!response?.ok)throw Error(response?.error||'Pull requests unavailable.');const result=response.result;
+        if(disposed||ticket!==discoveryTicket)return;if(result?.repository!==repository||!Array.isArray(result.pulls)||result.pulls.length>50)throw Error('Invalid bounded pull-request listing.');
+        const entries=result.pulls.map(pull=>{if(!Number.isSafeInteger(pull.number)||pull.number<1)throw Error('Invalid pull-request number.');const source=revisionTarget(request,'#'+pull.number);if(pull.url&&pull.url!==source)throw Error('Pull-request repository does not match.');return {pull,source};});pullList.replaceChildren();
+        for(const {pull,source}of entries){const row=make('button','#'+pull.number+' · '+String(pull.title||'Pull request').slice(0,240)+(pull.state?' · '+String(pull.state).slice(0,24):''));row.type='button';row.addEventListener('click',()=>launch(source));pullList.append(row);}
+        lookupStatus.textContent=result.pulls.length+' pull requests shown. '+[...(result.warnings||[]),...(result.hasMore?['More results are available on GitHub; enter a PR number to open one directly.']:[])].join(' ');
+      }catch(error){if(!disposed&&ticket===discoveryTicket)lookupStatus.textContent=error.message;}finally{if(!disposed&&ticket===discoveryTicket)pullsButton.disabled=false;}});
+      discovery.append(lookup,openRevision,pullsButton,lookupStatus,pullList);
       graphBranchNote=make('p');graphBranchNote.className='history-workspace-note';graphBranchNote.setAttribute('role','status');
       const holder=make('div');holder.className='history-workspace-body';
       timeline=root.KiCadHistoryTimeline.mount({holder,commits:[],branches:[],currentRef:options.getCurrentRef?.()||request.head,onOpen:sha=>openCommit(sha),onCompareCurrent:sha=>openCommit(sha,true),onCompare:(base,head)=>{
@@ -121,7 +144,7 @@
       },onError:error=>tell(error?.message||String(error))});
       const help=make('p','Connections follow verified Git parents. Unavailable ancestry stays unknown. Select Base and Head to inspect source-bound design deltas.');
       help.className='history-workspace-note';
-      dialog.append(header,tools,graphBranchNote,holder,advanced,status,help);(options.workspaceHolder||doc.body).append(dialog);historyDialog=dialog;if(embedded)detail.hidden=true;
+      dialog.append(header,tools,discovery,graphBranchNote,holder,advanced,status,help);(options.workspaceHolder||doc.body).append(dialog);historyDialog=dialog;if(embedded)detail.hidden=true;
       const closeGraph=()=>{if(disposed)return;if(embedded)dialog.hidden=true;else dialog.close();epoch++;graphBranchTicket++;busy(false);options.onCloseGraph?.();summary.focus?.();};
       graphDismiss=closeGraph;exit.addEventListener('click',closeGraph);
       dialog.addEventListener('cancel',()=>{epoch++;graphBranchTicket++;busy(false);summary.focus?.();});
@@ -133,7 +156,7 @@
     const openGraph=graphWorkspace();
     const closeGraph=()=>graphDismiss?.();
 
-    return {populate,openComparison,loadHistory,openCommit,openGraph,closeGraph,dispose(){disposed=true;epoch++;graphBranchTicket++;timeline?.dispose();historyDialog?.remove();doc.removeEventListener?.('pointerdown',outside);doc.removeEventListener?.('keydown',escape);host.removeEventListener?.('resize',position);host.visualViewport?.removeEventListener('resize',position);detail.remove();}};
+    return {populate,openComparison,loadHistory,openCommit,openGraph,closeGraph,dispose(){disposed=true;epoch++;graphBranchTicket++;discoveryTicket++;timeline?.dispose();historyDialog?.remove();doc.removeEventListener?.('pointerdown',outside);doc.removeEventListener?.('keydown',escape);host.removeEventListener?.('resize',position);host.visualViewport?.removeEventListener('resize',position);detail.remove();}};
   }
-  const api={comparisonQuery,mount,panelBounds};root.KiCadRevisionPicker=api;if(typeof module==='object'&&module.exports)module.exports=api;
+  const api={comparisonQuery,revisionTarget,mount,panelBounds};root.KiCadRevisionPicker=api;if(typeof module==='object'&&module.exports)module.exports=api;
 })(typeof globalThis==='object'?globalThis:this);

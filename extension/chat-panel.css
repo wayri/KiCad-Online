@@ -84,3 +84,5 @@
 .comment-composer-menu{position:relative}.comment-composer-menu-body{bottom:calc(100% + 8px);right:auto;width:min(300px,calc(100vw - 32px),calc(var(--comments-sidebar-width,340px) - 32px));box-sizing:border-box}
 
 .chat-annotation-level select[aria-label="Annotation state"]{border-left-width:4px;border-left-style:solid}
+
+.comment-settings-header{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}.comment-settings-header button{min-height:32px}

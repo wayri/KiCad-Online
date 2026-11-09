@@ -39,18 +39,18 @@
   const partial=!all||payload.has_more;return {repository,branches:[...branches.values()],warnings:partial?['GitHub website branch window: additional branches may exist. Enter another branch name to load it.']:[],partial};
  }
  function parseCommit(objects,{repository,ref}){
-  repositoryCheck(repository);if(!SHA.test(ref||''))throw Error('GitHub commit metadata requires a pinned revision.');
+  repositoryCheck(repository);if(!/^[a-f0-9]{7,40}$/i.test(ref||''))throw Error('GitHub commit metadata requires a commit ID.');
   const commits=objects.map(value=>value?.payload?.commitRoute?.commit).filter(Boolean);if(commits.length!==1)throw Error('GitHub website commit metadata is unavailable or conflicting.');
-  const commit=commits[0];if(!SHA.test(commit.oid||'')||commit.oid.toLowerCase()!==ref.toLowerCase()||!exactPath(commit.url,'/'+repository+'/commit/'+commit.oid))throw Error('GitHub website returned a different commit.');
-  if(!Array.isArray(commit.parents)||commit.parents.length>16||commit.parents.some(parent=>!SHA.test(parent)||parent.toLowerCase()===ref.toLowerCase())||new Set(commit.parents.map(parent=>parent.toLowerCase())).size!==commit.parents.length)throw Error('Invalid GitHub website commit parents.');
-  return {repository,sha:ref.toLowerCase(),parents:commit.parents.map(parent=>parent.toLowerCase()),parentsKnown:true};
+  const commit=commits[0];if(!SHA.test(commit.oid||'')||!commit.oid.toLowerCase().startsWith(ref.toLowerCase())||!exactPath(commit.url,'/'+repository+'/commit/'+commit.oid))throw Error('GitHub website returned a different commit.');
+  if(!Array.isArray(commit.parents)||commit.parents.length>16||commit.parents.some(parent=>!SHA.test(parent)||parent.toLowerCase()===commit.oid.toLowerCase())||new Set(commit.parents.map(parent=>parent.toLowerCase())).size!==commit.parents.length)throw Error('Invalid GitHub website commit parents.');
+  return {repository,sha:commit.oid.toLowerCase(),parents:commit.parents.map(parent=>parent.toLowerCase()),parentsKnown:true};
  }
  function validateBranches(value,repository){
   repositoryCheck(repository);if(value?.repository!==repository||!Array.isArray(value.branches)||value.branches.length>100||typeof value.partial!=='boolean'||value.branches.some(branch=>!branchName(branch?.name)||typeof branch.isDefault!=='boolean')||new Set(value.branches.map(branch=>branch.name)).size!==value.branches.length)throw Error('Invalid GitHub website branches response.');
   return {repository,branches:value.branches.map(({name,isDefault})=>({name,isDefault})),partial:value.partial,warnings:value.partial?['GitHub website branch window: additional branches may exist. Enter another branch name to load it.']:[]};
  }
  function validateCommit(value,repository,ref){
-  if(value?.repository!==repository||value?.sha!==ref.toLowerCase()||value.parentsKnown!==true)throw Error('Invalid GitHub website commit response.');
+  if(value?.repository!==repository||!SHA.test(value?.sha||'')||!value.sha.toLowerCase().startsWith(ref.toLowerCase())||value.parentsKnown!==true)throw Error('Invalid GitHub website commit response.');
   return parseCommit([{payload:{commitRoute:{commit:{oid:value.sha,url:'/'+repository+'/commit/'+value.sha,parents:value.parents}}}}],{repository,ref});
  }
  const api={parseAtom,parseBranches,parseCommit,validateBranches,validateCommit,MAX_BYTES};root.KiCadGitHubWebsiteHistory=api;if(typeof module==='object'&&module.exports)module.exports=api;

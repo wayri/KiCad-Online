@@ -29,6 +29,7 @@
  function open(page,value={}){
   if(!PAGES.has(page))throw Error('Unsupported engineering viewer.');
   const source=context(value);
+  if(value.sourceFile!==undefined){if(page!=='bom-viewer.html'||!path(value.sourceFile))throw Error('Invalid BoM discovery source.');source.sourceFile=value.sourceFile;}
   if(value.resultView!==undefined){if(page!=='analysis-viewer.html'||!['map','2d','3d'].includes(value.resultView))throw Error('Invalid saved result view.');source.resultView=value.resultView;}
   if(page==='analysis-viewer.html'&&(!source.repository||!source.ref||!source.file||!/\.(json|csv|tsv|wbk|raw|txt|html?)$/i.test(source.file)))throw Error('Choose a saved simulation or results report from the project tree.');
   let android;try{android=root.top?.KiCadAndroid;}catch{}
@@ -53,7 +54,7 @@
   close.type='button';close.onclick=()=>dialog.close();heading.className='bom-manager-heading';heading.append(title,close);
   const body=make('section','');body.className='bom-manager-controls';const status=make('p','');status.setAttribute('role','status');
   for(const [label,page]of [['Compare designs / CSV BoMs','comparison-viewer.html'],['PDF viewer','pdf-viewer.html'],['Gerber viewer & analyzer','gerber-viewer.html'],['Import BoM / iBOM','bom-viewer.html'],['Engineering calculators','calculator-viewer.html']]){
-   const button=make('button',label);button.type='button';button.onclick=()=>{try{const target={...source};if(page==='pdf-viewer.html'&&!/\.pdf$/i.test(target.file||'')||page==='gerber-viewer.html'&&!/\.(gbr|ger|gerber|gtl|gbl|gts|gbs|gto|gbo|gtp|gbp|gko|gm\d+|g\d+|drl|xln)$/i.test(target.file||'')||page==='bom-viewer.html'&&!/\.(json|csv|tsv|html?)$/i.test(target.file||''))delete target.file;open(page,target);dialog.close();}catch(e){status.textContent=e.message;}};body.append(button);
+   const button=make('button',label);button.type='button';button.onclick=()=>{try{const target={...source};if(page==='bom-viewer.html'&&source.file)target.sourceFile=source.file;if(page==='pdf-viewer.html'&&!/\.pdf$/i.test(target.file||'')||page==='gerber-viewer.html'&&!/\.(gbr|ger|gerber|gtl|gbl|gts|gbs|gto|gbo|gtp|gbp|gko|gm\d+|g\d+|drl|xln)$/i.test(target.file||'')||page==='bom-viewer.html'&&!/\.(json|csv|tsv|html?)$/i.test(target.file||''))delete target.file;open(page,target);dialog.close();}catch(e){status.textContent=e.message;}};body.append(button);
   }
   body.append(make('p','For simulation plots and overlays, select a saved results report in the project tree. Supported reports retain their source revision.'));
   if(source.file&&/\.(json|csv|tsv|wbk|raw|txt|html?)$/i.test(source.file)){

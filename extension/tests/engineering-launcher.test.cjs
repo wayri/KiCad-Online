@@ -28,7 +28,7 @@ test('drawing menu opens standalone imports without misinterpreting the active P
  const dialog=api.openMenu({repository:'owner/repo',ref:'abc',file:'hardware/board.kicad_pcb'});
  assert.equal(dialog.open,true);assert.equal(nodes.some(n=>n.textContent==='Open selected results report'),false);
  nodes.find(n=>n.textContent==='Import BoM / iBOM').onclick();
- const url=new URL(calls[0][0]);assert.equal(url.pathname,'/bom-viewer.html');assert.equal(url.searchParams.get('repository'),'owner/repo');assert.equal(url.searchParams.get('ref'),'abc');assert.equal(url.searchParams.has('file'),false);assert.equal(dialog.removed,true);
+ const url=new URL(calls[0][0]);assert.equal(url.pathname,'/bom-viewer.html');assert.equal(url.searchParams.get('repository'),'owner/repo');assert.equal(url.searchParams.get('ref'),'abc');assert.equal(url.searchParams.has('file'),false);assert.equal(url.searchParams.get('sourceFile'),'hardware/board.kicad_pcb');assert.equal(dialog.removed,true);
 });
 test('VS Code opens saved analysis through the scoped native host without external browser navigation',async()=>{
  const messages=[],{api,calls}=host({KiCadVSCodeContext:{search:'repository=local%2Frepo&ref=workspace&file=board.kicad_pcb',drawingFile:'board.kicad_pcb'},chrome:{runtime:{sendMessage:async message=>{messages.push(message);return{ok:true,result:{opened:true}};}}}});

@@ -226,7 +226,7 @@ test('primary workspace tabs retain drawings while project settings are open', a
  const view=viewer({...parameters,base:''},()=>({ok:false,error:'unexpected read'}));
  const frame=view.get('headDrawing').children[0];
  const tab=name=>view.get('workspaceTabs').children.find(button=>button.getAttribute('aria-label')===name+' view');
- assert.deepEqual(view.get('workspaceTabs').children.map(button=>button.getAttribute('aria-label')),['Project view','Schematic view','Layout view','3D view','Draftsman view','Simulation view','History view']);
+ assert.deepEqual(view.get('workspaceTabs').children.map(button=>button.getAttribute('aria-label')),['Project view','Schematic view','Layout view','3D view','BoM view','Draftsman view','Simulation view','History view']);
  tab('Project').click();assert.equal(view.get('comparison').hidden,true);
  const project=view.get('projectWorkspace').children[0];assert.equal(new URL(project.src).searchParams.get('projectOnly'),'1');
  tab('Schematic').click();assert.equal(view.get('comparison').hidden,false);assert.equal(view.get('headDrawing').children[0],frame);
@@ -395,3 +395,5 @@ test('History is a top-level workspace tab and returning preserves the existing 
  assert.equal(view.get('historyWorkspace').hidden,true);
  assert.equal(tab('Schematic').getAttribute('aria-pressed'),'true');
 });
+
+test('BoM top tab uses head inventory and preserves the loaded drawing',async()=>{let options,shows=0;const view=viewer({...parameters,base:''},message=>message.type==='project-inventory'?{ok:true,result:{files:[{path:'BoM.csv'}]}}:{ok:true,result:[]},{KiCadBomBrowser:{mount(value){options=value;return {show:async()=>{shows++;await value.inventory();}};}}});const drawing=view.get('headDrawing').children[0];const tab=view.get('workspaceTabs').children.find(n=>n.attributes['aria-label']==='BoM view');assert(tab);tab.click();await tick();assert.equal(view.get('comparison').hidden,true);assert.equal(view.get('bomWorkspace').hidden,false);assert.equal(options.scope.repository,'fork/board');assert.equal(options.scope.ref,parameters.head);assert.equal(view.calls.find(x=>x.type==='project-inventory').repository,'fork/board');assert.equal(view.get('headDrawing').children[0],drawing);view.get('workspaceTabs').children.find(n=>n.attributes['aria-label']==='Schematic view').click();await tick();assert.equal(view.get('bomWorkspace').hidden,true);assert.equal(view.get('headDrawing').children[0],drawing);});

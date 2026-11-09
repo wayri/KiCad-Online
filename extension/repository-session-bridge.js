@@ -2,7 +2,19 @@
 ((root)=>{'use strict';
  if(root.KiCadRepositorySessionBridge)return;root.KiCadRepositorySessionBridge=true;
  const loads=new Map();let reservedBytes=0,reviewLoads=0;
- const failures={GITLAB_SAML_REQUIRED:'GitLab requires SSO/SAML verification in the matching project tab.',GITLAB_LOGIN_REQUIRED:'Sign in to this GitLab project in its website tab.',GITLAB_UNEXPECTED_HTML:'GitLab returned a login or access page instead of project data.',MANAGED_POLICY:'Administrator policy prevents this project read.'};
+ const failures={GITLAB_SAML_REQUIRED:'GitLab requires SSO/SAML verification in the matching project tab.',GITLAB_LOGIN_REQUIRED:'Sign in to this GitLab project in its website tab.',GITLAB_UNEXPECTED_HTML:'GitLab returned a login or access page instead of project data.',MANAGED_POLICY:'Administrator policy prevents this project read.',
+  GITHUB_WEBSITE_RATE_LIMIT:'GitHub temporarily limited website requests. Wait briefly, then retry.',
+  GITHUB_WEBSITE_NOT_FOUND:'GitHub returned HTTP 404 for the requested repository location. Check its branch and folder in the same browser profile; private repositories also return 404 when website access is unavailable.',
+  GITHUB_WEBSITE_DENIED:'GitHub denied this website request (HTTP 401/403). Check access directly in the matching repository tab.',
+  GITHUB_WEBSITE_UNREADABLE:'GitHub returned an unreadable repository page. Check the matching repository tab and retry.',
+  GITHUB_WEBSITE_NETWORK:'The repository-tab website request failed at the browser network layer. Check browser connectivity or policy, then retry.',
+  GITHUB_TREE_UNAVAILABLE:'GitHub did not expose readable branch/folder metadata. Reload the repository folder and click the extension icon again. No additional repository permissions are required.',
+  GITHUB_REVISION_MISMATCH:'GitHub returned metadata for a different revision or folder. Reload the repository page and try again.',
+  GITHUB_TREE_INCOMPLETE:'GitHub returned an incomplete directory listing. Open the smaller project folder and try again.',
+  GITHUB_READ_TOO_LARGE:'The GitHub website response exceeds the bounded reader limit. Open the smaller project folder and try again.',
+  GITHUB_READ_FORMAT:'The repository response could not be decoded as the expected saved data. Reload its website tab and retry.',
+  GITHUB_READ_TIMEOUT:'The repository-tab read timed out. Keep that tab open and retry.',
+  GITHUB_READ_CANCELLED:'Repository loading was cancelled.'};
  function failure(error){const code=Object.hasOwn(failures,error?.code||'')?error.code:null;return{ok:false,error:code?failures[code]:'Repository website read failed. Open this project tab and complete any sign-in/SSO requirement; browser policy may restrict access.',...(code?{code}:{})};}
 
  root.chrome.runtime.onMessage.addListener((message,sender,reply)=>{

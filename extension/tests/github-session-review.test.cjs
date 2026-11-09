@@ -38,3 +38,21 @@ test('website session probe never uses API credentials and fails on redirects or
  for(const number of [0,-1,1.5,'1'])await assert.rejects(reader.dispatch({repository:'owner/repo',number,action:'inspect'}));
  await assert.rejects(reader.dispatch({repository:'owner/repo',number:1,action:'post'}));assert.equal(calls,1);
 });
+
+test('website issue catalogue reports verified next-page coverage without following foreign or arbitrary URLs',async()=>{
+ const record={number:7,title:'Existing review',url:'https://github.com/owner/repo/issues/7',state:'OPEN',author:{login:'reviewer'}};let href='/owner/repo/issues?page=2&q=is%3Aissue';
+ const doc={querySelector:()=>({getAttribute:()=> 'reviewer'}),querySelectorAll:query=>query.startsWith('script')?[{textContent:JSON.stringify({items:[record]})}]:[{getAttribute:()=>href}]};
+ const calls=[],reader=api.create({location:{href:'https://github.com/owner/repo'},document:doc,parseHTML:()=>doc,fetch:async(url,init)=>{calls.push(url);assert.equal(init.credentials,'same-origin');assert.equal(init.redirect,'error');return new Response('<html></html>',{headers:{'Content-Type':'text/html'}});}});
+ let result=await reader.dispatch({repository:'owner/repo',action:'list'});assert.equal(result.threads[0].number,7);assert.equal(result.hasMore,true);assert.equal(result.pagination,'website-only');assert.match(result.warnings.join(' '),/more Issues/);assert.equal(calls.length,1);
+ for(href of ['https://evil.test/owner/repo/issues?page=2','/other/repo/issues?page=2','/owner/repo/pulls?page=2','https://name@github.com/owner/repo/issues?page=2','/owner/repo/issues?page=1','/owner/repo/issues?page=not-a-number']){result=await reader.dispatch({repository:'owner/repo',action:'list'});assert.equal(result.hasMore,false,href);assert.match(result.warnings.join(' '),/limited to the current result page/);}
+});
+
+test('public website conversations load without login while writing stays denied',async()=>{
+ const time='2026-11-04T06:00:00Z',url='https://github.com/owner/repo/issues/7';
+ const issue={number:7,title:'Public design review',url,state:'OPEN',author:{login:'reviewer'},body:'Public discussion',createdAt:time,updatedAt:time,viewerCanComment:true,totalCommentsCount:1,timelineItems:{nodes:[{url:url+'#issuecomment-99',author:{login:'colleague'},body:'Existing reply',createdAt:time}]}};
+ const doc={querySelector:()=>null,querySelectorAll:query=>query.startsWith('script')?[{textContent:JSON.stringify({issue})}]:[]};
+ const reader=api.create({location:{href:'https://github.com/owner/repo'},document:doc,parseHTML:()=>doc,fetch:async()=>new Response('<html></html>',{headers:{'Content-Type':'text/html'}})});
+ const listed=await reader.dispatch({repository:'owner/repo',action:'list'});assert.equal(listed.account,null);assert.equal(listed.threads[0].title,issue.title);
+ const result=await reader.dispatch({repository:'owner/repo',action:'read',number:7});assert.equal(result.comments[0].body,'Existing reply');assert.equal(result.account,null);assert.equal(result.capabilities.create,false);assert.equal(result.capabilities.reply,false);
+ for(const action of ['prepare','inspect'])await assert.rejects(reader.dispatch({repository:'owner/repo',action,number:7,body:'Do not send'}),/Sign in/);
+});
