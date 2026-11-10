@@ -65,3 +65,24 @@ test('viewer entrypoints resolve every explicit icon and distinct viewport actio
  const names=['maximize','restore','fit','page','sheets','parts','inspect','comment','ruler','grid','flip','fast-pi','draftsman','download','tools'];
  assert.equal(new Set(names.map(name=>paths[name])).size,names.length);
 });
+
+test('explorer, properties, variables, layers and probes use distinct semantic toolbar icons',()=>{
+ const{document,api,start}=host();
+ const roles=[['partsButton','Explorer','parts','explorer'],['propertiesButton','Inspect','inspect','inspect'],['schematicVariablesButton','Variables','inspect','variables'],['mainLayerBrowser','Layers',null,'layers'],['netQuickViews','Probe views','net-instances','probe'],['openTestpoints','Testpoints & nets','inspect','testpoints'],['openEngineeringTools','Engineering tools','gear','tools']];
+ for(const[id,label,oldIcon]of roles){const button=document.createElement('button');button.id=id;button.textContent=label;if(oldIcon)button.dataset.icon=oldIcon;button.onclick=()=>id;document.body.append(button);}
+ start();api.decorate(document);
+ for(const [index,[id,label,,expected]]of roles.entries()){const button=document.body.children[index];assert.equal(button.dataset.icon,expected,id);assert.equal(button.onclick(),id);assert.equal(button.getAttribute('aria-label'),label);assert.equal(button.querySelectorAll('svg').length,1);}
+ const{paths}=require('../ui-icons.js');const names=roles.map(row=>row[3]);assert.equal(new Set(names.map(name=>paths[name])).size,names.length);
+});
+
+test('floating controls and probe actions have dedicated glyphs without losing navigation names',()=>{
+ const{document,start}=host();
+ for(const label of ['Float','Dock','Detach','Layers','Probe layers','Probe views','Open probe','Variables']){const b=document.createElement('button');b.textContent=label;document.body.append(b);}start();
+ assert.deepEqual(document.body.children.map(b=>b.dataset.icon),['detach','dock','detach','layers','layers','probe','probe','variables']);
+ const{paths}=require('../ui-icons.js');assert.notEqual(paths.detach,paths.dock);assert.notEqual(paths.probe,paths.layers);assert.notEqual(paths.variables,paths.inspect);
+});
+
+test('comment navigation shares the standard back, forward and home glyphs',()=>{
+ const{document,start}=host();for(const[id,label]of [['commentBack','‹'],['commentForward','›'],['commentHome','Home']]){const button=document.createElement('button');button.id=id;button.textContent=label;button.setAttribute('aria-label',id);document.body.append(button);}start();
+ assert.deepEqual(document.body.children.map(button=>button.dataset.icon),['back','forward','home']);for(const button of document.body.children)assert.equal(button.getAttribute('aria-label'),button.id);
+});

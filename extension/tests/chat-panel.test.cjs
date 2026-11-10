@@ -31,6 +31,25 @@ function harness(overrides={}){
 }
 const thread=(number=1,extra={})=>({kind:'issue',number,title:'Review power stage',state:'open',id:String(number),author:'owner',body:'Root description',createdAt:'2026-10-27T04:00:00.000Z',updatedAt:'2026-10-27T04:00:00.000Z',comments:[{id:'12',author:'reviewer',body:'Check **U3**',createdAt:'2026-10-27T04:10:00.000Z',updatedAt:'2026-10-27T04:10:00.000Z',canReply:true,canEdit:false}],capabilities:{create:true,reply:true,edit:true,reactions:false},...extra});
 const event=(key,extra={})=>({key,preventDefault(){this.prevented=true;},...extra});
+
+test('unchanged polling preserves expanded message controls and focus; new messages preserve existing controls',()=>{
+ const h=harness();h.api.render(thread());const menu=h.find('chat-message-more');menu.children[0].onclick(event('click'));menu.children[0].focus();
+ h.api.render(thread());assert.equal(h.find('chat-message-more'),menu);assert.equal(menu.open,true);assert.equal(h.doc.activeElement,menu.children[0]);
+ const value=thread();value.comments.push({id:'99',author:'owner',body:'New message',createdAt:'2026-10-27T05:00:00Z',updatedAt:'2026-10-27T05:00:00Z'});h.api.render(value);
+ const retained=walk(h.container).find(n=>n.className==='chat-message-more'&&n.messageKey===menu.messageKey);assert.ok(retained);assert.equal(retained.open,true);assert.equal(h.doc.activeElement,retained.children[0]);h.api.dispose();
+});
+
+test('manual refresh keeps thread options open and asks for a refresh-only read',async()=>{
+ const reads=[],h=harness({onRead:async(...args)=>reads.push(args)});h.api.render(thread());h.find('chat-options-toggle').onclick();await h.find('chat-refresh').onclick();
+ assert.equal(h.find('chat-options-menu').hidden,false);assert.deepEqual(reads,[['issue',1,{refresh:true}]]);h.api.dispose();
+});
+
+test('image attachment has an immediate removable preview while normalization is pending',async()=>{
+ let finish;const released=[],h=harness();h.host.URL={createObjectURL:()=> 'blob:bounded-preview',revokeObjectURL:url=>released.push(url)};h.host.KiCadCommentCompose={...require('../comment-compose.js'),normalizeCapture:()=>new Promise(resolve=>{finish=resolve;})};h.api.render(thread());
+ const blob={type:'image/png',size:80,arrayBuffer:async()=>new ArrayBuffer(80)},pending=h.byId('chatMessageText').onpaste({clipboardData:{items:[{kind:'file',type:'image/png',getAsFile:()=>blob}]},preventDefault(){}});await new Promise(setImmediate);
+ assert.equal(h.byId('chatCapturePreview').hidden,false);assert.equal(h.byId('chatCapturePreview').src,'blob:bounded-preview');assert.equal(h.find('chat-send').disabled,true);h.find('chat-remove-capture').onclick();assert.equal(h.byId('chatCapturePreview').hidden,true);assert.deepEqual(released,['blob:bounded-preview']);
+ finish({mime:'image/png',dataUrl:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB',width:1,height:1});await pending;assert.equal(h.api.draft().capture,null);assert.equal(h.requests.length,0);h.api.dispose();
+});
 function messageAction(h,className){const action=h.find(className);assert.ok(action);const menu=action.parentElement.parentElement;assert.equal(menu.className,'chat-message-more');assert.equal(menu.parentElement.className,'chat-byline');menu.children[0].onclick(event('click'));assert.equal(menu.open,true);action.onclick();assert.equal(menu.open,false);return action;}
 test('only explicit Send/Ctrl+Enter and approved confirmation post; ordinary Enter keeps multiline input',async()=>{
  const h=harness();h.api.render(thread());const input=h.type('Hello <script>bad()</script>');
@@ -249,7 +268,7 @@ test('mixed clipboard text and image are retained and an image alone can be sent
 
 
 test('attached review severity is selectable above the message and survives publication and compact thread rendering',async()=>{
- const h=harness();h.api.render(thread());h.type('Review U3');await h.find('chat-attach-context').onclick();const row=h.find('chat-annotation-level');assert.equal(row.hidden,false);assert.equal(row.parentElement.className,'chat-composer');const severity=row.children[0];assert.deepEqual(severity.children.map(n=>n.value),['info','level-1','minor','major','critical']);severity.value='level-1';severity.onchange();assert.equal(severity.style.borderLeftColor,comments.severityInfo('level-1').color);
+ const h=harness();h.api.render(thread());h.type('Review U3');await h.find('chat-attach-context').onclick();const row=h.find('chat-annotation-level');assert.equal(row.hidden,false);assert.equal(row.parentElement,h.byId('chatMessageText').parentElement);assert.ok(row.parentElement.children.indexOf(row)<row.parentElement.children.indexOf(h.byId('chatMessageText')));assert.equal(row.parentElement.contains(h.find('chat-compose-actions')),false);assert.equal(h.find('chat-compose-actions').parentElement,h.find('chat-composer'));const severity=row.children[0];assert.deepEqual(severity.children.map(n=>n.value),['info','level-1','minor','major','critical']);severity.value='level-1';severity.onchange();assert.equal(severity.style.borderLeftColor,comments.severityInfo('level-1').color);
  await h.find('chat-send').onclick();assert.equal(h.requests[0].payload.annotation.severity,'level-1');
  const note={id:'remote-level',text:'Inspect this part',createdAt:'2026-10-27T05:00:00Z',severity:'level-1',anchor:{repository:'owner/board',ref:'a'.repeat(40),file:'board.kicad_pcb'}};
  h.api.render(thread(2,{comments:[{id:'13',author:'reviewer',body:comments.toMarkdown(note),createdAt:'2026-10-27T05:00:00Z'}]}));const badge=h.find('chat-review-severity');assert.equal(badge.textContent,'🟢 Level 1');assert.equal(badge.style.borderColor,comments.severityInfo('level-1').color);assert.doesNotMatch(h.find('chat-messages').textContent,/Design context/);h.api.dispose();
@@ -285,3 +304,7 @@ test('observed conversation participants suggest mentions immediately when provi
 test('offline visible conversations do not issue reads and reconnect immediately resumes bounded polling',async()=>{
  const h=harness();h.api.render(thread());h.host.navigator={onLine:false};await tick(h);assert.equal(h.reads.length,0);assert.equal(latestTimer(h).delay,30000);h.host.navigator.onLine=true;h.events.get('host:online')();assert.equal(latestTimer(h).delay,0);await tick(h);assert.equal(h.reads.length,1);assert.equal(latestTimer(h).delay,3000);h.api.dispose();assert.equal(h.events.has('host:online'),false);
 });
+
+test('website-session quoted replies are labelled before composing',()=>{const h=harness();const value=thread();value.capabilities.replyMode='quoted';h.api.render(value);const action=h.find('chat-reply-action');assert.equal(action.textContent,'Quote reply');action.onclick();assert.match(h.find('chat-compose-target').textContent,/Quoting @/);h.api.dispose();});
+
+test('unknown website Discussion state is neutral rather than shown open',()=>{const h=harness();h.api.render(thread(1,{kind:'discussion',state:'unknown'}));assert.equal(h.find('chat-thread-badge').textContent,'State unavailable');assert.equal(h.find('chat-thread-badge').attributes['data-state'],'unknown');h.api.dispose();});

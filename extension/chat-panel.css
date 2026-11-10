@@ -20,7 +20,7 @@
 .chat-catalog-actions select{width:100px;min-height:30px;padding:4px;font-size:11px}#commentsPane.chat-active #reviewStorageHint,#commentsPane.chat-active #commentList{display:none}#commentsPane.chat-active #commentThreadStatus{font-size:10px;margin:4px 0;color:var(--muted)}
 #commentThreadMessages .chat-auto-refresh{display:flex;flex-direction:row;align-items:center;gap:5px;font-size:10px;color:var(--muted);margin:0;padding:4px 0;min-height:24px}#commentThreadMessages .chat-auto-refresh input{width:14px;height:14px;min-height:14px;margin:0}.chat-source-link{color:var(--accent);font-size:10px}
 .chat-panel{position:relative}.chat-options-menu,.chat-composer-options{position:absolute;right:5px;z-index:6;width:min(260px,calc(100% - 10px));padding:8px;border:1px solid var(--line);border-radius:7px;background:var(--raised);box-shadow:0 6px 20px #0005;max-height:240px;overflow:auto;display:grid;gap:6px}.chat-options-menu{top:42px}.chat-composer-options{bottom:42px;left:5px;right:auto}.chat-options-menu>button,.chat-composer-options>button{justify-content:flex-start;min-height:32px;border:0;background:transparent}.chat-composer-options .chat-context-tools{display:grid;grid-template-columns:1fr 1fr;gap:5px}.chat-composer-options .chat-attach-context{grid-column:1/-1}.chat-composer-options select{width:100%;max-width:none}.chat-capture-strip{display:flex;gap:6px;align-items:center}.chat-capture-strip .chat-remove-capture{font-size:9px;min-height:24px;background:transparent}.chat-capture-summary{flex:1}.chat-attachment-toggle{width:32px;flex:0 0 32px;font-size:20px!important;font-weight:400;background:transparent;border-color:transparent}.chat-header :is(.chat-back,.chat-search-toggle,.chat-options-toggle,.chat-close){width:28px;min-width:28px;flex:0 0 28px;min-height:30px;padding:2px!important;font-size:20px!important;background:transparent;border:0}.chat-compose-actions .chat-send{min-width:56px}
-#commentsSidebar.chat-active>.sidebar-heading,#commentsPane.chat-active>#commentCategoryTabs,#commentsPane.chat-active .comment-subtabs,#commentsPane.chat-active #commentStatus,#commentsPane.chat-active #commentCollaboration,#commentsPane.chat-active #commentStorage{display:none!important}
+#commentsPane.chat-active .comment-subtabs,#commentsPane.chat-active #commentStatus,#commentsPane.chat-active #commentCollaboration,#commentsPane.chat-active #commentStorage{display:none!important}
 #commentsSidebar #commentsPane.chat-active{display:flex;flex-direction:column;min-height:0;overflow:hidden;padding:0}
 #commentsPane.chat-active #commentCategoryContent,#commentsPane.chat-active #viewCommentsPane,#commentsPane.chat-active #commentThreadReader,#commentsPane.chat-active #commentThreadMessages{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;width:100%;margin:0;padding:0;border:0}
 #commentsPane.chat-active #commentThreadStatus:not(.error){display:none}#commentsPane.chat-active #commentThreadStatus.error{flex:none;padding:4px 8px;color:#ed9b91}#commentsPane.chat-active #commentSettings{flex:none;max-height:45%;overflow:auto;padding:6px}
@@ -28,7 +28,7 @@
 .chat-message-more{position:absolute;right:0;top:0;display:block;width:28px}.chat-message-more>summary{cursor:pointer;list-style:none;box-sizing:border-box;padding:1px 7px;min-height:28px;line-height:26px;color:var(--muted);font-size:16px}.chat-message-more>summary::-webkit-details-marker{display:none}.chat-message-more>summary:hover{color:var(--text);background:var(--raised)}.chat-message-menu{position:absolute;right:0;top:100%;z-index:5;width:180px;max-width:calc(100vw - 78px);max-height:min(240px,40dvh);overflow:auto;padding:4px 6px;border:1px solid var(--line);border-radius:5px;background:var(--raised);box-shadow:0 4px 14px #0004}.chat-message-menu .inspector-actions{display:contents}.chat-panel .chat-message-menu button,.chat-message-menu a{display:block;box-sizing:border-box;width:100%;min-height:30px;font-size:11px;text-align:left;padding:4px 6px;border:0;background:transparent;color:var(--text)}.chat-message-menu button:hover,.chat-message-menu a:hover{background:var(--selected)}
 @media(max-width:600px){
  #commentsSidebar.chat-active{width:calc(100% - 8px)!important;max-width:none!important;left:4px!important;right:4px!important}
- #commentsSidebar.chat-active>.sidebar-heading,#commentsPane.chat-active>#commentCategoryTabs,#commentsPane.chat-active .comment-subtabs,#commentsPane.chat-active #commentStatus,#commentsPane.chat-active #commentCollaboration,#commentsPane.chat-active #commentStorage{display:none!important}
+ #commentsPane.chat-active .comment-subtabs,#commentsPane.chat-active #commentStatus,#commentsPane.chat-active #commentCollaboration,#commentsPane.chat-active #commentStorage{display:none!important}
  #commentsSidebar #commentsPane.chat-active{display:flex;flex-direction:column;min-height:0;overflow:hidden;padding:0!important}
  #commentsPane.chat-active #commentCategoryContent,#commentsPane.chat-active #viewCommentsPane,#commentsPane.chat-active #commentThreadReader,#commentsPane.chat-active #commentThreadMessages{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;width:100%;margin:0;padding:0;border:0}
  #commentsPane.chat-active #commentThreadStatus:not(.error){display:none}#commentsPane.chat-active #commentThreadStatus.error{flex:none;padding:4px 8px;color:#ed9b91}
@@ -48,7 +48,7 @@
 }
 @media(max-width:600px){.chat-messages{max-height:38dvh;min-height:100px}.chat-composer{padding:6px}.chat-panel button,.chat-catalog button{min-height:36px}.chat-avatar{flex-basis:24px;height:24px}.chat-message{gap:6px}.chat-reply{margin-left:10px}.chat-composer textarea{min-height:68px;max-height:110px}.chat-panel .chat-back,.chat-panel .chat-refresh{min-height:36px}.chat-compose-actions{gap:4px}.chat-mention-source{max-width:120px}.chat-thread-meta{font-size:9px}}
 /* Quiet conversation chrome and a single compact composer action strip. */
-#commentsPane.conversation-ui>#commentCategoryTabs,#commentsPane.conversation-ui .comment-subtabs,#commentsPane.conversation-ui #reviewStorageHint{display:none}
+#commentsPane.conversation-ui .comment-subtabs,#commentsPane.conversation-ui #reviewStorageHint{display:none}
 .chat-panel .chat-heading h2{margin:0;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.5}
 .chat-options-menu .chat-thread-meta{padding:4px 6px 8px;border-bottom:1px solid var(--line);font-size:11px;overflow-wrap:anywhere}
 .chat-options-menu .chat-search-toggle,.chat-options-menu .chat-close{width:auto;text-align:left;font:inherit;padding:6px 8px}
@@ -86,3 +86,10 @@
 .chat-annotation-level select[aria-label="Annotation state"]{border-left-width:4px;border-left-style:solid}
 
 .comment-settings-header{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}.comment-settings-header button{min-height:32px}
+
+/* Keep Send reachable when a floating review contains context and an image. */
+.chat-composer-body{display:flex;flex-direction:column;gap:5px;min-height:0;overflow:auto;overscroll-behavior:contain}
+.chat-composer-body>*{flex-shrink:0}
+#commentsPane.chat-active .chat-composer{flex:0 1 auto;min-height:92px;max-height:calc(100% - 48px)}
+#commentsPane.chat-active .chat-composer-body{flex:1 1 auto;gap:3px}
+.chat-composer>.chat-compose-actions,.chat-composer>.chat-status{flex:none}

@@ -59,7 +59,7 @@
     if(objects.some(v=>v?.payload?.codeViewTreeRoute?.tree!==undefined||v?.payload?.codeViewRepoRoute?.tree!==undefined||v?.payload?.tree&&v?.payload?.refInfo))return objects;
     const page=new URL(href),parts=page.pathname.split('/').filter(Boolean).map(decodeURIComponent),repository=parts.slice(0,2).join('/');
     if(page.origin!=='https://github.com'||parts.length<2||parts.length>2&&parts[2]!=='tree')return objects;
-    const table=doc?.querySelector('table[aria-labelledby="folders-and-files"]'),selector=doc?.querySelector('[id="ref-picker-repos-header-ref-selector"]');
+    const table=doc?.querySelector('table[aria-labelledby="folders-and-files"]')||doc?.querySelector('table[aria-labelledby~="folders-and-files"]'),selector=doc?.querySelector('[id="ref-picker-repos-header-ref-selector"]')||doc?.querySelector('[id="ref-picker-repos-header-ref-selector-wide"]');
     if(!table||!selector)return objects;
     const ref=SHA.test(parts[3]||'')?parts[3]:selector.textContent.trim();scope(repository,ref);
     const tail=parts.slice(3).join('/');if(tail&&tail!==ref&&!tail.startsWith(ref+'/'))throw Error('GitHub file table returned a different branch.');
@@ -69,8 +69,8 @@
       // A nested folder's last change is not necessarily the branch HEAD.
       // Only the repository root's latest commit is authoritative here.
       if(directory){objects.push({githubFileTableContext:{repository,ref,directory}});return objects;}
-      const commit=[...(doc.querySelectorAll('main a[href]')||[])].map(a=>new URL(a.getAttribute('href'),page)).find(u=>u.origin===page.origin&&u.pathname.startsWith('/'+repository+'/commit/')&&SHA.test(u.pathname.slice(('/'+repository+'/commit/').length)));
-      if(!commit)return objects;sha=commit.pathname.split('/').at(-1).toLowerCase();
+      const commit=[...(doc.querySelectorAll('[data-testid="latest-commit"] a[href], [data-testid="latest-commit-details"] a[href], [data-testid="latest-commit-html"] a[href]')||[])].map(a=>new URL(a.getAttribute('href'),page)).find(u=>u.origin===page.origin&&u.pathname.startsWith('/'+repository+'/commit/')&&SHA.test(u.pathname.slice(('/'+repository+'/commit/').length)));
+      if(!commit){objects.push({githubFileTableContext:{repository,ref,directory}});return objects;}sha=commit.pathname.split('/').at(-1).toLowerCase();
     }
     const items=new Map(),rows=[...table.querySelectorAll('tr')];if(rows.length>1001||/truncat|too many files|unable to (?:load|display)/i.test(table.textContent||''))throw Error('GitHub website directory is incomplete.');
     for(const row of rows){const candidates=[...row.querySelectorAll('a[href]')].map(a=>new URL(a.getAttribute('href'),page)).filter(u=>u.origin===page.origin&&!u.search&&!u.hash);
@@ -104,6 +104,27 @@
     const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}return binary?bytes:new TextDecoder('utf-8',{fatal:true}).decode(bytes);
   }
   function create({fetch:fetcher=root.fetch,location=root.location,signal,parseDocument=()=>documentObjects(root.document,location.href),parseHTML=(html,url)=>documentObjects(new DOMParser().parseFromString(html,'text/html'),url),parsePullHTML=(html)=>new DOMParser().parseFromString(html,'text/html')}={}) {
+    async function treeWithFeed(objects,repository,ref,directory,readSignal) {
+      try{return treeData(objects,ref,directory);}catch(error){if(!/readable repository tree/.test(error.message))throw error;}
+      const hints=objects.filter(value=>value?.githubFileTableContext).map(value=>value.githubFileTableContext);
+      if(hints.length!==1)throw Error('GitHub website did not expose a readable repository tree.');
+      const hint=hints[0];scope(repository,hint.ref);
+      if(directory!==''||hint.directory!==''||hint.repository!==repository||SHA.test(ref)||ref!=='HEAD'&&hint.ref!==ref)throw Error('GitHub file table returned a different branch or directory.');
+      // Modern GitHub renders the branch-head header after the initial HTML.
+      // Resolve HEAD from its same-origin branch feed, then read a pinned tree.
+      const feedURL='https://github.com/'+repository+'/commits/'+encodeURIComponent(hint.ref)+'.atom';
+      const response=await fetcher(feedURL,{credentials:'same-origin',redirect:'error',cache:'no-store',signal:readSignal});
+      if(!response.ok)throw websiteError(response.status,await bounded(response,1024*1024,readSignal));
+      if(response.url&&response.url!==feedURL||!/atom|xml/i.test(response.headers.get('content-type')||''))throw Error('GitHub returned a different branch feed location or format.');
+      const parser=root.KiCadGitHubWebsiteHistory||(typeof require==='function'?require('./github-website-history.js'):null);
+      if(!parser)throw Error('Reload the repository session to enable branch metadata.');
+      const feed=parser.parseAtom(await bounded(response,4*1024*1024,readSignal),{repository,ref:hint.ref}),sha=feed.commits[0]?.sha;
+      if(!SHA.test(sha||''))throw Error('GitHub branch HEAD metadata is unavailable.');
+      const pinnedURL='https://github.com/'+repository+'/tree/'+sha,pinned=await fetcher(pinnedURL,{credentials:'same-origin',redirect:'error',cache:'no-store',signal:readSignal});
+      if(!pinned.ok)throw websiteError(pinned.status,await bounded(pinned,1024*1024,readSignal));
+      if(pinned.url&&pinned.url!==pinnedURL||!/text\/html/i.test(pinned.headers.get('content-type')||''))throw Error('GitHub returned a different pinned tree location or format.');
+      return treeData(parseHTML(await bounded(pinned,8*1024*1024,readSignal),pinnedURL),sha,'');
+    }
     async function read(message) {
       const {repository,ref,action,path='',limit=8*1024*1024}=message;scope(repository,ref);
       const here=new URL(location.href);
@@ -130,9 +151,12 @@
             // branch root first, then re-read this directory at that exact SHA.
             const hints=objects.filter(value=>value?.githubFileTableContext).map(value=>value.githubFileTableContext);if(!hints.length)return null;
             if(hints.length!==1)throw Error('Conflicting GitHub file table contexts.');const hint=hints[0];scope(repository,hint.ref);
-            if(hint.repository!==repository||!safePath(hint.directory)||SHA.test(hint.ref)||path!=='tree/'+hint.ref+'/'+hint.directory)throw Error('Invalid GitHub file table context.');
-            const branchURL='https://github.com/'+repository+'/tree/'+encodeURIComponent(hint.ref),snapshot=treeData(await pageObjects(branchURL),hint.ref,'');
-            const pinnedURL='https://github.com/'+repository+'/tree/'+snapshot.sha+'/'+hint.directory.split('/').map(encodeURIComponent).join('/'),result=treeData(await pageObjects(pinnedURL),snapshot.sha,hint.directory);
+            if(hint.repository!==repository||!safePath(hint.directory,true)||SHA.test(hint.ref)||(hint.directory?path!=='tree/'+hint.ref+'/'+hint.directory:path!==''&&path!=='tree/'+hint.ref))throw Error('Invalid GitHub file table context.');
+            const branchURL='https://github.com/'+repository+'/tree/'+encodeURIComponent(hint.ref),branchObjects=hint.directory?await pageObjects(branchURL):objects;let snapshot;
+            try{snapshot=await treeWithFeed(branchObjects,repository,hint.ref,'',controller.signal);}catch(error){if(/readable repository tree/.test(error.message))throw Object.assign(Error('GitHub branch HEAD metadata is unavailable.'),{code:'GITHUB_BRANCH_HEAD_UNAVAILABLE'});throw error;}
+            if(!hint.directory)return {repository,ref:hint.ref,directory:'',...snapshot};
+            const pinnedURL='https://github.com/'+repository+'/tree/'+snapshot.sha+'/'+hint.directory.split('/').map(encodeURIComponent).join('/'),folderObjects=await pageObjects(pinnedURL);let result;
+            try{result=treeData(folderObjects,snapshot.sha,hint.directory);}catch(error){if(/readable repository tree/.test(error.message))throw Object.assign(Error('GitHub pinned folder metadata is unavailable.'),{code:'GITHUB_PINNED_TREE_UNAVAILABLE'});throw error;}
             if(controller.signal.aborted)throw Error('Project loading cancelled.');return {repository,ref:hint.ref,directory:hint.directory,...result};};
           if(current===url&&!here.search){const result=await resolveContext(parseDocument());if(result)return result;}
           const objects=await pageObjects(url),result=await resolveContext(objects);return result||contextData(objects,repository,path);
@@ -184,7 +208,7 @@
         const url=ref==='HEAD'?`https://github.com/${repository}`:`https://github.com/${repository}/tree/${encodeURIComponent(ref)}${directory?'/'+directory.split('/').map(encodeURIComponent).join('/'):''}`;
         const response=await fetcher(url,{credentials:'same-origin',redirect:'error',cache:'no-store',signal:controller.signal});
         if(!response.ok)throw websiteError(response.status,await bounded(response,1024*1024,controller.signal));
-        return treeData(parseHTML(await bounded(response,8*1024*1024,controller.signal),url),ref,directory);
+        return await treeWithFeed(parseHTML(await bounded(response,8*1024*1024,controller.signal),url),repository,ref,directory,controller.signal);
       } catch(error) {
         // Only fixed diagnostic codes cross the session bridge. Raw HTML,
         // private paths, signed URLs and arbitrary provider text stay here.

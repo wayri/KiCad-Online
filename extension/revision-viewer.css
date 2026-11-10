@@ -395,3 +395,22 @@ body[data-workspace="true"] #projectButton,body[data-workspace="true"] #viewOppo
 .chat-catalog-actions #commentConversationState{min-width:0;width:90px;font-size:11px}.chat-thread-badge{flex-shrink:0}
 
 .navigation-help-dialog{color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:9px;width:min(640px,calc(100vw - 24px));max-height:calc(100dvh - 24px);padding:16px;overflow:auto;box-sizing:border-box}.navigation-help-dialog::backdrop{background:#0008}.navigation-help-dialog>header{display:flex;align-items:center;justify-content:space-between;gap:12px;position:sticky;top:-16px;background:var(--panel);padding:8px 0;z-index:1}.navigation-help-dialog h2{font-size:17px;margin:0}.navigation-help-dialog .shortcut-help{border:0;padding:0;font-size:13px}.navigation-help-dialog .shortcut-help p{line-height:1.7;overflow-wrap:anywhere}
+
+/* Saved-variable inspection remains compact and independent of the drawing viewport. */
+.variable-viewer-dialog{color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:9px;width:min(960px,calc(100vw - 24px));max-height:calc(100dvh - 24px);padding:16px;overflow:auto;box-sizing:border-box}.variable-viewer-dialog::backdrop{background:#0008}.variable-viewer-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;position:sticky;top:-16px;background:var(--panel);padding:8px 0;z-index:1}.variable-viewer-controls{display:flex;gap:8px;margin:8px 0}.variable-viewer-controls>*{flex:1;min-width:0}.variable-viewer-dialog>p{margin:8px 0;overflow-wrap:anywhere}.variable-viewer-table{max-width:100%;overflow:auto}.variable-viewer-table th,.variable-viewer-table td{vertical-align:top;overflow-wrap:anywhere}.variable-viewer-table .kicad-field-table{min-width:560px}.property-variable-source,.variable-unresolved small{display:block;font-size:10px;color:var(--muted);white-space:normal;overflow-wrap:anywhere;margin-top:3px}.variable-unresolved small{color:#dc8f46}@media(max-width:540px){.variable-viewer-controls{flex-direction:column}.variable-viewer-dialog{padding:10px}.variable-viewer-heading{top:-10px}}
+/* A floating conversation retains the docked panel's draft and sync owner. */
+#commentsSidebar.floating-comments{position:fixed!important;left:var(--comment-float-x,80px)!important;top:var(--comment-float-y,100px)!important;right:auto!important;bottom:auto!important;width:min(480px,calc(100vw - 24px));height:min(680px,calc(100vh - 120px));max-width:calc(100vw - 16px)!important;max-height:calc(100vh - 24px);min-width:280px;min-height:220px;resize:both;overflow:hidden;z-index:100;border:1px solid var(--line);border-radius:9px;box-shadow:0 12px 40px #0007}
+#commentsSidebar.floating-comments .sidebar-heading{cursor:move;touch-action:none}
+#commentsSidebar.floating-comments .sidebar-resizer{display:none}
+.comment-navigation{display:flex;align-items:center;gap:4px;padding:5px 8px;border-bottom:1px solid var(--line);flex-shrink:0}
+.comment-navigation button{min-width:28px;min-height:28px;padding:3px 8px;font-size:12px}
+.chat-capture-strip{position:relative;display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px;border:1px solid var(--line);border-radius:7px;background:var(--panel)}
+.chat-capture-strip .chat-remove-capture{align-self:flex-start;min-height:28px}
+
+.composer-image-preview{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0}.composer-image-preview #capturePreview{max-width:min(100%,240px);max-height:160px;object-fit:contain;border:1px solid var(--line);border-radius:6px}.composer-image-preview #captureStatus{flex-basis:100%;font-size:11px;margin:2px 0}
+
+/* Enlarge the navigator within its own drawing pane, including split views. */
+.sheet-tree-miniature.maximized{inset:8px;width:auto;height:auto;display:flex;flex-direction:column;z-index:14}
+.sheet-tree-miniature.maximized>header{flex:none}
+.sheet-tree-miniature.maximized .sheet-tree-miniature-body{flex:1;min-height:0;max-height:none;display:flex;padding:8px}
+.sheet-tree-miniature.maximized .sheet-tree-miniature-body svg{width:100%;height:100%;min-height:0}

@@ -14,7 +14,15 @@
   if(url.origin==='https://github.com'&&/^\/[^/]+\/[^/]+\/(?:commit|pull)(?:\/|$)/.test(url.pathname))throw Error('This commit or pull request URL cannot be resolved safely. Open its commit or pull request overview, then click the extension again.');
   const options={gitlabHosts:[url.origin]},repo=parse.repositoryRoute(url.href,options),blob=parse.route(url.href,options);
   if(blob?.kind==='blob'){
-   const info=parse.blobRequest(blob,hint);
+   // Reader adapters may supply authoritative ref/SHA independently of the
+   // pathname. Preserve a slash-containing ref instead of interpreting its
+   // second segment as a folder or falling back to the repository landing page.
+   let embedded=hint;
+   if(typeof hint?.ref==='string'&&blob.tail.join('/').startsWith(hint.ref+'/')){
+    const file=blob.tail.join('/').slice(hint.ref.length+1),head=hint.head||hint.sha||hint.ref;
+    if(parse.filePath(file)&&(!hint.file||hint.file===file))embedded={...hint,file,head};
+   }
+   const info=parse.blobRequest(blob,embedded);
    if(info&&(/(?:\.kicad_(?:pro|sch|pcb)|\.(?:sch|brd|pro))$/i.test(info.file)||fabrication(info.file)))return{kind:'drawing',...info};
   }
   if(repo){

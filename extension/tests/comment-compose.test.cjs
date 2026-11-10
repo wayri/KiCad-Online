@@ -67,3 +67,6 @@ test('clipboard normalization downsizes expensive images and gives up after eigh
  const never=captureHarness({render:()=>huge});await assert.rejects(compose.normalizeCapture(blob,never.options),/too large/);
  assert.equal(never.calls.filter(value=>value==='image/png').length,8);assert.equal(never.calls.at(-1),'close');
 });
+test('comment navigation retains bounded back/forward routes and truncates abandoned forward history',()=>{
+ const nav=compose.createNavigation(3);nav.push({page:'thread',kind:'issue',number:1});nav.push({page:'thread',kind:'discussion',number:2});assert.equal(nav.back().number,1);assert.equal(nav.canForward(),true);nav.push({page:'compose',category:'issue'});assert.equal(nav.canForward(),false);assert.equal(nav.back().number,1);assert.equal(nav.back().page,'catalog');nav.push({page:'thread',kind:'issue',number:3});nav.push({page:'thread',kind:'issue',number:4});nav.push({page:'thread',kind:'issue',number:5});assert.equal(nav.back().number,4);assert.equal(nav.back().number,3);assert.equal(nav.canBack(),false);assert.throws(()=>nav.push({page:'thread',kind:'issue',number:0}),/Invalid/);
+});

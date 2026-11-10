@@ -794,23 +794,16 @@ function sessionReviewSender(sender){
  if(sender?.id!==chrome.runtime.id||(sender.frameId??0)!==0)return false;
  return sender.url?.split(/[?#]/,1)[0]===chrome.runtime.getURL('session-reviews.html');
 }
+let websiteReviewTransport;
 async function websiteReviewCall(message){
- if(!validRepository(message.repository)||message.action!=='list'&&(!Number.isSafeInteger(message.number)||message.number<1)||!['inspect','read','list','prepare','verify','commit'].includes(message.action))throw Error('Invalid website review request.');
- if(['prepare','verify','commit'].includes(message.action))await KiCadManagedPolicy.assertWrites();else await globalThis.KiCadManagedPolicy?.assertNetwork();
- const candidates=(await repositorySessions().candidates('github','https://github.com',message.repository)).filter(tab=>tab.bound);
-  let readFailure;
- for(const tab of candidates){
-  if(message.action==='inspect')await chrome.scripting.executeScript({target:{tabId:tab.id,frameIds:[0]},files:['github-session-review.js']}).catch(()=>{});
-  if(['prepare','verify','commit'].includes(message.action))await KiCadManagedPolicy.assertWrites();
-  const reply=await chrome.tabs.sendMessage(tab.id,{...message,type:'github-session-review'},{frameId:0}).catch(()=>null);
-  if(reply?.ok)return reply.result;
-   if(typeof reply?.error==='string')readFailure=reply.error.slice(0,500);
-  // Never repeat a mutation in another tab after an uncertain response.
-  if(['prepare','verify','commit'].includes(message.action))throw Error(reply?.error||'GitHub website did not confirm the review operation.');
- }
-  throw Error(readFailure||'Open this repository on GitHub and click the extension icon to connect its website session.');
+ const creating=['prepare-create','verify-create','commit-create','update-prepared','lease-inspect','categories'].includes(message.action);
+ if(!validRepository(message.repository)||message.kind!==undefined&&!['issue','discussion'].includes(message.kind)||message.action!=='list'&&!creating&&(!Number.isSafeInteger(message.number)||message.number<1)||!['inspect','read','list','categories','prepare','verify','commit','prepare-create','verify-create','commit-create','update-prepared','lease-inspect'].includes(message.action))throw Error('Invalid website review request.');
+ if(['prepare','verify','commit','prepare-create','verify-create','commit-create','update-prepared'].includes(message.action))await KiCadManagedPolicy.assertWrites();else await globalThis.KiCadManagedPolicy?.assertNetwork();
+ websiteReviewTransport ||= KiCadGitHubWebsiteReviews.createTabTransport({api:chrome,sessions:repositorySessions(),assertWrites:()=>KiCadManagedPolicy.assertWrites()});
+ return websiteReviewTransport.invoke(message);
 }
 let websiteReviewsInstance;
+const websiteReviewIntents=new Map();
 function websiteReviews(){return websiteReviewsInstance||=KiCadGitHubWebsiteReviews.create({call:websiteReviewCall,storage:chrome.storage.local,assertWrites:()=>KiCadManagedPolicy.assertWrites(),reserve:()=>KiCadReviewComments.reservePublication(chrome.storage.local,JSON.stringify(['github','website-session']),Date.now()),comments:KiCadReviewComments});}
 function ownedWebsiteReviewSender(sender,repository){
  if(!sessionReviewSender(sender)&&!viewerSender(sender))return false;
@@ -1097,8 +1090,16 @@ async function cacheProviderAnnotations(scope,result,{sourceUrl=null,complete=fa
 }
 
 function launcherSender(sender){return sender?.id===chrome.runtime.id&&sender.url?.split(/[?#]/,1)[0]===chrome.runtime.getURL('project-launcher.html');}
+async function presentActionWorkspace(url) {
+  try { return await chrome.tabs.create({url}); }
+  catch (cause) {
+    // A browser may refuse extension-page presentation. Do not retry that
+    // decision through another page, window, frame, or navigation surface.
+    throw Object.assign(Error('The browser could not present the KiCad Online workspace.',{cause}),{code:'WORKSPACE_PRESENTATION_FAILED'});
+  }
+}
 async function openFromAction(tab) {
-  const open=params=>chrome.tabs.create({url:chrome.runtime.getURL('project-launcher.html')+'?'+new URLSearchParams(params)});
+  const open=params=>presentActionWorkspace(chrome.runtime.getURL('project-launcher.html')+'?'+new URLSearchParams(params));
   if(!Number.isInteger(tab?.id)||typeof tab.url!=='string')return open({});
   let page;try{page=new URL(tab.url);}catch{return open({});}
   if(page.protocol!=='https:'||page.origin!=='https://github.com'&&!(await globalThis.KiCadGitLabHosts?.allowed(page.origin)))return open({});
@@ -1116,14 +1117,28 @@ async function openFromAction(tab) {
     if(preferences.mode==='inline'&&context.revisionKind!=='pull'){
       try{await chrome.scripting.executeScript({target:{tabId:tab.id},files:['inline-project-view.js']});const result=await chrome.tabs.sendMessage(tab.id,{type:'inline-project-open',url,sourceUrl:tab.url},{frameId:0});if(result?.ok)return result.result;}catch{}
     }
-    return chrome.tabs.create({url});
-  }catch(error){return open({error:error.message});}
+    return await presentActionWorkspace(url);
+  }catch(error){if(error.code==='WORKSPACE_PRESENTATION_FAILED')throw error;return open({error:error.message});}
 }
 
-chrome.action.onClicked.addListener((tab) => openFromAction(tab).catch(async error => {
-  console.error('KiCad Online could not open its workspace.', error);
-  await chrome.runtime.openOptionsPage();
-}));
+chrome.action.onClicked.addListener(async tab => {
+  try {
+    const result=await openFromAction(tab);
+    await updateGitHubBadge().catch(()=>{});
+    return result;
+  }catch(error){
+    console.error('KiCad Online could not open its workspace.',error.cause||error);
+    // The options page uses the same presentation boundary and can be blocked
+    // too. Report the failure on the existing action instead of opening it.
+    badgeGeneration++;
+    await Promise.allSettled([
+      Promise.resolve().then(()=>chrome.action.setBadgeText?.({text:'!'})),
+      Promise.resolve().then(()=>chrome.action.setBadgeBackgroundColor?.({color:'#b42318'})),
+      Promise.resolve().then(()=>chrome.action.setTitle?.({title:'KiCad Online — workspace could not open. Check this extension’s Errors in Manage extensions.'}))
+    ]);
+    return false;
+  }
+});
 
 const gitlabAssetBudgets = new Map();
 async function gitlabAnnotations(scope){
@@ -1417,30 +1432,34 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     if(message.provider==='gitlab'){const host=message.host||'https://gitlab.com';if(senderOrigin?.startsWith('https://')&&senderOrigin!==host)throw new Error('GitLab host does not match the sender.');return gitlabDispatch(message,sender);}
     if(message.comment?.anchor?.provider==='gitlab')throw new Error('GitLab annotations must use the GitLab provider.');
-    const websiteTypes=new Set(['github-thread-read','chat-thread-list','chat-message-write','github-annotations','comment-policy-status','github-publish-comment']),reviewRepository=message.pullRepository||message.repository||message.scope?.repository||message.comment?.anchor?.repository;
-    if(websiteTypes.has(message.type)&&viewerSender(sender)&&validRepository(reviewRepository)&&(await repositorySessions().candidates('github','https://github.com',reviewRepository)).some(tab=>tab.bound)){
+    const websiteTypes=new Set(['github-thread-read','chat-thread-list','chat-message-write','github-annotations','comment-policy-status','github-publish-comment','github-discussion-categories']),reviewRepository=message.pullRepository||message.repository||message.scope?.repository||message.comment?.anchor?.repository;
+    const reviewIntentKey=JSON.stringify([sender.tab?.id??sender.url,reviewRepository]),hasReviewBinding=websiteTypes.has(message.type)&&validRepository(reviewRepository)&&(await repositorySessions().candidates('github','https://github.com',reviewRepository)).some(tab=>tab.bound),websiteReviewIntent=message.reviewTransport==='website-session'||message.reviewTransport!=='api'&&(hasReviewBinding||websiteReviewIntents.has(reviewIntentKey));
+    if(websiteTypes.has(message.type)&&viewerSender(sender)&&validRepository(reviewRepository)&&websiteReviewIntent){
       const repository=reviewRepository;
       if(new URL(sender.url).searchParams.get('repository')!==repository)throw Error('Website review repository does not match this viewer.');
+      if(!hasReviewBinding)throw Error('The repository website session is no longer connected. Reopen this repository and invoke the extension; no API account was used.');
+      websiteReviewIntents.set(reviewIntentKey,true);if(websiteReviewIntents.size>64)websiteReviewIntents.delete(websiteReviewIntents.keys().next().value);
       if(message.type==='github-thread-read'){
-       if(message.kind!=='issue')throw Error('Browser-session readback currently supports Issues; Discussions require the website.');
-       return websiteReviews().read(repository,message.number,message.force===true);
+       if(!['issue','discussion'].includes(message.kind))throw Error('Choose an Issue or Discussion.');
+       return websiteReviews().read(repository,message.number,message.force===true,message.kind);
       }
       if(message.type==='chat-thread-list'){
-       if(message.kind!=='issue')return {threads:[],hasMore:false,warnings:['Browser-session Discussion readback is not available in this beta.']};
-       return websiteReviews().list(repository);
+       if(!['issue','discussion'].includes(message.kind))throw Error('Choose an Issue or Discussion.');
+       return websiteReviews().list(repository,message.kind);
       }
+      if(message.type==='github-discussion-categories')return websiteReviews().categories(repository);
       if(message.type==='github-annotations'){
-       return websiteReviews().annotations(message.scope||message,{repository,number:message.issueNumber});
+       return websiteReviews().annotations(message.scope||message,{repository,number:message.discussionNumber||message.issueNumber,kind:message.discussionNumber?'discussion':'issue'});
       }
       if(message.type==='comment-policy-status'){const result=await websiteReviewCall({repository,action:'list'});return {allowed:true,login:result.account,transport:'website-session',reason:'Website-session permissions are checked again on the selected Issue before sending.'};}
       if(!ownedWebsiteReviewSender(sender,repository))throw Error('Website-session Send requires the matching standalone extension viewer.');
       if(message.type==='chat-message-write')return websiteReviews().chat(message);
       const args=KiCadGitHubReviewApi.publishArgs(message);
       if(args.repository!==repository)throw Error('Review destination does not match this website session.');
-      if(args.destination!=='issue')throw Error('Browser-session direct posting currently replies to an existing Issue. Select an Issue conversation, or use the website to create a new thread.');
-      if(args.note.capture)throw Error('Attach screenshots on the GitHub website; browser-session screenshot uploads are not enabled.');
-      const result=await websiteReviews().send({repository,number:args.number,body:KiCadReviewComments.toMarkdown(args.note),clientMutationId:args.note.id,confirmedSend:message.confirmedSend});
-      return {remoteRef:{kind:'issue',repository,number:args.number,url:result.url,publishedAt:result.createdAt},...(result.receiptWarning?{receiptWarning:result.receiptWarning}:{})};
+      if(!['issue','new-issue','discussion','new-discussion'].includes(args.destination))throw Error('Choose an Issue or Discussion destination.');
+      const {capture,...metadata}=args.note,body=KiCadReviewComments.toMarkdown(metadata),details={repository,body,clientMutationId:args.note.id,confirmedSend:message.confirmedSend,...(capture?{annotation:args.note}:{})};
+      const kind=args.destination.includes('discussion')?'discussion':'issue',result=args.destination.startsWith('new-')?await websiteReviews().createIssue({...details,kind,title:args.title,categoryId:args.categoryId}):await websiteReviews().send({...details,kind,number:args.number});
+      return {remoteRef:{kind,repository,number:result.number,url:result.url,publishedAt:result.createdAt},...(result.attachments?{attachments:result.attachments}:{}),...(result.receiptWarning?{receiptWarning:result.receiptWarning}:{})};
     }
     if(KiCadGitHubProjectView.types.has(message.type)){
       if(message.type==='project'){

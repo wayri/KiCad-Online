@@ -9,6 +9,8 @@
   GITHUB_WEBSITE_UNREADABLE:'GitHub returned an unreadable repository page. Check the matching repository tab and retry.',
   GITHUB_WEBSITE_NETWORK:'The repository-tab website request failed at the browser network layer. Check browser connectivity or policy, then retry.',
   GITHUB_TREE_UNAVAILABLE:'GitHub did not expose readable branch/folder metadata. Reload the repository folder and click the extension icon again. No additional repository permissions are required.',
+  GITHUB_BRANCH_HEAD_UNAVAILABLE:'The selected folder is readable, but GitHub did not expose its branch HEAD metadata. Open the repository root on GitHub and retry from the extension icon; no review-account permissions are needed.',
+  GITHUB_PINNED_TREE_UNAVAILABLE:'The branch commit was resolved, but GitHub did not expose the folder at that exact commit. Reopen the folder on GitHub and try again.',
   GITHUB_REVISION_MISMATCH:'GitHub returned metadata for a different revision or folder. Reload the repository page and try again.',
   GITHUB_TREE_INCOMPLETE:'GitHub returned an incomplete directory listing. Open the smaller project folder and try again.',
   GITHUB_READ_TOO_LARGE:'The GitHub website response exceeds the bounded reader limit. Open the smaller project folder and try again.',
@@ -26,7 +28,7 @@
    reply(route?.kind==='blob'?parse.embeddedBlobData(scripts,route):repo?{ref:parse.repositoryRef(repo,scripts,app?.dataset)}:null);return false;
   }
   if(message.type==='github-session-review'&&location.origin==='https://github.com'){
-   if(['prepare','verify','commit'].includes(message.action)&&![root.chrome.runtime.getURL('background.js'),root.chrome.runtime.getURL('_generated_background_page.html')].includes(sender.url))return false;
+   if(['prepare','verify','commit','prepare-create','verify-create','commit-create','update-prepared'].includes(message.action)&&![root.chrome.runtime.getURL('background.js'),root.chrome.runtime.getURL('_generated_background_page.html')].includes(sender.url))return false;
    if(!root.KiCadGitHubSessionReview){reply({ok:false,error:'Reload this repository tab and invoke the extension again.'});return false;}
    if(reviewLoads>=2){reply({ok:false,error:'Wait for the current website review request.'});return false;}reviewLoads++;
    Promise.resolve().then(()=>root.KiCadGitHubSessionReview.create().dispatch(message)).then(result=>reply({ok:true,result}),error=>reply({ok:false,error:error?.code==='WEBSITE_REVIEW_UNAVAILABLE'||error?.code==='WEBSITE_REVIEW_UNCERTAIN'?String(error.message).slice(0,500):'GitHub website review access is unavailable. Keep the matching signed-in repository tab open.'})).finally(()=>{reviewLoads--;});return true;

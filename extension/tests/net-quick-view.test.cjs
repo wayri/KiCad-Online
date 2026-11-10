@@ -1,5 +1,6 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const {mount,occurrences,rotateVector,viewportPoint,MAX_WINDOWS}=require('../net-quick-view.js'),owned=require('../owned-canvas.js');
+const {defaultProbeLayers,probeFileCandidates}=require('../net-quick-view.js');
 class Element{
  constructor(tag,document){this.tag=tag;this.ownerDocument=document;this.children=[];this.listeners={};this.style={};this.attributes={};this.parent=null;this.textContent='';}
  append(...children){for(const child of children){this.children.push(child);child.parent=this;}}
@@ -19,6 +20,23 @@ function fixture(count=5,options={}){const document={createElement:tag=>new Elem
 test('occurrences use only saved primitives from each exact source and preserve hierarchy instances',()=>{
  const live={uuid:'pad',type:'pad'},stale={...live},design={primitives:[live]};const entries=[{path:'a.kicad_sch',instanceId:'one',design,groups:[{id:'net',name:'VCC',primitives:[live,stale]}]},{path:'a.kicad_sch',instanceId:'two',design,groups:[{id:'net',name:'VCC',primitives:[live]}]}],before=JSON.stringify(entries),rows=occurrences(entries);
  assert.equal(rows.length,2);assert.notEqual(rows[0].id,rows[1].id);assert.deepEqual(rows[0].group.primitives,[live]);assert.equal(rows[0].group.primitives[0],live);assert.equal(JSON.stringify(entries),before);assert.equal(occurrences([{...entries[0],groups:[{primitives:[stale]}]}]).length,0);
+});
+test('popup layer default retains every copper layer, silk and outline without fabrication clutter',()=>{
+ assert.deepEqual(defaultProbeLayers(['F.Cu','In1.Cu','B.Cu','F.SilkS','B.SilkS','Edge.Cuts','F.Fab','B.CrtYd','F.Paste']),['F.Cu','In1.Cu','B.Cu','F.SilkS','B.SilkS','Edge.Cuts']);
+});
+test('subsheet-origin probes resolve the loaded root stem and explicit pair before bounded identity search',()=>{
+ const paths=['board/Main.kicad_pcb','other/Main.kicad_pcb','board/alternate.kicad_pcb'];
+ const config={kind:'layout',rootFile:'board/Power.kicad_sch',files:[{path:'board/Main.kicad_sch'},{path:'board/Power.kicad_sch'}]};
+ assert.deepEqual(probeFileCandidates(paths,config),['board/Main.kicad_pcb']);
+ assert.deepEqual(probeFileCandidates(paths,{...config,pairedFile:'board/alternate.kicad_pcb'}),['board/alternate.kicad_pcb']);
+ assert.deepEqual(probeFileCandidates(paths,{...config,files:[]}),['board/Main.kicad_pcb','board/alternate.kicad_pcb']);
+});
+test('popup Layers button changes only its own layer set and can close independently',()=>{
+ const f=fixture(1);f.entries[0].path='board.kicad_pcb';f.entries[0].design.layers=['F.Cu','In1.Cu','F.SilkS','Edge.Cuts','F.Fab'];f.quick.openProbe(occurrences(f.entries)[0]);
+ const viewport=f.viewports[0];assert.deepEqual([...viewport.visibleLayers],['F.Cu','In1.Cu','F.SilkS','Edge.Cuts']);
+ f.button('Probe layers').emit('click');const panel=descendants(f.holder).find(n=>n.attributes['aria-label']==='Probe layers'&&n.tag==='div');assert.equal(panel.hidden,false);
+ const fab=descendants(panel).find(n=>n.attributes['aria-label']==='Show F.Fab');fab.checked=true;fab.emit('change');assert.equal(viewport.visibleLayers.has('F.Fab'),true);
+ f.button('Copper and silk').emit('click');assert.equal(viewport.visibleLayers.has('F.Fab'),false);f.button('Close layers').emit('click');assert.equal(panel.hidden,true);f.quick.dispose();
 });
 test('quarter-turn viewport transforms rotate pads, text and arcs as one rigid view and invert cursor coordinates',()=>{
  const fixtures=[{type:'pad',points:[{x:100,y:120},{x:130,y:120},{x:130,y:135},{x:100,y:135}]},{type:'text',x:160,y:70,angle:30},{type:'arc',start:{x:30,y:50},mid:{x:50,y:30},end:{x:70,y:50}}],snapshot=JSON.stringify(fixtures);

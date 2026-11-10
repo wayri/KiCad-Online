@@ -151,3 +151,23 @@ body[data-workspace-chrome] #drawingTools .button-label{display:none}
  body[data-workspace-chrome] #frameControls :is(#focusView,#terminalNumbersButton,.workspace-view-options,.workspace-mode-switch){width:28px;min-width:28px;flex:0 0 28px;height:28px;min-height:28px;padding:5px}
  body[data-workspace-chrome] #frameControls #netQuickViews{height:28px;min-height:28px;padding:4px 8px;font-size:11px}
 }
+
+/* Each split/detached drawing owns its ribbon width; keep every action reachable. */
+body[data-workspace-chrome] #frameControls{flex-wrap:wrap!important;overflow:visible;max-width:100%;align-content:flex-start}
+body[data-workspace-chrome] #frameControls .frame-actions{width:auto;max-width:100%;min-width:0;flex:0 1 auto;flex-wrap:wrap;overflow:visible;justify-content:flex-start}
+body[data-workspace-chrome] #frameControls .tool-group{min-width:0;max-width:100%;flex-wrap:wrap}
+body[data-workspace-chrome] #frameControls .top-sheet-navigation{min-width:0;max-width:100%;flex:0 1 auto}
+body[data-workspace-chrome] #frameControls .top-sheet-navigation #sheetLabel{min-width:0;flex:1 1 90px}
+body[data-workspace-chrome] #frameControls .top-sheet-navigation #sheetSelect{width:100%;min-width:0;max-width:170px}
+body[data-workspace-chrome] #frameControls .quick-variant{min-width:0;max-width:100%;flex:0 1 auto}
+body[data-workspace-chrome] #frameControls .quick-variant #variantSelect{min-width:0;max-width:100%;flex:1 1 100px}
+
+/* Review header actions contain readable labels, unlike icon-only ribbons. */
+body[data-workspace-chrome] #commentsSidebar>.sidebar-heading{display:flex;flex-wrap:nowrap;gap:6px;min-width:0}
+body[data-workspace-chrome] #commentsSidebar>.sidebar-heading h2{flex:1 1 auto;min-width:0;margin:0}
+body[data-workspace-chrome] #commentsSidebar>.sidebar-heading button{display:inline-flex;align-items:center;justify-content:center;gap:5px;flex:0 0 auto;width:auto;min-width:32px;min-height:32px;height:auto;padding:6px 8px;white-space:nowrap;line-height:1.2}
+body[data-workspace-chrome] #commentsSidebar>.sidebar-heading button .ui-icon{flex:none;width:16px;height:16px}
+body[data-workspace-chrome] #commentsSidebar>.sidebar-heading button .button-label{position:static;display:inline;width:auto;overflow:visible;white-space:nowrap}
+body[data-workspace-chrome] #commentsSidebar>.sidebar-heading #closeComments{width:32px;padding:6px}
+body[data-workspace-chrome] #commentsSidebar>.sidebar-heading #closeComments:has(.ui-icon) .button-label{display:none}
+@media(pointer:coarse){body[data-workspace-chrome] #commentsSidebar>.sidebar-heading button{min-height:44px;min-width:44px}}

@@ -17,6 +17,12 @@ test('repository launch preserves root, branch, nested namespace and explicit bl
  const gitlab=launch.context('https://gitlab.com/group/sub/repo');assert.equal(gitlab.repository,'group/sub/repo');assert.equal(gitlab.provider,'gitlab');
  assert.equal(launch.context('https://github.com/owner/repo/issues/42').ref,'HEAD');
 });
+test('direct file launch accepts separately supplied exact branch and commit metadata without losing slash refs',()=>{
+ const sha='c'.repeat(40),file='HARDWARE/ESP32-PoE-hardware-revision-M2/ESP32-PoE_Rev_M2.kicad_pcb',source='https://github.com/OLIMEX/ESP32-POE/blob/feature/models/'+file;
+ const info=launch.context(source,{ref:'feature/models',sha});assert.equal(info.kind,'drawing');assert.equal(info.repository,'OLIMEX/ESP32-POE');assert.equal(info.file,file);assert.equal(info.head,sha);
+ const url=new URL(launch.viewerURL(info,file,p=>'chrome-extension://test/'+p));assert.equal(url.searchParams.get('head'),sha);assert.equal(url.searchParams.get('file'),file);
+ const project=launch.context(source.replace('.kicad_pcb','.kicad_pro'),{ref:'feature/models',sha});assert.equal(project.kind,'drawing');assert.equal(new URL(launch.viewerURL(project,project.file,p=>'chrome-extension://test/'+p)).pathname,'/project-viewer.html');
+});
 test('launcher rejects credential-bearing locations and unsafe project paths',()=>{
  assert.equal(launch.context('https://user:secret@github.com/owner/repo'),null);assert.equal(launch.context('http://github.com/owner/repo'),null);
  for(const file of ['../board.kicad_pro','/board.kicad_pro','javascript:bad.kicad_pro','file.txt'])assert.throws(()=>launch.viewerURL({repository:'owner/repo',sha:'a'.repeat(40)},file,p=>p));

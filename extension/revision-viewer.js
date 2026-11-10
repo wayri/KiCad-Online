@@ -242,16 +242,17 @@
       if(!probeProjects.has(kind))probeProjects.set(kind,(async()=>{
         const known=files.filter(f=>(/\.kicad_pcb$/i.test(f.path)?'layout':/\.(kicad_sch|sch)$/i.test(f.path)?'schematic':null)===kind);
         if(known.length)return known;
-        const response=await (probeInventory||=send({type:'drawing-files',repository,ref,file:rootFile}));
+        const projectRoot=KiCadBrowserData.rootSheetPath(files,rootFile)||rootFile;
+        const response=await (probeInventory||=send({type:'drawing-files',repository,ref,file:projectRoot}));
         if(!response?.ok)throw Error(response?.error||'Project drawing inventory unavailable.');
         const paths=(response.result?.files||[]).map(f=>typeof f==='string'?f:f.path).filter(p=>kind==='layout'?/\.kicad_pcb$/i.test(p):/\.(kicad_sch|sch)$/i.test(p));
-        const paired=params.get('pairedFile'),stem=rootFile.replace(/\.(kicad_(pcb|sch)|sch)$/i,'');
-        const path=paths.includes(paired)?paired:paths.find(p=>p.replace(/\.(kicad_(pcb|sch)|sch)$/i,'')===stem)||(paths.length===1?paths[0]:null);
-        if(!path)throw Error(paths.length?'Multiple drawings are available; open the matching project drawing first.':'No saved '+kind+' drawing in this project.');
-        const reply=await send({type:'project',repository,ref,file:path});
-        if(!reply?.ok||!Array.isArray(reply.result))throw Error(reply?.error||'Probe drawing sources unavailable.');
-        return reply.result;
-      })().catch(error=>{probeProjects.delete(kind);throw error;}));
+        const candidates=KiCadNetQuickView.probeFileCandidates(paths,{kind,rootFile,files,pairedFile:params.get('pairedFile')});
+        if(!candidates.length)throw Error('No saved '+kind+' drawing in this project.');
+        if(candidates.length>8)throw Error('More than eight possible '+kind+' drawings. Select a project or paired drawing to scope the probe.');
+        const sources=new Map();let characters=0;
+        for(const path of candidates){const reply=await send({type:'project',repository,ref,file:path});if(!reply?.ok||!Array.isArray(reply.result))throw Error(reply?.error||'Probe drawing sources unavailable: '+path);for(const file of reply.result){if(!sources.has(file.path)){characters+=typeof file.content==='string'?file.content.length:0;if(characters>32*1024*1024)throw Error('Project is too large for a popup. Select the paired drawing explicitly.');}sources.set(file.path,file);}}
+        return [...sources.values()];
+      })().catch(error=>{probeProjects.delete(kind);probeInventory=null;throw error;}));
       return probeProjects.get(kind);
     }
     function probeDesign(source,path,targetBoard){
@@ -367,10 +368,13 @@
       const clearOverviewSelection=()=>{if(overviewView){overviewView.selected=null;overviewView.draw();}};
       $('unselect').addEventListener('click',clearOverviewSelection);$('clearHighlights').addEventListener('click',clearOverviewSelection);
       const fitOverview=()=>{if(!overviewView||!composition)return;overviewFitted=true;overviewView.resize();overviewView.viewport.camera.bbox={x:-12,y:-4,w:composition.design.page.width+12,h:composition.design.page.height+4};overviewView.draw();};
-      const miniature=document.createElement('section'),miniHeading=document.createElement('header'),miniTitle=document.createElement('strong'),miniMinimize=document.createElement('button'),miniClose=document.createElement('button'),miniBody=document.createElement('div'),miniShow=document.createElement('button');
-      miniature.className='sheet-tree-miniature';miniature.setAttribute('aria-label','Sheet tree navigator');miniTitle.textContent='Sheet tree';miniMinimize.type=miniClose.type=miniShow.type='button';miniMinimize.textContent='−';miniMinimize.setAttribute('aria-label','Minimize sheet tree');miniMinimize.setAttribute('aria-expanded','true');miniClose.textContent='×';miniClose.setAttribute('aria-label','Close sheet tree');miniBody.className='sheet-tree-miniature-body';miniHeading.append(miniTitle,miniMinimize,miniClose);miniature.append(miniHeading,miniBody);host.append(miniature);
-      miniMinimize.onclick=()=>{miniBody.hidden=!miniBody.hidden;miniMinimize.textContent=miniBody.hidden?'+':'−';miniMinimize.setAttribute('aria-expanded',String(!miniBody.hidden));miniMinimize.setAttribute('aria-label',miniBody.hidden?'Expand sheet tree':'Minimize sheet tree');};
-      miniClose.onclick=()=>{miniature.hidden=true;};miniShow.id='showSheetTree';miniShow.textContent='Show sheet tree';miniShow.onclick=()=>{miniature.hidden=false;miniBody.hidden=false;miniMinimize.textContent='−';miniMinimize.setAttribute('aria-expanded','true');miniMinimize.setAttribute('aria-label','Minimize sheet tree');$('viewerSettings').hidden=true;};$('viewerSettings')?.append(miniShow);
+      const miniature=document.createElement('section'),miniHeading=document.createElement('header'),miniTitle=document.createElement('strong'),miniMinimize=document.createElement('button'),miniMaximize=document.createElement('button'),miniClose=document.createElement('button'),miniBody=document.createElement('div'),miniShow=document.createElement('button');
+      miniature.className='sheet-tree-miniature';miniature.setAttribute('aria-label','Sheet tree navigator');miniTitle.textContent='Sheet tree';miniMinimize.type=miniMaximize.type=miniClose.type=miniShow.type='button';miniMinimize.textContent='−';miniMinimize.setAttribute('aria-label','Minimize sheet tree');miniMinimize.setAttribute('aria-expanded','true');miniClose.textContent='×';miniClose.setAttribute('aria-label','Close sheet tree');miniBody.className='sheet-tree-miniature-body';miniHeading.append(miniTitle,miniMinimize,miniMaximize,miniClose);miniature.append(miniHeading,miniBody);host.append(miniature);
+      let miniMaximized=false;
+      function syncMiniatureSize(){const expanded=!miniBody.hidden,maximized=miniMaximized&&expanded;miniature.classList.toggle('maximized',maximized);miniMinimize.textContent=expanded?'−':'+';miniMinimize.setAttribute('aria-expanded',String(expanded));miniMinimize.setAttribute('aria-label',expanded?'Minimize sheet tree':'Expand sheet tree');miniMaximize.textContent=maximized?'Restore':'Maximize';miniMaximize.setAttribute('aria-label',maximized?'Restore sheet tree size':'Maximize sheet tree');miniMaximize.title=maximized?'Restore small sheet tree':'Enlarge sheet tree to the drawing pane';miniMaximize.setAttribute('aria-pressed',String(maximized));miniMaximize.setAttribute('data-icon',maximized?'restore':'maximize');globalThis.KiCadUIIcons?.decorate?.(miniMaximize);}
+      miniMaximize.className='icon-only';miniMaximize.id='maximizeSheetTree';miniMaximize.onclick=()=>{miniMaximized=miniBody.hidden||!miniMaximized;miniBody.hidden=false;syncMiniatureSize();};
+      miniMinimize.onclick=()=>{miniBody.hidden=!miniBody.hidden;syncMiniatureSize();};
+      miniClose.onclick=()=>{miniature.hidden=true;};miniShow.id='showSheetTree';miniShow.textContent='Show sheet tree';miniShow.onclick=()=>{miniature.hidden=false;miniBody.hidden=false;syncMiniatureSize();$('viewerSettings').hidden=true;};$('viewerSettings')?.append(miniShow);syncMiniatureSize();
       const renderMiniature=()=>{
         const entries=(workspace.overviewSheets?.()||[]).filter(entry=>entry.sheet).map(entry=>({path:entry.sheet.path,label:entry.sheet.label||entry.sheet.path,placements:entry.placements||[],design:{page:{width:297,height:210},primitives:[]},groups:[]}));
         const mini=KiCadReviewWorkspace.composeSheetOverview(entries),svg=document.createElementNS('http://www.w3.org/2000/svg','svg'),width=mini.design.page.width,height=mini.design.page.height;

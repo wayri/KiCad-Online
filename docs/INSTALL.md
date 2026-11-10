@@ -15,6 +15,10 @@ desktop installer or Google Play installation is included in this preview.
 
 The BoM browser, History workspace and session-recovery updates are included in this GitHub preview. Store versions can differ; use the exact release ZIP or VSIX for manual installation.
 
+## Development candidate
+
+**0.12.92 / Android 1.94 is not published yet.** Use 0.12.91 above for the current GitHub preview. A locally supplied 0.12.92 candidate follows these package names: `kicad-visual-review-chrome-edge-brave-opera-vivaldi-chromium-0.12.92.zip`, `kicad-visual-review-firefox-0.12.92.zip`, `kicad-visual-review-vscode-0.12.92.vsix`, and `pocket-kivi-android-phone-tablet-1.94-development.apk`. A prepared candidate is separate from store approval and installed-browser acceptance.
+
 ## Choose your platform
 
 | Platform | Recommended route | Other options |
@@ -151,7 +155,7 @@ A matching hash verifies bytes against the published checksum; it is not a publi
 | Symptom | Check |
 | --- | --- |
 | Extension folder rejected | Extract the archive; select the folder directly containing `manifest.json` |
-| Toolbar button appears to do nothing | Confirm the extension is enabled, check host permission, reload it and refresh the repository tab; use Options to open the local workspace |
+| Toolbar button appears to do nothing | Check the extension’s Errors page. A browser that blocks extension-created pages can also block Options; this is separate from GitHub sign-in or repository permissions. |
 | VS Code shows source text | Use **Reopen Editor With → KiCad Online** and confirm the extension is enabled |
 | Private project returns 404/403 | Verify the matching host, repository access and account connection; a 404 may hide denied access |
 | Viewer chrome loads but controls fail | In updated builds, read the startup-error panel and use Options → Connection and browser checks; see [startup diagnostics](VIEWER-RELIABILITY.md) |
@@ -159,5 +163,7 @@ A matching hash verifies bytes against the published checksum; it is not a publi
 | Missing sheet/model | Import the whole project folder; inspect relative paths, format/size warnings and library references |
 | APK will not install | Check Android version, free storage, version downgrade and signing identity; preserve data before migration |
 | Public download unexpectedly requests sign-in | Use the public release links above and check the URL; private project downloads use the account authorized for that repository |
+
+If the error says **“extension-created tab was blocked before presentation”**, the browser refused to display the workspace. The extension cannot override that restriction. Keep browser security protections enabled and ask the browser administrator or vendor whether extension-page presentation is supported. Granting broader repository permissions does not resolve a blocked viewer tab.
 
 Continue with the [user guide](USER-GUIDE.md). Report reproducible problems to [support.kivi@sigharmonic.com](mailto:support.kivi@sigharmonic.com), including version, operating system, steps and a non-confidential sample. Do not send credentials or private designs without authorization.

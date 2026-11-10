@@ -54,6 +54,12 @@ test('website review transport rejects host, embedded, foreign and cross-reposit
  const request={type:'github-session-review',action:'send',repository:'owner/repo',number:1,body:'Test',clientMutationId:'12345678-1234-1234-1234-123456789abc',confirmedSend:true};
  for(const sender of [githubTab(1,'/owner/repo/issues/1'),options,{id:'test-id',url:extensionOrigin+'session-reviews.html?repository=other/repo'}, {id:'test-id',url:extensionOrigin+'session-reviews.html?repository=owner/repo',frameId:2,tab:{url:'https://github.com/owner/repo'}},{id:'other',url:extensionOrigin+'session-reviews.html?repository=owner/repo'}])assert.notEqual((await message(request,sender)).ok,true);
 });
+test('explicit browser-session review intent never falls through to an API account after its binding disappears',async t=>{
+ const original=KiCadGitHubReviewApi.chatThreadList;let apiCalls=0;KiCadGitHubReviewApi.chatThreadList=async()=>{apiCalls++;return {threads:[]};};t.after(()=>{KiCadGitHubReviewApi.chatThreadList=original;});
+ const repository='session-owner/unbound-repo',sender={id:'test-id',url:extensionOrigin+'browser-viewer.html?repository='+repository+'&file=board.kicad_pcb'},request={type:'chat-thread-list',repository,kind:'issue',reviewTransport:'website-session'};
+ const result=await message(request,sender);assert.equal(result.ok,false);assert.match(result.error,/website session is no longer connected/);assert.equal(apiCalls,0);
+ const explicitApi=await message({...request,reviewTransport:'api'},sender);assert.equal(explicitApi.ok,true);assert.equal(apiCalls,1);
+});
 
 test('dashboard history is owned-page-only and imported local entries contain no source content',async()=>{
  const R=require('../project-recents.js'),dashboard={id:'test-id',url:extensionOrigin+'dashboard.html'},local={id:'test-id',url:extensionOrigin+'local-viewer.html'};await message({type:'project-recents-clear',confirmed:true},dashboard);
@@ -139,7 +145,10 @@ test('revision resolution and pinned schematic reads never download commit patch
 
 test('legacy SHA media validation and website snapshots reject mismatched pinned commits',async t=>{
  let body=sha('b');withFetch(t,async()=>new Response(body));await assert.rejects(background.revisionResolve('owner/board',sha('a'),'root.kicad_sch'),/stable revision/);for(body of ['not-a-sha',JSON.stringify(sha('a')),sha('a')+' extra'])await assert.rejects(background.revisionResolve('owner/board','main','root.kicad_sch'),/stable revision/);body=' '.repeat(129);await assert.rejects(background.revisionResolve('owner/board','main','root.kicad_sch'),/size limit/);
- withWebsite(t,'owner/board',{'root.kicad_sch':'(kicad_sch)'},{sha:sha('b')});const mismatch=await message({type:'project',repository:'owner/board',ref:sha('a'),file:'root.kicad_sch'});assert.equal(mismatch.ok,false);assert.match(mismatch.error,/snapshot|session/i);
+ // A stale website snapshot must not substitute another commit's source,
+ // even when the requested pinned source is read before directory discovery.
+ const staleUrl='https://github.com/owner/board/raw/'+sha('b')+'/root.kicad_sch';
+ withWebsite(t,'owner/board',{'root.kicad_sch':'(kicad_sch)'},{sha:sha('b'),raw:async()=>new Response('(kicad_sch)'),responseUrl:()=>staleUrl});const mismatch=await message({type:'project',repository:'owner/board',ref:sha('a'),file:'root.kicad_sch'});assert.equal(mismatch.ok,false);assert.match(mismatch.error,/snapshot|session/i);
 });
 function websiteFeed(repository,commit){return `<feed xmlns="http://www.w3.org/2005/Atom"><entry><id>tag:github.com,2008:Grit::Commit/${commit}</id><link href="https://github.com/${repository}/commit/${commit}"/><title>Saved revision</title><updated>2026-10-30T01:00:00Z</updated><author><name>Designer</name></author></entry></feed>`;}
 function withWebsite(t,repository,sources={},options={}) {
@@ -151,7 +160,7 @@ function withWebsite(t,repository,sources={},options={}) {
   else if(url.includes('/commit/'))response=new Response('<script type="application/json">'+JSON.stringify({payload:{commitRoute:{commit:{oid:options.sha||sha('a'),url:'/'+repository+'/commit/'+(options.sha||sha('a')),parents:[]}}}})+'</script>',{headers:{'content-type':'text/html'}});
   else if(options.raw)response=await options.raw(url,init);
   else{const prefix='https://github.com/'+repository+'/raw/'+(options.sha||sha('a'))+'/';assert.ok(url.startsWith(prefix),url);const content=files.get(decodeURIComponent(url.slice(prefix.length)));response=content===undefined?new Response('',{status:404}):new Response(content);}
-  Object.defineProperty(response,'url',{value:url});return response;
+  Object.defineProperty(response,'url',{value:options.responseUrl?options.responseUrl(url):url});return response;
  };
  chrome.tabs.query=async()=>[{id:51,url:'https://github.com/'+repository+'/tree/main'}];
  chrome.tabs.sendMessage=async(id,request)=>{session.push(request);if(request.type==='repository-session-cancel'){controllers.get(request.requestId)?.abort();return {ok:true};}if(options.readSession)return options.readSession(request);if(request.action==='resolve'||request.action==='directory')return {ok:true,result:{sha:options.sha||sha('a'),items:entries(request.action==='resolve'?'':request.path)}};
@@ -1326,3 +1335,29 @@ test('GitLab website handoff uses documented prefill and keeps local attachments
 test('BoM viewer reads only its selected CSV at its pinned website revision',async t=>{withWebsite(t,'owner/bom-view',{'board.kicad_pcb':'(kicad_pcb)','BoM.csv':'Reference,Value\nR1,10k'});const scope={repository:'owner/bom-view',ref:sha('a'),file:'BoM.csv'},sender={id:'test-id',url:extensionOrigin+'bom-viewer.html?'+new URLSearchParams(scope),frameId:0};const result=await message({type:'project-file',...scope},sender);assert.equal(result.ok,true,result.error);assert.match(result.result.content,/R1,10k/);for(const extra of [{repository:'owner/other'},{ref:sha('b')},{file:'other.csv'},{type:'chat-message-write'},{type:'github-auth-status'},{type:'project',file:'board.kicad_pcb'}])assert.equal((await message({type:'project-file',...scope,...extra},sender)).ok,false);});
 
 test('standalone BoM discovery uses its drawing seed and file changes require a new page scope',async t=>{withWebsite(t,'owner/bom-seed',{'design/board.kicad_pcb':'(kicad_pcb)','design/BoM.csv':'Reference,Value\nR1,10k','design/parts.csv':'Reference,Value\nR2,1k'});const scope={repository:'owner/bom-seed',ref:sha('a')},sourceFile='design/board.kicad_pcb',sender={id:'test-id',url:extensionOrigin+'bom-viewer.html?'+new URLSearchParams({...scope,sourceFile}),frameId:0};const listing=await message({type:'project-inventory',...scope,file:sourceFile},sender);assert.equal(listing.ok,true,listing.error);assert(listing.result.files.some(x=>x.path==='design/BoM.csv'));assert.equal((await message({type:'project-file',...scope,file:'design/parts.csv'},sender)).ok,false);const selected={...sender,url:sender.url+'&file=design%2Fparts.csv'};assert.equal((await message({type:'project-file',...scope,file:'design/parts.csv'},selected)).ok,true);assert.equal((await message({type:'project-inventory',...scope,file:'unrelated.kicad_pcb'},selected)).ok,false);});
+
+
+test('browser presentation refusal makes one attempt and never opens an options fallback',async t=>{
+ const originalCreate=chrome.tabs.create,originalOptions=chrome.runtime.openOptionsPage,originalError=console.error,originalMode=localStore.get('project-viewer-mode');let attempts=0,options=0,logged;
+ t.after(()=>{chrome.tabs.create=originalCreate;chrome.runtime.openOptionsPage=originalOptions;console.error=originalError;if(originalMode===undefined)localStore.delete('project-viewer-mode');else localStore.set('project-viewer-mode',originalMode);});
+ localStore.set('project-viewer-mode','tab');
+ chrome.tabs.create=async()=>{attempts++;throw Error('Owl extension-created tab was blocked before presentation.');};
+ chrome.runtime.openOptionsPage=async()=>{options++;throw Error('Could not create an options page.');};
+ console.error=(...args)=>{logged=args;};
+ assert.equal(await actionListener({id:77,url:'https://github.com/owner/repo/blob/main/board.kicad_pcb'}),false);
+ assert.equal(attempts,1);assert.equal(options,0);assert.match(logged[1].message,/blocked before presentation/);
+ assert.equal(calls.badge,'!');assert.match(calls.actionTitle,/workspace could not open/);
+});
+
+test('presentation diagnostics cannot cause an unhandled rejection when action UI is unavailable',async t=>{
+ const originalCreate=chrome.tabs.create,originalError=console.error,originalBadge=chrome.action.setBadgeText,originalTitle=chrome.action.setTitle,originalColor=chrome.action.setBadgeBackgroundColor;
+ t.after(()=>{chrome.tabs.create=originalCreate;console.error=originalError;chrome.action.setBadgeText=originalBadge;chrome.action.setTitle=originalTitle;chrome.action.setBadgeBackgroundColor=originalColor;});
+ chrome.tabs.create=async()=>{throw Error('Tab presentation unavailable');};console.error=()=>{};
+ chrome.action.setBadgeText=()=>{throw Error('Badge unavailable');};chrome.action.setTitle=async()=>{throw Error('Title unavailable');};chrome.action.setBadgeBackgroundColor=undefined;
+ assert.equal(await actionListener({id:77,url:'https://example.com/'}),false);
+});
+
+test('a subsequent successful action restores the normal account badge',async()=>{
+ const before=calls.created.length;await actionListener({id:77,url:'https://example.com/'});
+ assert.equal(calls.created.length,before+1);assert.notEqual(calls.badge,'!');assert.doesNotMatch(calls.actionTitle,/workspace could not open/);
+});

@@ -21,15 +21,15 @@ Choose the destination before sending: a new Issue, an existing Issue, or a supp
 
 Review the destination, message and optional screenshot, then explicitly select **Comment**, **Post** or **Publish**. The exact label depends on the host and composer. The first remote send asks for destination and Terms acceptance; it is requested again if the stored acceptance is removed or the Terms version changes. Use **Destination…** to change a selected destination.
 
-Supported GitHub website-session Issue workflows can send and read back comments using the matching signed-in browser tab, without connecting broad repository OAuth access. Other operations may require an optional [connected account](GITHUB-SIGNIN.md). GitLab requires access to the selected server and the relevant project permissions. Organization restrictions and repository comment policies still apply.
+GitHub website-session Issue and Discussion workflows use the matching signed-in repository tab, without connecting broad repository OAuth access. Discussion replies use **Quote reply**, which posts a quoted reference in the conversation; it does not create a native nested reply. Poll discussions are not offered in this route. Optional [connected-account workflows](GITHUB-SIGNIN.md) are separate. GitLab requires access to the selected server and the relevant project permissions. Organization restrictions and repository comment policies still apply.
 
 Use **Open GitHub composer** to prepare a draft on GitHub instead. Opening the form does not submit it. Attach any screenshot manually when using this route.
 
 ## Read replies and synchronize
 
-Open **Comments → Threads** or **View comments**, choose an Issue or Discussion and load it. Select **Reply** to prepare a response. Ordinary messages appear in the conversation; they need no drawing metadata.
+Open **Comments**, choose **Issues**, **Discussions** or **All**, and open a conversation. Use **Back**, **Forward** and **Home** to navigate within the panel. **Float** detaches the same panel into a movable, resizable box; **Dock** returns it to the side. Drafts remain in that panel. Select **Reply** or **Quote reply** to prepare a response. Ordinary messages appear in the conversation; they need no drawing metadata.
 
-Visible readers normally check for updates every three seconds, with backoff after failures. Hidden panels do not poll. Use Refresh for a manual check. Provider limits, connection failures and background behavior can delay updates; this is not a live push service.
+Visible readers normally check for updates every three seconds, with backoff after failures. Hidden panels do not poll. Refresh preserves expanded conversation and annotation menus. Use Refresh for a manual check. Provider limits, connection failures and background behavior can delay updates; this is not a live push service.
 
 Synchronized KiCad Online annotations can display a marker or rectangular area in the schematic, layout or supported 3D view. Their metadata includes drawing path, saved revision and point/area coordinates in millimetres. **Locate** uses the saved identity or explicit coordinates on the matching drawing. A plain GitHub/GitLab comment without location metadata remains a conversation message; the viewer does not invent a marker for it.
 
@@ -41,13 +41,13 @@ Use **Issues**, **Discussions** or **All**, then filter by state, severity, read
 
 Severity runs from **Info** through **Level 1**, **Minor**, **Major** and **Critical**. It is per-comment metadata and does not create provider labels.
 
-A linked note can display the provider thread's last fetched Open/Closed state. Refresh before relying on it. **Skip review** is local to the reader/profile; **Follow issue state** resumes the linked state. Changing a local dropdown or filter does not close a shared Issue. The separate **Close/Reopen issue or discussion** action requires permission and confirmation.
+A linked note can display the provider thread's last fetched Open/Closed state. When the website does not expose that state, the panel shows **State unavailable**. Refresh before relying on it. **Skip review** is local to the reader/profile; **Follow issue state** resumes the linked state. Changing a local dropdown or filter does not close a shared Issue. The separate **Close/Reopen issue or discussion** action requires permission and confirmation.
 
 ## Mentions and screenshots
 
 Type `@` for available account suggestions, or enter a username manually. Suggestions depend on provider access; notifications happen only when the message is posted.
 
-Paste a PNG, JPEG or WebP into the composer to preview a bounded PNG capture. Review the image before sending, especially for private designs. The connected attachment route needs the provider's upload permissions. A failed upload retains the draft rather than silently posting without the image. Deleting a local note or signing out does not delete a remote attachment.
+Paste a PNG, JPEG or WebP into the composer for an immediate preview, then remove it with **Remove screenshot** or **Remove image** if needed. The preview remains visible while the image is prepared as a bounded PNG capture. Review the image before sending, especially for private designs. The connected attachment route needs the provider's upload permissions. A failed upload retains the draft rather than silently posting without the image. Deleting a local note or signing out does not delete a remote attachment.
 
 ![Local review composer on the public PIC Programmer demo](images/0.12.85/08-comment-composer.jpg)
 
@@ -66,6 +66,8 @@ Avoid editing one sidecar simultaneously in several applications. If a conflict 
 A confirmed post records its destination link. If posting succeeds but local saving or readback fails, the viewer reports a recovery warning rather than treating the remote post as absent.
 
 An interrupted request can have an uncertain outcome. Check the provider before retrying to avoid duplicates. **Recover published comment**, when offered, searches for an exact matching saved annotation without posting again. If it finds no unique match, inspect the provider thread manually.
+
+The website route uses only the repository tab invoked for that viewer. It refuses to navigate a tab with an existing unsent draft or active file editor, and restores its original page unless you have navigated elsewhere. If that binding is lost, reopen the project from its signed-in repository tab; the viewer does not silently switch to an OAuth account.
 
 For access errors, check the matching source tab, account permissions, destination and repository policy. Signing out clears the local account session but does not remove remote posts or revoke the provider's authorization.
 

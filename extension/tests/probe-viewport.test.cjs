@@ -4,6 +4,13 @@ const gitFile=path.join(project,'.git');if(fs.existsSync(gitFile)&&fs.statSync(g
 const threePath=roots.flatMap(root=>[path.join(root,'extension/node_modules/three/build/three.module.js'),path.join(root,'.vizdiff/build-deps/node_modules/three/build/three.module.js')]).find(fs.existsSync);
 const helper=()=>import('../spike/probeViewport.mjs');
 
+test('3D probe layer matching preserves unlayered context and handles through-hole copper wildcards',async()=>{
+ const {probeLayerVisible}=await helper(),layers=new Set(['F.Cu','In1.Cu','F.SilkS','Edge.Cuts']);
+ assert.equal(probeLayerVisible({layer:'F.Cu'},layers),true);assert.equal(probeLayerVisible({layer:'F.Fab'},layers),false);
+ assert.equal(probeLayerVisible({layers:['*.Cu','*.Mask']},layers),true);assert.equal(probeLayerVisible({type:'Board'},layers),true);
+ assert.equal(probeLayerVisible({layer:'B.Cu'},layers),false);assert.equal(probeLayerVisible({layer:'F.Cu'},new Set()),false);
+});
+
 test('PCB annotation corners may project outside the screen for SVG clipping but never behind the camera',{skip:!threePath},async()=>{
  const THREE=await import(pathToFileURL(threePath).href),{createAnchorProjector}=await import('../spike/projectAnchor.mjs');
  const camera=new THREE.PerspectiveCamera(60,1,.1,100);camera.position.set(0,0,10);camera.lookAt(0,0,0);camera.updateMatrixWorld();
@@ -44,6 +51,13 @@ test('probe camera, selection and lifecycle stay independent while using real so
  const addition=new THREE.Mesh(h.geometry,h.material);addition.position.z=500;addition.userData.record={type:'Component',ref:'U2',uuid:'u2'};h.source.add(addition);probe.sourceAdded(addition);probe.setSelection({references:['U2']});assert.equal(probe.getStats().selection.matched,1);assert.equal(probe.getStats().sourceParses,0);assert.equal(probe.getStats().modelRequests,0);h.flush();assert.ok(first.camera.far>500,'late model bounds expand the clip range without changing the camera');
  probe.dispose();probe.dispose();h.flush();assert.equal(sharedDisposals,0);assert.equal(h.disposed(),1);assert.equal(h.loss(),1);assert.equal(probe.getStats().active,false);assert.equal(h.source.children.length,2);
  h.geometry.dispose();h.material.dispose();
+});
+test('3D popup layer controls hide mixed-layer instances without changing shared main matrices',{skip:!threePath},async()=>{
+ const THREE=await import(pathToFileURL(threePath).href),{createSharedProbeViewport}=await helper(),h=viewportHarness(THREE),mesh=new THREE.InstancedMesh(h.geometry,h.material,2);
+ mesh.setMatrixAt(0,new THREE.Matrix4().makeTranslation(0,0,2));mesh.setMatrixAt(1,new THREE.Matrix4().makeTranslation(5,0,2));mesh.userData.records=[{type:'Track',uuid:'top',layer:'F.Cu'},{type:'Track',uuid:'fab',layer:'F.Fab'}];h.source.add(mesh);
+ const original=mesh.instanceMatrix,values=[...original.array],probe=createSharedProbeViewport({...h.args,selection:{uuids:['fab']}});h.flush();assert.equal(probe.getStats().selection.matched,1);
+ probe.setVisibleLayers(['F.Cu','F.SilkS','Edge.Cuts']);h.flush();assert.equal(probe.getStats().selection.matched,0);assert.equal(mesh.instanceMatrix,original);assert.deepEqual([...original.array],values);
+ probe.setVisibleLayers(['F.Cu','F.Fab']);h.flush();assert.equal(probe.getStats().selection.matched,1);assert.deepEqual(probe.getVisibleLayers(),['F.Cu','F.Fab']);probe.dispose();h.geometry.dispose();h.material.dispose();
 });
 
 test('probe picking keeps authoritative part, net and pin records separate', {skip:!threePath},async()=>{

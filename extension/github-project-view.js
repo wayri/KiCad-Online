@@ -45,7 +45,9 @@
           const listing=await buffer.directory(repository,sha,directory,signal);
           return listing.items.filter(item=>item.type==='file'&&/(?:\.kicad_sch|\.sch)$/i.test(item.path)).map(item=>item.path);
         };
-        await buffer.directory(repository,sha,file.split('/').slice(0,-1).join('/'),signal);
+        // Exact source reads and saved Sheetfile links do not require a usable
+        // folder listing. Parent discovery below is optional and reports its own
+        // omissions; a blocked/unhydrated tree must not prevent the file opening.
         let sources=await data.loadProject(repository,sha,file,(_repo,_sha,path)=>get(path),listDirectory,'github');
         // A leaf may have its parent in a sibling folder. Only that unresolved
         // case needs wider discovery; opening a saved root follows its links first.

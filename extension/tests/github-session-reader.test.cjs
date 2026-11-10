@@ -197,3 +197,54 @@ test('reader exposes fixed error categories for browser network and missing meta
  const network=create({location:{href:'https://github.com/'+repo},parseDocument:()=>[],fetch:async()=>{throw TypeError('Failed to fetch: PRIVATE URL must stay in reader');}});
  await assert.rejects(network.read(request),error=>error.code==='GITHUB_WEBSITE_NETWORK');
 });
+
+test('observed wide GitHub branch picker resolves the rendered HARDWARE folder context',()=>{
+ const {documentObjects}=require('../github-session-reader.js'),repository='wayri/testrepo1',href='https://github.com/'+repository+'/tree/main/HARDWARE';
+ // Branch selector ID observed in Chrome on the authorized repository page.
+ // No private source bytes or session credentials are included in this fixture.
+ for(const id of ['ref-picker-repos-header-ref-selector','ref-picker-repos-header-ref-selector-wide']){
+  const doc={querySelectorAll:()=>[],querySelector:selector=>selector==='table[aria-labelledby="folders-and-files"]'?{textContent:'Files',querySelectorAll:()=>[]}:selector==='[id="'+id+'"]'?{textContent:'main'}:null};
+  assert.deepEqual(documentObjects(doc,href),[{githubFileTableContext:{repository,ref:'main',directory:'HARDWARE'}}]);
+ }
+});
+
+test('semantic main landmark can supply the root HEAD commit without a literal main tag',()=>{
+ const {documentObjects,contextData}=require('../github-session-reader.js'),repository='owner/private';
+ const doc={querySelectorAll:selector=>selector==='[data-testid="latest-commit"] a[href], [data-testid="latest-commit-details"] a[href], [data-testid="latest-commit-html"] a[href]'?[{getAttribute:()=>'/'+repository+'/commit/'+sha}]:[],querySelector:selector=>selector==='table[aria-labelledby="folders-and-files"]'?{textContent:'Files',querySelectorAll:()=>[{querySelectorAll:()=>[{getAttribute:()=>'/'+repository+'/tree/main/HARDWARE'}]}]}:selector==='[id="ref-picker-repos-header-ref-selector-wide"]'?{textContent:'main'}:null};
+ assert.equal(contextData(documentObjects(doc,'https://github.com/'+repository+'/tree/main'),repository,'tree/main').sha,sha);
+});
+
+test('folders-and-files label remains valid when GitHub adds another accessible label',()=>{
+ const {documentObjects}=require('../github-session-reader.js');
+ const doc={querySelectorAll:()=>[],querySelector:selector=>selector==='table[aria-labelledby~="folders-and-files"]'?{textContent:'Files'}:selector==='[id="ref-picker-repos-header-ref-selector-wide"]'?{textContent:'main'}:null};
+ assert.deepEqual(documentObjects(doc,'https://github.com/'+repo+'/tree/main/HARDWARE'),[{githubFileTableContext:{repository:repo,ref:'main',directory:'HARDWARE'}}]);
+});
+
+test('classic resolution identifies branch HEAD and pinned folder failures separately without suppressing access denials',async()=>{
+ for(const stage of ['branch','folder','denied']){
+  let calls=0;const branch=tree();branch[0].payload.codeViewTreeRoute.refInfo.name='main';
+  const api=create({location:{href:'https://github.com/'+repo+'/tree/main/HARDWARE'},parseDocument:()=>[{githubFileTableContext:{repository:repo,ref:'main',directory:'HARDWARE'}}],fetch:async url=>{calls++;if(stage==='denied')return new Response('private denial',{status:403});return response('metadata',url);},parseHTML:()=>stage==='folder'&&calls===1?branch:[]});
+  await assert.rejects(api.read({repository:repo,ref:'HEAD',action:'context',path:'tree/main/HARDWARE'}),error=>error.code===(stage==='branch'?'GITHUB_BRANCH_HEAD_UNAVAILABLE':stage==='folder'?'GITHUB_PINNED_TREE_UNAVAILABLE':'GITHUB_WEBSITE_DENIED'));
+  assert.equal(calls,stage==='folder'?2:1);
+ }
+});
+
+
+const deferredRoot=[{githubFileTableContext:{repository:repo,ref:'main',directory:''}}];
+const headFeed=(repository=repo)=>'<feed xmlns="http://www.w3.org/2005/Atom"><entry><id>tag:github.com,2008:Grit::Commit/'+sha+'</id><link href="https://github.com/'+repository+'/commit/'+sha+'"/><title>Branch HEAD</title><author><name>owner</name></author><updated>2026-11-10T00:00:00Z</updated></entry></feed>';
+test('deferred branch HEAD resolves from its website feed then loads only the immutable root tree',async()=>{
+ const calls=[],pinned=tree('',[{path:'board.kicad_pcb',contentType:'file'}]);
+ const api=create({location:{href:'https://github.com/'+repo+'/blob/main/board.kicad_pcb'},parseDocument:()=>[],parseHTML:text=>text==='classic'?deferredRoot:pinned,fetch:async(url,init)=>{calls.push(url);assert.equal(init.credentials,'same-origin');assert.equal(init.redirect,'error');return response(url.endsWith('.atom')?headFeed():url.endsWith('/tree/main')?'classic':'pinned',url,url.endsWith('.atom')?'application/atom+xml':'text/html');}});
+ assert.deepEqual(await api.read({repository:repo,ref:'main',action:'resolve'}),{sha,items:[{path:'board.kicad_pcb',type:'file'}]});
+ assert.deepEqual(calls,['https://github.com/'+repo+'/tree/main','https://github.com/'+repo+'/commits/main.atom','https://github.com/'+repo+'/tree/'+sha]);
+});
+test('deferred default-branch context reuses the visible table and never infers HEAD from file history',async()=>{
+ const calls=[],api=create({location:{href:'https://github.com/'+repo},parseDocument:()=>deferredRoot,parseHTML:()=>tree(),fetch:async(url)=>{calls.push(url);return response(url.endsWith('.atom')?headFeed():'pinned',url,url.endsWith('.atom')?'application/atom+xml':'text/html');}});
+ const result=await api.read({repository:repo,ref:'HEAD',action:'context'});assert.equal(result.ref,'main');assert.equal(result.sha,sha);assert.equal(calls.length,2);assert.match(calls[0],/commits\/main.atom$/);
+ const {documentObjects}=require('../github-session-reader.js');
+ const doc={querySelectorAll:s=>s.startsWith('script')?[]:s.startsWith('main')?[{getAttribute:()=>'/'+repo+'/commit/'+'b'.repeat(40)}]:[],querySelector:s=>s.startsWith('table')?{textContent:'Files',querySelectorAll:()=>[]}:s.includes('ref-picker')?{textContent:'main'}:null};
+ assert.deepEqual(documentObjects(doc,'https://github.com/'+repo),deferredRoot);
+});
+test('deferred HEAD fallback rejects foreign feeds, redirected responses, oversized feeds and stale pinned trees',async()=>{
+ for(const mode of ['foreign','redirect','oversized','stale']){let pinnedReads=0;const api=create({location:{href:'https://github.com/'+repo},parseDocument:()=>deferredRoot,parseHTML:()=>[{payload:{codeViewTreeRoute:{path:'/',refInfo:{name:'main',currentOid:'b'.repeat(40)},tree:{items:[],totalCount:0}}}}],fetch:async url=>{if(!url.endsWith('.atom')){pinnedReads++;return response('pinned',url,'text/html');}const value=response(headFeed(mode==='foreign'?'other/repo':repo),mode==='redirect'?'https://github.com/login':url,'application/atom+xml');if(mode==='oversized')value.headers.set('content-length',String(4*1024*1024+1));return value;}});await assert.rejects(api.read({repository:repo,ref:'HEAD',action:'context'}));assert.equal(pinnedReads,mode==='stale'?1:0);}
+});

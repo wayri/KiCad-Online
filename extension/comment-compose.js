@@ -83,7 +83,13 @@ const KiCadCommentCompose = (() => {
       finally { if (canvas) { canvas.width=0; canvas.height=0; } }
     }
   }
-  return {titleFromText,mentionAt,insertMention,extractMentions,normalizeCapture};
+  function createNavigation(limit=40){
+    const clean=route=>{if(!route||!['catalog','thread','compose'].includes(route.page))throw Error('Invalid comment route.');const value={page:route.page,category:['issue','discussion','all'].includes(route.category)?route.category:'all'};if(route.page==='thread'){if(!['issue','discussion'].includes(route.kind)||!Number.isSafeInteger(route.number)||route.number<1)throw Error('Invalid conversation route.');Object.assign(value,{kind:route.kind,number:route.number});}return value;};
+    let routes=[clean({page:'catalog'})],index=0;
+    const current=()=>({...routes[index]});
+    return {current,push(route){const value=clean(route);if(JSON.stringify(value)===JSON.stringify(routes[index]))return current();routes=routes.slice(0,index+1);routes.push(value);if(routes.length>limit)routes.shift();index=routes.length-1;return current();},back(){if(index>0)index--;return current();},forward(){if(index<routes.length-1)index++;return current();},canBack:()=>index>0,canForward:()=>index<routes.length-1,reset(){routes=[clean({page:'catalog'})];index=0;return current();}};
+  }
+  return {titleFromText,mentionAt,insertMention,extractMentions,normalizeCapture,createNavigation};
 })();
 if (typeof globalThis === 'object') globalThis.KiCadCommentCompose=KiCadCommentCompose;
 if (typeof module === 'object' && module.exports) module.exports=KiCadCommentCompose;

@@ -6,29 +6,41 @@
  // Resolve saved text only: no environment, filesystem access or expression evaluation.
  function textResolver(ast,options={},warn=()=>{}){
   const fields=node=>{const result=Object.fromEntries((node||[]).filter(x=>Array.isArray(x)&&value(x[0])==='property').map(x=>[String(value(x[1])),String(value(x[2])??'')]));for(const key of ['Reference','Value','Footprint','Datasheet'])if(Object.prototype.hasOwnProperty.call(result,key))result[key.toUpperCase()]=result[key];return result;};
-  const saved=Object.create(null),title=(ast||[]).find(x=>Array.isArray(x)&&value(x[0])==='title_block');
-  for(const entry of title||[]){if(!Array.isArray(entry))continue;const key=String(value(entry[0]));if(['title','date','rev','company'].includes(key))saved[{title:'TITLE',date:'ISSUE_DATE',rev:'REVISION',company:'COMPANY'}[key]]=String(value(entry[1])??'');if(key==='comment')saved['COMMENT'+value(entry[1])]=String(value(entry[2])??'');}
+  const saved=Object.create(null),sources=Object.create(null),title=(ast||[]).find(x=>Array.isArray(x)&&value(x[0])==='title_block');
+  const save=(key,text,source)=>{saved[key]=text;sources[key]=source;};
+  for(const entry of title||[]){if(!Array.isArray(entry))continue;const key=String(value(entry[0]));if(['title','date','rev','company'].includes(key))save({title:'TITLE',date:'ISSUE_DATE',rev:'REVISION',company:'COMPANY'}[key],String(value(entry[1])??''),'Title block');if(key==='comment')save('COMMENT'+value(entry[1]),String(value(entry[2])??''),'Title block');}
   const project=options.textVariables||options.project?.text_variables||options.projectSettings?.text_variables||{};
-  for(const [key,text] of Object.entries(project))if(typeof text==='string'&&key.length<=200&&text.length<=65536)saved[key]=text;
-  Object.assign(saved,fields(ast));
-  if(typeof options.path==='string'){saved.FILENAME=options.path.split('/').pop();saved.FILEPATH=options.path;}
-  for(const [key,text] of [['#',options.sheetNumber],['##',options.sheetCount],['SHEETNAME',options.sheetName],['PROJECTNAME',options.projectName]])if(text!==undefined)saved[key]=String(text);
+  for(const [key,text] of Object.entries(project))if(typeof text==='string'&&key.length<=200&&text.length<=65536)save(key,text,'Project');
+  for(const [key,text] of Object.entries(fields(ast)))save(key,text,'Drawing field');
+  if(typeof options.path==='string'){save('FILENAME',options.path.split('/').pop(),'Drawing context');save('FILEPATH',options.path,'Drawing context');}
+  for(const [key,text] of [['#',options.sheetNumber],['##',options.sheetCount],['SHEETNAME',options.sheetName],['PROJECTNAME',options.projectName]])if(text!==undefined)save(key,String(text),'Sheet context');
   const references=new Map();
   for(const node of ast||[]){if(!Array.isArray(node)||!['symbol','footprint','module'].includes(value(node[0])))continue;const local=fields(node),ref=local.Reference;if(ref)references.set(ref,references.has(ref)?null:local);}
   const reported=new Set();
-  function resolve(input,local={}){
-   const raw=String(input??'');if(!raw.includes('${'))return raw;
+  function inspectText(input,local={}){
+   const raw=String(input??''),variables=new Map(),unresolved=new Set();
+   if(!raw.includes('${'))return {raw,value:raw,fromVariable:false,variables:[],unresolved:[],status:'literal'};
+   local=Object.assign(Object.create(null),local);for(const key of ['Reference','Value','Footprint','Datasheet'])if(Object.prototype.hasOwnProperty.call(local,key))local[key.toUpperCase()]=local[key];
    let count=0;
    const expand=(text,chain=[])=>text.replace(/\$\{([^{}]{1,200})\}/g,(token,key)=>{
-    if(++count>256||chain.length>=8||chain.includes(key)){if(!reported.has(key)){reported.add(key);warn('Text variable '+token+' is recursive or exceeds the substitution limit; preserved literally.');}return token;}
+    if(++count>256||chain.length>=8||chain.includes(key)){unresolved.add(key);if(!reported.has(key)){reported.add(key);warn('Text variable '+token+' is recursive or exceeds the substitution limit; preserved literally.');}return token;}
     const separator=key.lastIndexOf(':'),target=separator>0?references.get(key.slice(0,separator)):null,field=separator>0?key.slice(separator+1):key;
     const own=target&&Object.prototype.hasOwnProperty.call(target,field)?target:Object.prototype.hasOwnProperty.call(local,key)?local:saved,lookup=own===target?field:key;
-    if(!Object.prototype.hasOwnProperty.call(own,lookup)||typeof own[lookup]!=='string'){if(!reported.has(key)){reported.add(key);warn('Unresolved saved text variable '+token+'; preserved literally.');}return token;}
+    if(!Object.prototype.hasOwnProperty.call(own,lookup)||typeof own[lookup]!=='string'){unresolved.add(key);variables.set(key,{name:key,source:separator>0&&references.has(key.slice(0,separator))?'Ambiguous or missing reference field':'Unavailable',raw:token});if(!reported.has(key)){reported.add(key);warn('Unresolved saved text variable '+token+'; preserved literally.');}return token;}
+    variables.set(key,{name:key,source:own===target?'Reference '+key.slice(0,separator):own===local?'Selected object field':sources[key]||'Saved field',raw:own[lookup]});
     return expand(own[lookup],chain.concat(key));
    });
-   const resolved=expand(raw);if(resolved.length>65536){warn('Expanded text exceeds the saved-text limit; preserved literally.');return raw;}return resolved;
+   let resolved=expand(raw);if(resolved.length>65536){warn('Expanded text exceeds the saved-text limit; preserved literally.');resolved=raw;unresolved.add('Expansion limit');}
+   return {raw,value:resolved,fromVariable:true,variables:[...variables.values()],unresolved:[...unresolved],status:unresolved.size?'unresolved':'resolved'};
   }
-  return {resolve,fields};
+  const resolve=(input,local={})=>inspectText(input,local).value;
+  function list(local={}){
+   const names=new Set([...Object.keys(saved),...Object.keys(local)]);
+   for(const text of [...Object.values(saved),...Object.values(local)])if(typeof text==='string')for(const match of text.matchAll(/\$\{([^{}]{1,200})\}/g))names.add(match[1]);
+   return [...names].sort().slice(0,512).map(name=>{const detail=inspectText('${'+name+'}',local),binding=detail.variables.find(item=>item.name===name);return {name,source:binding?.source||'Unavailable',raw:binding?.raw??'${'+name+'}',value:detail.value,status:detail.status,unresolved:detail.unresolved};});
+  }
+  function properties(entries){const values=Object.create(null),provenance=Object.create(null);for(const [key,text] of Object.entries(entries||{})){const detail=inspectText(text,entries);values[key]=detail.value;if(detail.fromVariable)provenance[key]=detail;}return {values,provenance};}
+  return {resolve,fields,inspect:inspectText,list,properties};
  }
  function inspect(ast){
   const kind=String(value(ast?.[0])),field=name=>value(ast.find(x=>Array.isArray(x)&&value(x[0])===name)?.[1]);

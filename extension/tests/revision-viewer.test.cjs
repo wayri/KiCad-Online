@@ -4,7 +4,7 @@ const viewState=require('../view-state.js'),core=require('../owned-canvas.js');
 const tick=()=>new Promise(resolve=>setImmediate(resolve)),plain=value=>JSON.parse(JSON.stringify(value));
 async function revision(query='',extraFiles=[],options={}){
  const listeners=new Map(),canvasListeners=new Map(),controls=new Map(),reports=[],calls={board:0,page:0,draw:0,disposed:0,attach:0};
- class Element{constructor(){this.attributes={};this.children=[];this.listeners=new Map();this.hidden=false;this.dataset={viewer:'auto'};this.isConnected=true;this.classList={add(){},remove(){},toggle(){}};this.style={};}setAttribute(k,v){this.attributes[k]=String(v);}getAttribute(k){return this.attributes[k]??null;}append(...children){this.children.push(...children);}addEventListener(type,fn){if(!this.listeners.has(type))this.listeners.set(type,new Set());this.listeners.get(type).add(fn);}removeEventListener(type,fn){this.listeners.get(type)?.delete(fn);}remove(){}replaceChildren(){this.children=[];}click(){const result=this.onclick?.();for(const listener of this.listeners.get('click')||[])listener();return result;}}
+ class Element{constructor(){this.attributes={};this.children=[];this.listeners=new Map();this.hidden=false;this.dataset={viewer:'auto'};this.isConnected=true;const classes=new Set();this.classList={add:n=>classes.add(n),remove:n=>classes.delete(n),contains:n=>classes.has(n),toggle(n,on){const next=on??!classes.has(n);if(next)classes.add(n);else classes.delete(n);return next;}};this.style={};}setAttribute(k,v){this.attributes[k]=String(v);}getAttribute(k){return this.attributes[k]??null;}append(...children){this.children.push(...children);}addEventListener(type,fn){if(!this.listeners.has(type))this.listeners.set(type,new Set());this.listeners.get(type).add(fn);}removeEventListener(type,fn){this.listeners.get(type)?.delete(fn);}remove(){}replaceChildren(){this.children=[];}click(){const result=this.onclick?.();for(const listener of this.listeners.get('click')||[])listener();return result;}}
  Element.prototype.insertBefore=function(child,before){const index=this.children.indexOf(before);if(index<0)this.children.push(child);else this.children.splice(index,0,child);};
  const get=id=>{if(!controls.has(id)){const element=new Element();if(id==='viewerSettings')element.hidden=true;controls.set(id,element);}return controls.get(id);};
  const camera=new core.Camera(800,600),parent={postMessage:(data,origin)=>reports.push({data,origin})};
@@ -140,7 +140,7 @@ test('sheet tree floats below the drawing, minimizes, closes, reopens from setti
  const miniature=v.get('drawingHost').children.find(node=>node.className==='sheet-tree-miniature'),heading=miniature.children[0],body=miniature.children[1];
  assert.equal(miniature.hidden,false);assert.equal(heading.children[1].attributes['aria-expanded'],'true');
  heading.children[1].click();assert.equal(body.hidden,true);heading.children[1].click();assert.equal(body.hidden,false);
- heading.children[2].click();assert.equal(miniature.hidden,true);
+ heading.children.find(n=>n.attributes['aria-label']==='Close sheet tree').click();assert.equal(miniature.hidden,true);
  v.get('viewerSettings').children.find(node=>node.id==='showSheetTree').click();assert.equal(miniature.hidden,false);assert.equal(body.hidden,false);assert.equal(v.get('viewerSettings').hidden,true);
  await v.context.KiCadSheetOverview.open();
  const svg=body.children[0],node=svg.children.find(node=>node.attributes.role==='button'&&node.attributes['aria-label']==='Go to Power supply');
@@ -295,4 +295,15 @@ test('a newly selected unnamed schematic net opens the correct layout/3D probe a
  const occurrences=await v.calls.workspaceOptions.getSchematicProbeRows(layout,layout.selection);assert.equal(occurrences.occurrences.length,1);
  const back=await v.calls.workspaceOptions.resolveProbeViews(layout,layout.selection,'schematic');assert.ok(back.group.members.some(m=>m.reference==='R1'&&m.pin==='2'));assert.ok(!back.group.members.some(m=>m.reference==='R1'&&m.pin==='1'));
  const again=await v.calls.workspaceOptions.resolveProbeViews(back,back.selection,'schematic');assert.equal(again.group.id,back.group.id);v.hide();
+});
+
+test('maximized sheet tree restores its size, survives minimize/reopen and retains the drawing camera',async()=>{
+ const v=await revision('',[{path:'sub/power.kicad_sch',content:'(kicad_sch)'}],{android:true});
+ const tree=v.get('drawingHost').children.find(n=>n.className==='sheet-tree-miniature'),[heading,body]=tree.children;
+ const control=label=>heading.children.find(n=>n.attributes['aria-label']===label),svg=body.children[0],before={...v.camera.bbox},draws=v.calls.draw;
+ control('Maximize sheet tree').click();assert.equal(tree.classList.contains('maximized'),true);assert.equal(body.hidden,false);assert.equal(control('Restore sheet tree size').attributes['aria-pressed'],'true');assert.equal(body.children[0],svg);assert.deepEqual(v.camera.bbox,before);assert.equal(v.calls.draw,draws);
+ control('Minimize sheet tree').click();assert.equal(body.hidden,true);assert.equal(tree.classList.contains('maximized'),false);control('Maximize sheet tree').click();assert.equal(body.hidden,false);assert.equal(tree.classList.contains('maximized'),true);
+ control('Restore sheet tree size').click();assert.equal(tree.classList.contains('maximized'),false);assert.equal(control('Maximize sheet tree').attributes['aria-pressed'],'false');
+ control('Maximize sheet tree').click();control('Close sheet tree').click();assert.equal(tree.hidden,true);v.get('viewerSettings').children.find(n=>n.id==='showSheetTree').click();assert.equal(tree.hidden,false);assert.equal(tree.classList.contains('maximized'),true);
+ const second=await revision();assert.equal(second.get('drawingHost').children.find(n=>n.className==='sheet-tree-miniature').classList.contains('maximized'),false);v.hide();second.hide();
 });
