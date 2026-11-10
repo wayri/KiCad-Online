@@ -308,3 +308,8 @@ test('offline visible conversations do not issue reads and reconnect immediately
 test('website-session quoted replies are labelled before composing',()=>{const h=harness();const value=thread();value.capabilities.replyMode='quoted';h.api.render(value);const action=h.find('chat-reply-action');assert.equal(action.textContent,'Quote reply');action.onclick();assert.match(h.find('chat-compose-target').textContent,/Quoting @/);h.api.dispose();});
 
 test('unknown website Discussion state is neutral rather than shown open',()=>{const h=harness();h.api.render(thread(1,{kind:'discussion',state:'unknown'}));assert.equal(h.find('chat-thread-badge').textContent,'State unavailable');assert.equal(h.find('chat-thread-badge').attributes['data-state'],'unknown');h.api.dispose();});
+
+test('saving all drafts keeps each cleared conversation source snapshot for the next local draft',async()=>{
+ const h=harness();h.api.render(thread(1));h.type('First draft');h.api.render(thread(2));h.type('Second draft');await h.api.saveDraft(true);
+ h.api.render(thread(1));h.type('New draft in one');await h.api.saveDraft();assert.equal(h.savedText.at(-1).thread.number,1);assert.equal(h.savedText.at(-1).scope.file,'board.kicad_pcb');
+});

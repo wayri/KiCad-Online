@@ -374,7 +374,7 @@
     function rememberMeasurement(kind){measurementHistory.add({kind,points:measurePoints,file:currentFile()});renderMeasurementHistory();}
     historyPanel.addEventListener('toggle',renderMeasurementHistory);renderMeasurementHistory();
     const collapsedSheets = new Set(),sheetVisits=sheetHistory();
-    let variant = "default", selected = null, selectedPin=null, lastFile = null, notes = [], remoteNotes = [], remoteLoad = 0, loadId = 0, editor = null;
+    let variant = "default", selected = null, selectedPin=null, lastFile = null, notes = [], remoteNotes = [], remoteLoad = 0, loadId = 0, editor = null, editorBaseline = null;
     let receiptUser = "local-profile", unreadCursor = -1, policyStatus = null;
     const reviewThreadStates=KiCadReviewComments.createThreadStateCache();let reviewStatesDisposed=false;
     const providerStateScope=()=>({provider:collaboration?.provider||provider,host:collaboration?.host||host,repository:collaboration?.repository||options.pullRepository||repository});
@@ -1226,7 +1226,7 @@
     }
     function anchorLabel(value) { return `${value.reviewTarget?.references?.length>1?value.reviewTarget.references.join(", "):value.reference || value.netName || value.kind || "Drawing"}${value.reviewTarget?` · ${value.reviewTarget.surface==='bom'?'BoM':'Property'}: ${value.reviewTarget.field} = ${value.reviewTarget.value}`:""} · ${value.file}${value.position ? ` · ${value.position.x.toFixed(2)}, ${value.position.y.toFixed(2)} mm` : ""}${value.variant && value.variant !== "default" ? ` · ${value.variant}` : ""}`; }
     function editComment(note = null, at = null) {
-      try { editor = note ? {...note} : {id:crypto.randomUUID(), createdAt:new Date().toISOString(), text:"", severity:"info", threadType:commentCategory!=="all"?commentCategory:$("githubCommentType").value||"issue", anchor:at || anchor()}; }
+      try { editorBaseline=null;if(note){try{editorBaseline=JSON.stringify(KiCadReviewComments.validateComment(note));}catch{}} editor = note ? {...note} : {id:crypto.randomUUID(), createdAt:new Date().toISOString(), text:"", severity:"info", threadType:commentCategory!=="all"?commentCategory:$("githubCommentType").value||"issue", anchor:at || anchor()}; }
       catch (error) { commentStatus(error.message,true); inspector("comments"); return; }
       const type=KiCadReviewComments.commentType(editor);if(type){editor.threadType=type;$("githubCommentType").value=type;chooseCommentType();setCommentCategory(type,false);} $("commentEditor").hidden = false; $("commentAnchor").textContent=remoteAvailable?`${$("githubCommentType").value==="discussion"?"Discussion":"Issue"} · ${anchorLabel(editor.anchor)}; destination reviewed before sending.`:`Local review: ${anchorLabel(editor.anchor)}`; $("commentText").value = editor.text; $("commentSeverity").value = editor.severity || "info";$("commentState").value=editor.state||"open";$("commentTags").value=(editor.tags||[]).join(", ");$("commentMentions").value=(editor.mentions||[]).map(login=>"@"+login).join(", ");
       inspector("comments","add"); $("commentText").focus();
@@ -1724,7 +1724,7 @@
         else Object.assign(draft,{destination:value,...(value==='pull-request'?{pullNumber:options.pullNumber,pullRepository:targetRepository}:{})});
         await request('comment-save',{comment:saved,...(active.updatedAt?{expectedUpdatedAt:active.updatedAt}:{})});
         if(editor!==active||JSON.stringify(scope())!==source)throw Error('The source or draft changed. Open the saved draft again.');
-        editor=saved;
+        editor=saved;editorBaseline=JSON.stringify(KiCadReviewComments.validateComment(saved));
         const prepared=await request('open-comment-draft',draft);
         if(editor!==saved||JSON.stringify(scope())!==source)throw Error('The source or draft changed. Open the saved draft again.');
         const url=new URL(prepared.url);if(url.origin!==host||url.username||url.password||!url.pathname.startsWith('/'+targetRepository+'/'))throw Error('Unexpected website draft URL.');
@@ -1775,13 +1775,13 @@
         destinationSelect.focus?.();
       }catch(error){commentStatus(error.message,true);}
     }
-    function editorNote(){if(!editor)throw new Error("Create or select a note first.");return KiCadReviewComments.validateComment({...editor,threadType:remoteAvailable?$("editorThreadType").value||"issue":editor.threadType,text:$("commentText").value,severity:$("commentSeverity").value,state:$("commentState").value,tags:$("commentTags").value.split(",").map(tag=>tag.trim()).filter(Boolean),mentions:[...new Set([...$("commentMentions").value.split(/[\s,]+/).map(login=>login.trim()).filter(Boolean),...(root.KiCadCommentCompose?.extractMentions($("commentText").value,provider)||[])])],updatedAt:new Date(Math.max(Date.now(),Date.parse(editor.updatedAt||editor.createdAt)+1)).toISOString()});}
+    function editorNote(){if(!editor)throw new Error("Create or select a note first.");const next=KiCadReviewComments.validateComment({...editor,threadType:remoteAvailable?$("editorThreadType").value||"issue":editor.threadType,text:$("commentText").value,severity:$("commentSeverity").value,state:$("commentState").value,tags:$("commentTags").value.split(",").map(tag=>tag.trim()).filter(Boolean),mentions:[...new Set([...$("commentMentions").value.split(/[\s,]+/).map(login=>login.trim()).filter(Boolean),...(root.KiCadCommentCompose?.extractMentions($("commentText").value,provider)||[])])],updatedAt:editor.updatedAt||editor.createdAt});if(editorBaseline&&JSON.stringify(next)===editorBaseline)return next;return KiCadReviewComments.validateComment({...next,updatedAt:new Date(Math.max(Date.now(),Date.parse(editor.updatedAt||editor.createdAt)+1)).toISOString()});}
     async function saveEditor(post=false){
       if(pasteBusy){commentStatus("Wait for the pasted screenshot to finish preparing.",true);return;}if(!editor||$("saveComment").disabled)return;$("saveComment").disabled=$("postComment").disabled=true;
       try{const saved=editorNote();let publication;
         if(post){if(!remoteAvailable)throw new Error(`${providerName} publication is unavailable in this viewer.`);const value=$("editorDestination").value,number=Number($("editorThreadNumber").value),category=$("editorCategory").value,title=root.KiCadCommentCompose?.titleFromText($("commentText").value)||$("editorTitle").value.trim();
           if(value.startsWith("existing-")&&(!Number.isSafeInteger(number)||number<=0))throw new Error(`Enter a positive ${providerName} thread number.`);if(value==="discussion"&&!category)throw new Error("Load and select a discussion category.");publication={value,number,category,title};try{localStorage.setItem(JSON.stringify(['kivi-post-destination',provider,host,targetRepository]),JSON.stringify({type:saved.threadType,destination:value,number:Number.isSafeInteger(number)?number:0}));}catch{}}
-        await request("comment-save",{comment:saved,...(editor.updatedAt?{expectedUpdatedAt:editor.updatedAt}:{})});editor=saved;await refreshComments();options.onCommentsChanged?.();
+        await request("comment-save",{comment:saved,...(editor.updatedAt?{expectedUpdatedAt:editor.updatedAt}:{})});editor=saved;editorBaseline=JSON.stringify(KiCadReviewComments.validateComment(saved));await refreshComments();options.onCommentsChanged?.();
         if(!post||await publishNote(saved,$("postComment"),publication)){$("commentEditor").hidden=true;editor=null;showCommentTab("view");if(!post)commentStatus(remoteAvailable?`Draft saved. Edit this note and choose Comment to share it remotely.`:"Annotation saved in the configured review store.");}
       }catch(error){commentStatus(error.message,true);}finally{$("saveComment").disabled=$("postComment").disabled=false;}
     }

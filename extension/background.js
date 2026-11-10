@@ -89,7 +89,9 @@ async function githubSessionRead(repository,ref,action,path='',limit=8*1024*1024
     }
     if(!reply?.ok){if(typeof reply?.error==='string')accessError=Error(reply.error.slice(0,1000));continue;}
     const result=reply.result;
-    if(action==='context') {
+    if(action==='policy') {
+      if(ref!=='HEAD'||path!==''||!SHA.test(result?.sha||'')||!['default','repository'].includes(result?.source)||result.source==='default'&&result.content!==undefined||result.source==='repository'&&(typeof result.content!=='string'||new TextEncoder().encode(result.content).length>128*1024))throw Error('Invalid default-branch comment policy response.');
+    }else if(action==='context') {
       if(result?.repository!==repository||!KiCadBrowserData.validRef(result?.ref)||!KiCadGitHubSessionReader.safePath(result?.directory,true)||!SHA.test(result?.sha||'')||!Array.isArray(result?.items)||result.items.length>1000)throw Error('Invalid GitHub website context response.');
     }else if(action==='pull') {
       return KiCadGitHubWebsitePulls.validatePull(result,repository,Number(path));
@@ -804,7 +806,14 @@ async function websiteReviewCall(message){
 }
 let websiteReviewsInstance;
 const websiteReviewIntents=new Map();
-function websiteReviews(){return websiteReviewsInstance||=KiCadGitHubWebsiteReviews.create({call:websiteReviewCall,storage:chrome.storage.local,assertWrites:()=>KiCadManagedPolicy.assertWrites(),reserve:()=>KiCadReviewComments.reservePublication(chrome.storage.local,JSON.stringify(['github','website-session']),Date.now()),comments:KiCadReviewComments});}
+async function websiteCommentPolicyStatus(repository,login){
+ const snapshot=await githubSessionRead(repository,'HEAD','policy','',128*1024);
+ return KiCadGitHubReviewApi.websitePolicyDecision(repository,snapshot,login);
+}
+async function assertWebsiteCommentPolicy(repository,login){
+ const result=await websiteCommentPolicyStatus(repository,login);if(!result.allowed)throw Error(result.reason);return result;
+}
+function websiteReviews(){return websiteReviewsInstance||=KiCadGitHubWebsiteReviews.create({call:websiteReviewCall,storage:chrome.storage.local,assertWrites:()=>KiCadManagedPolicy.assertWrites(),assertPolicy:assertWebsiteCommentPolicy,reserve:()=>KiCadReviewComments.reservePublication(chrome.storage.local,JSON.stringify(['github','website-session']),Date.now()),comments:KiCadReviewComments});}
 function ownedWebsiteReviewSender(sender,repository){
  if(!sessionReviewSender(sender)&&!viewerSender(sender))return false;
  try{const own=new URL(chrome.runtime.getURL('')),page=new URL(sender.url),parent=new URL(sender.tab?.url||sender.url);return parent.protocol===own.protocol&&parent.host===own.host&&page.searchParams.get('repository')===repository;}catch{return false;}
@@ -1432,7 +1441,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     if(message.provider==='gitlab'){const host=message.host||'https://gitlab.com';if(senderOrigin?.startsWith('https://')&&senderOrigin!==host)throw new Error('GitLab host does not match the sender.');return gitlabDispatch(message,sender);}
     if(message.comment?.anchor?.provider==='gitlab')throw new Error('GitLab annotations must use the GitLab provider.');
-    const websiteTypes=new Set(['github-thread-read','chat-thread-list','chat-message-write','github-annotations','comment-policy-status','github-publish-comment','github-discussion-categories']),reviewRepository=message.pullRepository||message.repository||message.scope?.repository||message.comment?.anchor?.repository;
+    const websiteTypes=new Set(['github-thread-read','chat-thread-list','chat-message-write','github-annotations','comment-policy-status','github-publish-comment','github-recover-publication','github-discussion-categories']),reviewRepository=message.pullRepository||message.repository||message.scope?.repository||message.comment?.anchor?.repository;
     const reviewIntentKey=JSON.stringify([sender.tab?.id??sender.url,reviewRepository]),hasReviewBinding=websiteTypes.has(message.type)&&validRepository(reviewRepository)&&(await repositorySessions().candidates('github','https://github.com',reviewRepository)).some(tab=>tab.bound),websiteReviewIntent=message.reviewTransport==='website-session'||message.reviewTransport!=='api'&&(hasReviewBinding||websiteReviewIntents.has(reviewIntentKey));
     if(websiteTypes.has(message.type)&&viewerSender(sender)&&validRepository(reviewRepository)&&websiteReviewIntent){
       const repository=reviewRepository;
@@ -1451,12 +1460,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if(message.type==='github-annotations'){
        return websiteReviews().annotations(message.scope||message,{repository,number:message.discussionNumber||message.issueNumber,kind:message.discussionNumber?'discussion':'issue'});
       }
-      if(message.type==='comment-policy-status'){const result=await websiteReviewCall({repository,action:'list'});return {allowed:true,login:result.account,transport:'website-session',reason:'Website-session permissions are checked again on the selected Issue before sending.'};}
+      if(message.type==='comment-policy-status'){const result=await websiteReviewCall({repository,action:'list'});return websiteCommentPolicyStatus(repository,result.account);}
       if(!ownedWebsiteReviewSender(sender,repository))throw Error('Website-session Send requires the matching standalone extension viewer.');
       if(message.type==='chat-message-write')return websiteReviews().chat(message);
       const args=KiCadGitHubReviewApi.publishArgs(message);
       if(args.repository!==repository)throw Error('Review destination does not match this website session.');
       if(!['issue','new-issue','discussion','new-discussion'].includes(args.destination))throw Error('Choose an Issue or Discussion destination.');
+      if(message.type==='github-recover-publication'){
+       const kind=args.destination.includes('discussion')?'discussion':'issue',result=await websiteReviews().recoverPublication({repository,kind,clientMutationId:args.note.id,number:args.number,recoveryNumber:message.recoveryNumber,newThread:args.destination.startsWith('new-')});
+       return {remoteRef:{kind,repository,number:result.number,url:result.url,publishedAt:result.createdAt},recovered:true,...(result.attachments?{attachments:result.attachments}:{}),...(result.receiptWarning?{receiptWarning:result.receiptWarning}:{})};
+      }
       const {capture,...metadata}=args.note,body=KiCadReviewComments.toMarkdown(metadata),details={repository,body,clientMutationId:args.note.id,confirmedSend:message.confirmedSend,...(capture?{annotation:args.note}:{})};
       const kind=args.destination.includes('discussion')?'discussion':'issue',result=args.destination.startsWith('new-')?await websiteReviews().createIssue({...details,kind,title:args.title,categoryId:args.categoryId}):await websiteReviews().send({...details,kind,number:args.number});
       return {remoteRef:{kind,repository,number:result.number,url:result.url,publishedAt:result.createdAt},...(result.attachments?{attachments:result.attachments}:{}),...(result.receiptWarning?{receiptWarning:result.receiptWarning}:{})};

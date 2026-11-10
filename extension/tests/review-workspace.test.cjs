@@ -1693,3 +1693,16 @@ test('schematic variable viewer switches saved sheet contexts, filters and close
 });
 
 test('annotation More actions remain expanded across refresh with the same note',async()=>{const note={id:'stable-note-menu',text:'Keep this menu open',severity:'info',state:'open',createdAt:'2026-10-28T00:00:00Z',anchor:{repository:'wayri/fixture',ref:'main',file:'board.kicad_pcb'}};const view=workspaceRuntime(async m=>m.type==='comment-list'?[note]:[]);view.load();await view.workspace.refreshComments();const menu=()=>view.get('commentList').children[0].querySelector('.note-more-actions');menu().open=true;view.get('commentList').scrollTop=32;await view.workspace.refreshComments();assert.equal(menu().open,true);assert.equal(view.get('commentList').scrollTop,32);view.workspace.dispose();});
+
+test('unchanged annotation publication retries preserve the exact original body timestamp',async()=>{
+ let notes=[];const sends=[];const view=workspaceRuntime(async m=>{if(m.type==='comment-list')return notes;if(m.type==='comment-save'){notes=[m.comment];return m.comment;}if(m.type==='github-publish-comment'){sends.push(m);throw Error('Unconfirmed outcome');}return[];});
+ view.load();await new Promise(setImmediate);view.get('newComment').click();view.get('commentText').value='Stable retry context';await sendComment(view);await new Promise(resolve=>setTimeout(resolve,5));await sendComment(view);assert.equal(sends.length,2);assert.deepEqual(sends[1].comment,sends[0].comment);view.workspace.dispose();
+});
+
+test('screenshot-only and type-only editor changes advance the optimistic-concurrency version',async()=>{
+ for(const change of ['screenshot','type']){let notes=[];const saved=[],view=workspaceRuntime(async m=>{if(m.type==='comment-list')return notes;if(m.type==='comment-save'){notes=[m.comment];saved.push(m);return m.comment;}if(m.type==='github-publish-comment')throw Error('Unconfirmed outcome');return[];},{compose:{normalizeCapture:async()=>({mime:'image/png',dataUrl:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a+XcAAAAASUVORK5CYII=',width:1,height:1})}});
+ view.load();await new Promise(setImmediate);view.get('newComment').click();view.get('commentText').value='Same text';await sendComment(view);const before=saved.at(-1).comment.updatedAt;
+ if(change==='screenshot'){const event=new Event('paste',{cancelable:true});Object.defineProperty(event,'clipboardData',{value:{items:[{kind:'file',type:'image/png',getAsFile:()=>new Blob(['image'],{type:'image/png'})}]}});view.get('commentText').dispatchEvent(event);await new Promise(setImmediate);}
+ else{view.get('editorThreadType').value='discussion';view.get('editorThreadType').onchange();view.get('editorDestination').value='existing-discussion';view.get('editorDestination').onchange();view.get('editorThreadNumber').value='19';}
+ await sendComment(view);assert.notEqual(saved.at(-1).comment.updatedAt,before,change);assert.equal(saved.at(-1).expectedUpdatedAt,before,change);view.workspace.dispose();}
+});

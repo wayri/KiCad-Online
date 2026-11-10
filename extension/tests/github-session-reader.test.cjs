@@ -248,3 +248,25 @@ test('deferred default-branch context reuses the visible table and never infers 
 test('deferred HEAD fallback rejects foreign feeds, redirected responses, oversized feeds and stale pinned trees',async()=>{
  for(const mode of ['foreign','redirect','oversized','stale']){let pinnedReads=0;const api=create({location:{href:'https://github.com/'+repo},parseDocument:()=>deferredRoot,parseHTML:()=>[{payload:{codeViewTreeRoute:{path:'/',refInfo:{name:'main',currentOid:'b'.repeat(40)},tree:{items:[],totalCount:0}}}}],fetch:async url=>{if(!url.endsWith('.atom')){pinnedReads++;return response('pinned',url,'text/html');}const value=response(headFeed(mode==='foreign'?'other/repo':repo),mode==='redirect'?'https://github.com/login':url,'application/atom+xml');if(mode==='oversized')value.headers.set('content-length',String(4*1024*1024+1));return value;}});await assert.rejects(api.read({repository:repo,ref:'HEAD',action:'context'}));assert.equal(pinnedReads,mode==='stale'?1:0);}
 });
+
+test('policy enforcement always fetches the fresh default root and pins its policy file',async()=>{
+ const calls=[],policy=JSON.stringify({schemaVersion:1,commenting:{mode:'allowlist',allowlist:['reviewer']}}),fresh=tree('',[{path:'.kicad-review-policy.json',contentType:'file'}]);
+ const api=create({location:{href:'https://github.com/'+repo+'/tree/old-branch'},parseDocument:()=>{throw Error('Must not use displayed or cached revision');},parseHTML:()=>[...fresh,{githubWebsiteAccount:'reviewer'}],fetch:async(url,init)=>{calls.push(url);assert.equal(init.cache,'no-store');return response(url.endsWith('.json')?policy:'html',url,url.endsWith('.json')?'text/plain':'text/html');}});
+ assert.deepEqual(await api.read({repository:repo,ref:'HEAD',action:'policy'}),{sha,source:'repository',content:policy,account:'reviewer'});
+ assert.deepEqual(calls,['https://github.com/'+repo,'https://github.com/'+repo+'/raw/'+sha+'/.kicad-review-policy.json']);
+ for(const ref of ['main',sha])await assert.rejects(api.read({repository:repo,ref,action:'policy'}),/current default/);
+});
+test('only a complete fresh root proves a missing website policy; listed unreadable files and links fail closed',async()=>{
+ for(const mode of ['absent','incomplete','symlink','missing','denied']){const rows=mode==='absent'?[]:[{path:'.kicad-review-policy.json',contentType:mode==='symlink'?'symlink':'file'}],objects=tree('',rows);if(mode==='incomplete')objects[0].payload.codeViewTreeRoute.tree.totalCount=2;
+ const api=create({location:{href:'https://github.com/'+repo},parseDocument:()=>tree(),parseHTML:()=>[...objects,{githubWebsiteAccount:'reviewer'}],fetch:async url=>{if(mode==='denied'||url.endsWith('.json')){const r=response('Not Found',url,'text/html');Object.defineProperty(r,'status',{value:404});Object.defineProperty(r,'ok',{value:false});return r;}return response('html',url,'text/html');}});
+ if(mode==='absent')assert.deepEqual(await api.read({repository:repo,ref:'HEAD',action:'policy'}),{sha,source:'default',account:'reviewer'});else await assert.rejects(api.read({repository:repo,ref:'HEAD',action:'policy'}));}
+});
+
+test('policy absence rejects unsupported native table rows even if unrelated files parse',()=>{
+ const {documentObjects}=require('../github-session-reader.js'),href='https://github.com/'+repo+'/tree/'+sha;
+ const link=(href,text)=>({textContent:text,getAttribute:()=>href}),ok=link('/'+repo+'/blob/'+sha+'/README.md','README.md'),bad=link('/foreign/module/tree/'+sha,'.kicad-review-policy.json');
+ const header={querySelector:()=>null,querySelectorAll:s=>s==='th'?[{textContent:'Name'},{textContent:'Last commit message'}]:[]};
+ const row=a=>({querySelector:s=>s==='td'?{querySelectorAll:()=>[a]}:null,querySelectorAll:s=>s==='a[href]'?[a]:[]});
+ for(const malformed of [false,true]){const rows=[header,row(ok),...(malformed?[row(bad)]:[])],table={textContent:'Name README.md',querySelectorAll:()=>rows},doc={querySelectorAll:()=>[],querySelector:s=>s.startsWith('table[')?table:s.includes('ref-picker')?{textContent:'main'}:null};const data=documentObjects(doc,href);
+ if(malformed)assert.throws(()=>treeData(data,sha,'',true),/unverified file rows/);else assert.equal(treeData(data,sha,'',true).items.length,1);}
+});

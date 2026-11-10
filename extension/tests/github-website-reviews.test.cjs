@@ -189,3 +189,49 @@ test('pending publication can recover a newly confirmed matching marker without 
  const body=h.calls.find(n=>n.action==='prepare').body;h.thread.comments.push({id:'123',author:'reviewer',body,url:'https://github.com/owner/repo/issues/1#issuecomment-123',createdAt:'2026-11-04T06:00:00Z',updatedAt:'2026-11-04T06:00:00Z'});
  const result=await h.transport.send(message);assert.equal(result.recovered,true);assert.equal(h.calls.filter(n=>n.action==='commit').length,1);
 });
+
+function recoveryHarness({newThread=false,kind='issue',assertPolicy=async()=>{}}={}){
+ const data={},calls=[],number=8,repository='owner/repo',title='Original title',body='Original review',clientMutationId=message.clientMutationId;
+ const thread={kind,number,account:'reviewer',author:'reviewer',title,body:'',url:`https://github.com/${repository}/${kind==='issue'?'issues':'discussions'}/${number}`,createdAt:'2026-11-10T00:00:00Z',updatedAt:'2026-11-10T00:00:00Z',capabilities:{create:true},comments:[]};
+ const storage={get:async key=>({[key]:data[key]}),set:async value=>Object.assign(data,value)};
+ const call=async value=>{calls.push(value);if(value.action==='read')return thread;if(value.action==='list')return {account:'reviewer'};if(value.action==='categories')return {categories:[{id:'general'}]};if(value.action.startsWith('prepare'))return {repository,number:newThread?undefined:number,account:'reviewer',ticket:'ticket'};if(value.action.startsWith('verify'))return {verified:true,account:'reviewer'};throw Error('Lost acceptance response');};
+ const transport=api.create({crypto:webcrypto,assertWrites:async()=>{},assertPolicy,reserve:async()=>{},storage,call});
+ const request={repository,number,kind,title,body,categoryId:'general',clientMutationId,confirmedSend:true};
+ return {data,calls,thread,request,transport,publish:()=>newThread?transport.createIssue(request):transport.send(request),recover:{repository,kind,clientMutationId,number:newThread?undefined:number,recoveryNumber:number,newThread},restart:()=>api.create({crypto:webcrypto,storage,call,assertPolicy:async()=>{throw Error('Recovery must not check current write policy');}}),accept(){const saved=Object.values(data)[0];if(newThread)thread.body=saved.body;else thread.comments=[{id:'123',author:'reviewer',body:saved.body,url:thread.url+(kind==='issue'?'#issuecomment-123':'#discussioncomment-123'),createdAt:thread.createdAt,updatedAt:thread.updatedAt}];}};
+}
+
+test('read-only recovery survives worker restart and preserves original text receipt without another send',async()=>{
+ const h=recoveryHarness();await assert.rejects(h.publish(),/not confirmed/);const pending=Object.values(h.data)[0];assert.equal(pending.account,'reviewer');assert.match(pending.body,/Original review/);h.accept();
+ const before=h.calls.length,recovered=await h.restart().recoverPublication(h.recover);assert.equal(recovered.recovered,true);assert.equal(recovered.messageId,'123');assert.deepEqual(h.calls.slice(before).map(value=>value.action),['read']);assert.equal(Object.values(h.data)[0].status,'done');
+ const again=await h.restart().recoverPublication(h.recover);assert.equal(again.duplicate,true);assert.equal(h.calls.filter(value=>value.action==='commit').length,1);
+ h.thread.account='someone-else';await assert.rejects(h.restart().recoverPublication(h.recover),/account that attempted/);
+});
+
+test('pending recovery rejects account, body, duplicate matches and mismatched conversation without posting',async()=>{
+ const h=recoveryHarness({kind:'discussion'});await assert.rejects(h.publish());h.accept();const transport=h.restart(),original={...h.thread.comments[0]};
+ h.thread.account='other';await assert.rejects(transport.recoverPublication(h.recover),/account that attempted/);h.thread.account='reviewer';
+ h.thread.comments[0].body='Changed remotely';await assert.rejects(transport.recoverPublication(h.recover),/No exact matching/);
+ h.thread.comments=[original,{...original,id:'124',url:h.thread.url+'#discussioncomment-124'}];await assert.rejects(transport.recoverPublication(h.recover),/Multiple matching/);
+ h.thread.comments=[{...original,url:'https://github.com/other/repo/discussions/8#discussioncomment-123'}];await assert.rejects(transport.recoverPublication(h.recover),/matching website conversation/);
+ await assert.rejects(transport.recoverPublication({...h.recover,recoveryNumber:9}),/original website conversation/);
+ await assert.rejects(transport.recoverPublication({...h.recover,repository:'other/repo'}),/No recoverable/);
+ assert.equal(Object.values(h.data)[0].status,'pending');assert.equal(h.calls.filter(value=>value.action==='commit').length,1);
+});
+
+test('known-number recovery confirms uncertain new Issues and Discussions by exact original title, body and author',async()=>{
+ for(const kind of ['issue','discussion']){
+  const h=recoveryHarness({newThread:true,kind});await assert.rejects(h.publish(),/not confirmed/);assert.equal(Object.values(h.data)[0].title,'Original title');h.accept();const transport=h.restart();
+  h.thread.title='Different title';await assert.rejects(transport.recoverPublication(h.recover),/No exact matching/);h.thread.title='Original title';
+  h.thread.author='other';await assert.rejects(transport.recoverPublication(h.recover),/No exact matching/);h.thread.author='reviewer';
+  h.thread.body+=' Changed';await assert.rejects(transport.recoverPublication(h.recover),/No exact matching/);h.accept();
+  await assert.rejects(transport.recoverPublication({...h.recover,recoveryNumber:9}),/matching website conversation/);
+  const result=await transport.recoverPublication(h.recover);assert.equal(result.kind,kind);assert.equal(result.number,8);assert.equal(result.title,'Original title');assert.equal(result.recovered,true);assert.equal(h.calls.filter(value=>value.action==='commit-create').length,1);
+ }
+});
+
+test('policy revocation during preparation blocks both comment and new-conversation commits',async()=>{
+ for(const newThread of [false,true]){
+  let checks=0;const h=recoveryHarness({newThread,assertPolicy:async(repository,account)=>{assert.equal(repository,'owner/repo');assert.equal(account,'reviewer');if(++checks===2)throw Error('Repository policy revoked');}});
+  await assert.rejects(h.publish(),/policy revoked/);assert.equal(checks,2);assert.equal(h.calls.some(value=>value.action.startsWith('commit')),false);assert.deepEqual(h.data,{});
+ }
+});

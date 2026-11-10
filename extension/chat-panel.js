@@ -63,7 +63,7 @@
    if(conversationIdentity()===identity){thread=mergeAccepted(thread);drawMessages();}
   }
   function currentDraft(){return drafts.get(key);}
-  function blank(){return{text:'',action:'create',reply:null,annotation:null,capture:null,mutation:null,fingerprint:null,scopeSnapshot:{...options.getScope()},threadSnapshot:thread?{kind:thread.kind,number:thread.number}:null};}
+  function blank(scope=options.getScope(),target=thread){return{text:'',action:'create',reply:null,annotation:null,capture:null,mutation:null,fingerprint:null,scopeSnapshot:{...scope},threadSnapshot:target?{kind:target.kind,number:target.number}:null};}
   const dirty=state=>!!state&&(!!state.text.trim()||!!state.capture||!!state.capturePending||!!state.annotation);
   function releaseCapturePreview(state){if(state?.capturePreviewUrl){try{(h.URL||root.URL)?.revokeObjectURL?.(state.capturePreviewUrl);}catch{}delete state.capturePreviewUrl;}}
   function startCapturePreview(state,blob){releaseCapturePreview(state);if(!['image/png','image/jpeg','image/webp'].includes(blob.type)||blob.size>8*1024*1024)return;try{state.capturePreviewUrl=(h.URL||root.URL)?.createObjectURL?.(blob);}catch{}}
@@ -153,7 +153,7 @@
   async function saveDraft(all=false){if(saving||sending||stateChanging)return false;const state=currentDraft();if(!state)return false;state.text=input.value;const states=all?[...drafts.values()].filter(dirty):[state];saving=true;syncComposer();
    try{for(const pending of states){if(!dirty(pending))continue;if(pending.annotation){if(typeof options.onSaveDraft!=='function')throw Error('Local draft storage is unavailable. Your draft was kept.');const payload=prepared(pending,pending.threadSnapshot,pending.scopeSnapshot);await options.onSaveDraft(payload.annotation);}
      else{if(typeof options.onSaveTextDraft!=='function')throw Error('Local draft storage is unavailable. Your draft was kept.');const text=pending.text.trim();if(!text)continue;pending.mutation ||= mutationId();await options.onSaveTextDraft({text,thread:pending.threadSnapshot,...(pending.reply?{replyTo:pending.reply.id}:{}),id:pending.mutation,scope:pending.scopeSnapshot});}
-     Object.assign(pending,blank());
+     releaseCapturePreview(pending);Object.assign(pending,blank(pending.scopeSnapshot,pending.threadSnapshot));
     }setComposerOptions(false);message('Local draft saved. Nothing was posted.');return true;
    }catch(error){message(error.message,true);return false;}finally{saving=false;if(!disposed)syncComposer();}
   }

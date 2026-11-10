@@ -828,6 +828,33 @@ const KiCadGitHubReviewApi = (() => {
     }
     return { mode: value.commenting.mode, allowlist: [...new Set(list.map((login) => login.toLowerCase()))] };
   }
+  function websitePolicyDecision(repository, snapshot, login) {
+    repoParts(repository);
+    if (!snapshot || !/^[a-f0-9]{40}$/i.test(snapshot.sha || '') || !['default', 'repository'].includes(snapshot.source) ||
+        snapshot.source === 'default' && snapshot.content !== undefined || snapshot.source === 'repository' && typeof snapshot.content !== 'string') {
+      throw fail('The current default-branch comment policy could not be verified. Nothing posted.', true);
+    }
+    let policy = { mode: 'all', allowlist: [] };
+    if (snapshot.source === 'repository') {
+      if (new TextEncoder().encode(snapshot.content).length > 128 * 1024) throw fail('Repository comment policy is too large.', true);
+      try { policy = validatePolicy(JSON.parse(snapshot.content)); }
+      catch { throw fail('Repository comment policy is malformed; publishing is blocked.', true); }
+    }
+    const result = { repository, ref: snapshot.sha, mode: policy.mode, source: snapshot.source, transport: 'website-session', allowed: false,
+      reason: 'Sign in to GitHub in the matching repository tab before commenting.' };
+    if (!LOGIN.test(login || '') || snapshot.account !== login) {
+      result.reason = 'The website account changed or could not be verified during the policy check. Nothing posted.';
+      return result;
+    }
+    result.login = login;
+    if (policy.mode === 'all') return { ...result, allowed: true, reason: 'Repository policy allows signed-in website users to comment.' };
+    if (login.toLowerCase() === repository.split('/')[0].toLowerCase() || policy.allowlist.includes(login.toLowerCase())) {
+      return { ...result, allowed: true, reason: 'Repository policy permits this website account.' };
+    }
+    result.reason = policy.mode === 'allowlist' ? 'This website account is not on the repository comment allowlist.' :
+      'The browser session cannot verify the required ' + policy.mode + ' rule. Ask the repository owner to add this account to its explicit review allowlist, or use a separately verified account connection.';
+    return result;
+  }
   async function policyGet(path, token, maxBytes = 1024 * 1024, accept = "application/vnd.github+json") {
     if (token) await assertCurrentToken(token);
     if (typeof path !== "string" || !(path === "/user" || path.startsWith("/repos/")) ||
@@ -1197,7 +1224,7 @@ const KiCadGitHubReviewApi = (() => {
     }
   }
   return { boardList, boardRead, boardMove, forkRevision, tokenStatus, setToken, clearToken, resetAuth, authorizationHeaders, deviceStatus, startDevice, pollDevice, cancelDevice,
-    commentPolicyStatus, validatePolicy, categories, publish, recoverPublication, publishArgs, validRepository, createAnnotationReader, createPullReader, readDiscussionAnnotations, readThread, chatThreadState, chatMessageWrite, chatThreadList };
+    commentPolicyStatus, validatePolicy, websitePolicyDecision, categories, publish, recoverPublication, publishArgs, validRepository, createAnnotationReader, createPullReader, readDiscussionAnnotations, readThread, chatThreadState, chatMessageWrite, chatThreadList };
 })();
 
 if (typeof globalThis === "object") globalThis.KiCadGitHubReviewApi = KiCadGitHubReviewApi;

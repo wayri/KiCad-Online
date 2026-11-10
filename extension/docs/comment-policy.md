@@ -16,7 +16,7 @@ Example:
 
 `mode` is required and has one of these values:
 
-- `all`: anyone with a configured GitHub token may try to publish. GitHub still applies its own repository permissions.
+- `all`: any signed-in account on the selected transport may try to publish. GitHub still applies its own repository permissions.
 - `contributors`: the signed-in account must appear in GitHub's repository contributor list. The extension scans at most 10 pages of 100 accounts; if the list is incomplete or GitHub is still calculating it, publishing is blocked. GitHub [caches contributor data](https://docs.github.com/en/rest/repos/repos#list-repository-contributors), so recent contributions can take time to qualify.
 - `collaborators`: GitHub's [repository permission endpoint](https://docs.github.com/en/rest/collaborators/collaborators#get-repository-permissions-for-a-user) must confirm `read`, `write`, or `admin` access for the signed-in account. A `404`, `none`, or unverifiable permission blocks publishing.
 - `allowlist`: the signed-in login must match one of up to 100 listed GitHub logins, ignoring case. An empty list allows only the repository owner.
@@ -29,3 +29,9 @@ This policy controls **only posts made by this extension**. It cannot stop someo
 
 
 An optional `allowlist` also works with `contributors` or `collaborators` as an explicit exception for invited reviewers. For example, `{ "schemaVersion": 1, "commenting": { "mode": "contributors", "allowlist": ["external-reviewer"] } }` admits verified contributors plus that named account and the owner. The authenticated login must still be verified before this exception applies. This does not grant the account repository access or change GitHub permissions.
+
+## Browser-session reviews
+
+The browser-session route reads the current default-branch policy through the matching repository website session, independently of the displayed drawing revision. It verifies the website account and repeats the check before final composer verification. Unreadable or incomplete root listings do not count as a missing policy.
+
+Owner and explicit allowlist matches use the verified website login. Contributor and collaborator modes require positive verification; if the browser route cannot establish that membership, it blocks posting and explains how an explicit review allowlist or a separately verified account connection can be used. It never requests broad repository OAuth access merely to fall back from an unverifiable rule. GitHub access controls still apply. Read-only recovery of an already attempted post checks its original account and content without submitting again.

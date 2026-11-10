@@ -89,7 +89,7 @@
   }
   return {invoke};
  }
- function create({call,storage,assertWrites,reserve,comments,crypto=root.crypto,now=()=>Date.now()}={}){
+ function create({call,storage,assertWrites,assertPolicy=async()=>{},reserve,comments,crypto=root.crypto,now=()=>Date.now()}={}){
   const locks=new Map(),cache=new Map(),confirmed=new Map(),catalogs=new Map(),scans=new Map();
   const key=(repository,number,kind='issue')=>JSON.stringify(kind==='issue'?[repository.toLowerCase(),number]:[repository.toLowerCase(),kind,number]),catalogKey=(repository,kind='issue')=>repository.toLowerCase()+(kind==='discussion'?':discussion':'');
   async function snapshot(store,id,ttl,load){
@@ -149,6 +149,7 @@
     await assertWrites();
     const thread=await read(repository,number,true,kind);
     if(!thread.capabilities?.create||typeof thread.account!=='string')throw Error('GitHub website does not allow this comment.');
+    await assertPolicy(repository,thread.account);
     const fingerprint=JSON.stringify([repository.toLowerCase(),number,body,thread.account,annotation?.capture||null,kind]);
     const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(fingerprint))),n=>n.toString(16).padStart(2,'0')).join('');
     let marked=body.replace(/\r\n?/g,'\n')+'\n\n<!-- pocket-kiview-session:'+clientMutationId+' -->';let attachments;
@@ -164,10 +165,11 @@
     const prepared=await call({repository,number,kind,action:'prepare',body:marked,...(annotation?.capture?{capture:annotation.capture}:{})});
     if(prepared.account!==thread.account||prepared.repository!==repository||prepared.number!==number||typeof prepared.ticket!=='string')throw Error('GitHub website account or draft changed. Nothing sent.');
     const captured=await finalizeCapture(prepared,{repository,number,kind,annotation,clientMutationId,baseBody:body});if(captured){marked=captured.body;attachments=captured.attachments;}
+    await assertPolicy(repository,thread.account);
     const checked=await call({repository,number,kind,action:'verify',ticket:prepared.ticket});
     if(checked?.verified!==true||checked.account!==thread.account)throw Error('GitHub website account changed. Nothing sent.');
     await assertWrites();
-    await storage.set({[operation]:{status:'pending',digest,...(attachments?{body:marked,attachments}:{}),startedAt:new Date(now()).toISOString()}});
+    await storage.set({[operation]:{status:'pending',digest,account:thread.account,body:marked,...(attachments?{attachments}:{}),startedAt:new Date(now()).toISOString()}});
     await assertWrites();
     let result;
     try{result=await call({repository,number,kind,action:'commit',ticket:prepared.ticket});}
@@ -187,18 +189,44 @@
    const operation='website-new-'+kind+':'+JSON.stringify([repository.toLowerCase(),clientMutationId]);if(locks.has(operation))throw Error('This conversation is already being created.');
    const work=(async()=>{
     await assertWrites();if(kind==='discussion'&&!(await categories(repository)).some(item=>item.id===categoryId))throw Error('Choose an existing supported Discussion category.');const catalog=await call({repository,kind,action:'list'}),account=catalog.account;if(typeof account!=='string'||!account)throw Error('Sign in to GitHub in the matching repository before creating a conversation.');
+    await assertPolicy(repository,account);
     const fingerprint=JSON.stringify([repository.toLowerCase(),title,body,account,annotation?.capture||null,kind,categoryId||null]),hash=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(fingerprint)),digest=Array.from(new Uint8Array(hash),n=>n.toString(16).padStart(2,'0')).join('');
     const record=confirmed.get(operation)||(await storage.get(operation))[operation];
     if(record){if(record.digest!==digest)throw Error('This issue send ID belongs to another draft or account.');if(record.status==='done')return {...record.result,duplicate:true};throw Error('A previous Create has an unconfirmed outcome. Inspect GitHub before trying again; no automatic duplicate issue will be created.');}
     let marked=body.replace(/\r\n?/g,'\n')+'\n\n<!-- pocket-kiview-session:'+clientMutationId+' -->';let attachments;await reserve();
     const prepared=await call({repository,kind,...(kind==='discussion'?{category:categoryId}:{}),title,body:marked,action:'prepare-create',...(annotation?.capture?{capture:annotation.capture}:{})});if(prepared.repository!==repository||prepared.account!==account||typeof prepared.ticket!=='string')throw Error('GitHub new-conversation account or draft changed. Nothing sent.');
     const captured=await finalizeCapture(prepared,{repository,kind,annotation,clientMutationId,baseBody:body});if(captured){marked=captured.body;attachments=captured.attachments;}
+    await assertPolicy(repository,account);
     const checked=await call({repository,kind,ticket:prepared.ticket,action:'verify-create'});if(checked?.verified!==true||checked.account!==account)throw Error('GitHub new-conversation account changed. Nothing sent.');
-    await assertWrites();await storage.set({[operation]:{status:'pending',digest,...(attachments?{body:marked,attachments}:{}),startedAt:new Date(now()).toISOString()}});await assertWrites();
+    await assertWrites();await storage.set({[operation]:{status:'pending',digest,account,body:marked,title,...(attachments?{attachments}:{}),startedAt:new Date(now()).toISOString()}});await assertWrites();
     let result;try{result=await call({repository,kind,ticket:prepared.ticket,action:'commit-create'});}catch{throw Error('Conversation creation was attempted but not confirmed. Inspect GitHub before retrying; no automatic second Create will occur.');}
     const url=new URL(result?.url||'about:blank');if(result?.kind!==kind||result.author!==account||!Number.isSafeInteger(result.number)||result.number<1||url.origin!=='https://github.com'||url.pathname!=='/'+repository+'/'+(kind==='discussion'?'discussions':'issues')+'/'+result.number||url.hash||result.title!==title)throw Error('GitHub did not confirm the matching new conversation. Inspect GitHub before retrying.');
     if(attachments)result={...result,attachments};
     catalogs.delete(catalogKey(repository,kind));scans.delete(repository.toLowerCase());const receipt={status:'done',digest,result};confirmed.set(operation,receipt);if(confirmed.size>64)confirmed.delete(confirmed.keys().next().value);try{await storage.set({[operation]:receipt});}catch{result={...result,receiptWarning:'Created on GitHub; the local receipt could not be saved.'};}return result;
+   })();locks.set(operation,work);try{return await work;}finally{locks.delete(operation);}
+  }
+  async function recoverPublication({repository,kind='issue',clientMutationId,number,recoveryNumber=number,newThread=false}){
+   if(typeof repository!=='string'||!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)||repository.split('/').some(part=>part==='.'||part==='..')||!['issue','discussion'].includes(kind)||typeof clientMutationId!=='string'||!/^[A-Za-z0-9_-]{16,100}$/.test(clientMutationId)||typeof newThread!=='boolean'||!Number.isSafeInteger(recoveryNumber)||recoveryNumber<1||!newThread&&number!==recoveryNumber)throw Error('Choose the original website conversation and send ID.');
+   const operation=newThread?'website-new-'+kind+':'+JSON.stringify([repository.toLowerCase(),clientMutationId]):'website-review:'+JSON.stringify(kind==='issue'?[repository.toLowerCase(),number,clientMutationId]:[repository.toLowerCase(),kind,number,clientMutationId]);
+   if(locks.has(operation))throw Error('This publication is still running. Wait for it to finish.');
+   const work=(async()=>{
+    const record=confirmed.get(operation)||(await storage.get(operation))[operation];
+    if(!record||!['pending','done'].includes(record.status)||!/^[0-9a-f]{64}$/.test(record.digest||''))throw Error('No recoverable website publication record exists. Inspect GitHub manually.');
+    const account=record.account||record.result?.author;
+    if(typeof account!=='string'||!account||record.status==='pending'&&(typeof record.body!=='string'||!record.body.endsWith('<!-- pocket-kiview-session:'+clientMutationId+' -->')||newThread&&typeof record.title!=='string'))throw Error('This older website receipt cannot be verified. Inspect GitHub manually; nothing will be resent.');
+    if(record.status==='done'&&record.result?.number!==recoveryNumber)throw Error('Choose the original website conversation number.');
+    const thread=await read(repository,recoveryNumber,true,kind);
+    if(thread.account!==account)throw Error('Sign in to the website as the account that attempted this publication.');
+    if(record.status==='done')return {...record.result,duplicate:true,recovered:true};
+    const matches=newThread?(thread.author===account&&thread.title===record.title&&thread.body===record.body?[thread]:[]):(thread.comments||[]).filter(item=>item.author===account&&item.body===record.body);
+    if(matches.length!==1)throw Error(matches.length?'Multiple matching website posts were found. Inspect GitHub manually; nothing will be resent.':'No exact matching website post was found. The uncertain publication remains protected from retry.');
+    const item=matches[0];let url;try{url=new URL(item.url);}catch{}
+    const expectedPath='/'+repository+'/'+(kind==='discussion'?'discussions':'issues')+'/'+recoveryNumber;
+    if(!url||url.origin!=='https://github.com'||url.username||url.password||url.search||url.pathname.toLowerCase()!==expectedPath.toLowerCase()||(newThread?!!url.hash:!(kind==='discussion'?/^#discussioncomment-[1-9][0-9]*$/:/^#issuecomment-[1-9][0-9]*$/).test(url.hash))||newThread&&(thread.kind!==kind||thread.number!==recoveryNumber)||!newThread&&url.hash!==(kind==='discussion'?'#discussioncomment-':'#issuecomment-')+item.id)throw Error('GitHub did not confirm the matching website conversation. Nothing will be resent.');
+    const result={provider:'github',kind,number:recoveryNumber,messageId:newThread?String(recoveryNumber):item.id,author:account,url:url.href,createdAt:item.createdAt,updatedAt:item.updatedAt,transport:'website-session',recovered:true,...(newThread?{title:record.title}:{replyTo:null}),...(record.attachments?{attachments:record.attachments}:{})};
+    const receipt={status:'done',digest:record.digest,result};confirmed.set(operation,receipt);if(confirmed.size>64)confirmed.delete(confirmed.keys().next().value);
+    try{await storage.set({[operation]:receipt});}catch{result.receiptWarning='Confirmed on GitHub; the local receipt could not be saved.';}
+    cache.delete(key(repository,recoveryNumber,kind));scans.delete(repository.toLowerCase());catalogs.delete(catalogKey(repository,kind));return result;
    })();locks.set(operation,work);try{return await work;}finally{locks.delete(operation);}
   }
   async function chat(message){
@@ -218,7 +246,7 @@
    }
    return send({...message,repository:scope.repository,number,kind,body,annotation:message.annotation});
   }
-  return {read,list,categories,annotations,send,chat,createIssue};
+  return {read,list,categories,annotations,send,chat,createIssue,recoverPublication};
  }
  root.KiCadGitHubWebsiteReviews={create,createTabTransport};if(typeof module==='object'&&module.exports)module.exports=root.KiCadGitHubWebsiteReviews;
 })(globalThis);
