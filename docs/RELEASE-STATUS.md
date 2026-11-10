@@ -2,15 +2,15 @@
 
 KiCad Online releases are available from GitHub and the platform stores. Stores review updates independently, so their installable versions can differ from the GitHub preview.
 
-**Latest GitHub preview — 9 November 2026:** [KiCad Online 0.12.91 / Android 1.93](https://github.com/wayri/KiCad-Online/releases/tag/v0.12.91) is published with 23 assets. All remote sizes and SHA-256 digests match the audited packages from source `3094638994f0d349905da0a9958ef548f57a2943`. Store submissions and reviews were not changed.
+**Latest GitHub preview — 11 November 2026:** [KiCad Online 0.12.92 / Android 1.94](https://github.com/wayri/KiCad-Online/releases/tag/v0.12.92) is published with 23 assets. All remote sizes and SHA-256 digests match the audited packages from source `3ce5ad47d309de2261278d8bec0230aaf482f869`. Chrome 0.12.92 is submitted and pending review; VS Code 0.12.92 is uploaded and verifying. Mozilla was not updated in this release.
 
-| Channel | Earlier store/channel snapshot: 6 November 2026 | Download |
+| Channel | Store/channel snapshot: 11 November 2026 | Download |
 | --- | --- | --- |
-| GitHub | **0.12.90 / Android 1.92** preview published | [Release files and checksums](https://github.com/wayri/KiCad-Online/releases/tag/v0.12.90) |
-| Chrome Web Store | **0.12.90 pending review**; previously published 0.12.88 | [Chrome listing](https://chromewebstore.google.com/detail/klfdjlbngpoopegjmbajaidgodpmjaoc) |
-| VS Code Marketplace | **0.12.90 public**; verification finished | [Marketplace listing](https://marketplace.visualstudio.com/items?itemName=wayri.kicad-visual-review) |
-| Mozilla Add-ons | **0.12.90 awaiting review**; readable source attached | [Firefox listing](https://addons.mozilla.org/en-US/firefox/addon/pocket-kiview-kicad-review/) |
-| Android app | **1.92 development-signed APK** on GitHub; manual updates | [APK](https://github.com/wayri/KiCad-Online/releases/download/v0.12.90/pocket-kivi-android-phone-tablet-1.92-development.apk) |
+| GitHub | **0.12.92 / Android 1.94** preview published | [Release files and checksums](https://github.com/wayri/KiCad-Online/releases/tag/v0.12.92) |
+| Chrome Web Store | **0.12.92 pending review**; published 0.12.91 | [Chrome listing](https://chromewebstore.google.com/detail/klfdjlbngpoopegjmbajaidgodpmjaoc) |
+| VS Code Marketplace | **0.12.92 uploaded; verifying** | [Marketplace listing](https://marketplace.visualstudio.com/items?itemName=wayri.kicad-visual-review) |
+| Mozilla Add-ons | **0.12.91 awaiting review**; matching readable source attached | [Firefox listing](https://addons.mozilla.org/en-US/firefox/addon/pocket-kiview-kicad-review/) |
+| Android app | **1.94 development-signed APK** on GitHub; manual updates | [APK](https://github.com/wayri/KiCad-Online/releases/download/v0.12.92/pocket-kivi-android-phone-tablet-1.94-development.apk) |
 | Safari | **0.12.85 development package**; requires Mac conversion and signing | [Safari instructions](SAFARI.md) |
 
 This is a dated snapshot, not a live status feed. Each store listing shows the version currently available to install. A successful upload or clean validator result does not mean an update has been approved.
@@ -22,7 +22,12 @@ There is no Google Play release; the AAB is unsigned. Altium beta is separate fr
 <details>
 <summary>Release evidence and historical distribution records</summary>
 
+
+**0.12.92 / Android 1.94 (11 November 2026):** GitHub preview published from `3ce5ad47d309de2261278d8bec0230aaf482f869`; all 23 remote assets (152,539,739 bytes) match local SHA-256 and sizes. Tagged gate: 2,557 JavaScript passes; Python 149 passes and one Windows symbolic-link privilege skip. Serial offline Android assemble/lint/bundle passed with 19 warnings and no errors; 437 viewer assets, non-debuggable flag and signature audited. APK retains the established development signer; AAB unsigned, not Play-ready. Installed Chrome public KERO acceptance passed for Issue catalogue, text/image sends, immediate removable image preview, automatic website-edit readback retaining image/drawing location, and cross-sheet Locate, with API review account signed out. Private/organization SSO, phone and Firefox acceptance are not implied. Chrome 0.12.92 submitted with automatic publication after approval and updated release text; no prior review cancelled. VSIX 0.12.92 accepted and verifying. Mozilla unchanged. Altium beta excluded.
+
 The following records preserve observations made during earlier releases. References to “current” or “pending” in these entries apply to their recorded dates.
+
+**0.12.91 store submissions (9 November 2026):** Chrome 0.12.91 is **Pending review**, following publication of 0.12.90; release description updated and existing five feature screenshots retained. VS Code Marketplace 0.12.91 is **Public**, with verification finished. Mozilla 0.12.91 is **Awaiting Review** (version 6684538, file 5228627), with zero validation errors/warnings and matching readable source attached (View current). Source archive: 94,561,634 bytes, SHA-256 `086dcd40637ae4509f153e7312ad65cd833d70ccdfb2dd6864c00f60cc3f9d7f`, exact source `3094638994f0d349905da0a9958ef548f57a2943`. Retained dependency inputs were revalidated; renderer inputs/bundle are unchanged from the prior byte-identical rebuild receipt; no fresh renderer or OCCT rebuild is claimed. Firefox desktop 140+ and Android 142+ compatibility are declared, with physical Firefox Android acceptance still unverified. No existing review was cancelled or withdrawn. No phone installation or Google Play publication was requested. Altium beta excluded.
 
 **0.12.91 / Android 1.93 published (9 November 2026):** [GitHub preview](https://github.com/wayri/KiCad-Online/releases/tag/v0.12.91), source/tag `3094638994f0d349905da0a9958ef548f57a2943`; all 23 remote assets (152,391,769 bytes) match local sizes and SHA-256 digests. Development-source gate: all 2,490 JavaScript checks passed. Clean tagged checkout: 2,489 passes plus one optional retained-public-model fixture skip; that check passed after supplying the exact retained fixture. Python: 149 passes and one Windows symbolic-link privilege skip. Android offline assemble/lint/bundle and exact 437-asset payload audit passed, with 19 lint warnings and no errors. APK is non-debuggable and uses the same development signer as Android 1.92; AAB is unsigned, not Play-ready. Includes the BoM tab, clearer sheet arrows, History/comparison, comment startup/readback and bounded stale-session recovery. KERO UI captures use locally buffered public source; installed-Chrome live KERO comment sync and private SSO acceptance remain unverified. No new store upload or phone installation is claimed. Altium beta excluded.
 
