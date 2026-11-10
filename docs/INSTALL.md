@@ -1,12 +1,12 @@
 # Install KiCad Online
 
-Latest GitHub preview: **extension 0.12.92 / Android 1.94**. Store submission
+Latest GitHub preview: **extension 0.12.93 / Android 1.95**. Store submission
 and approval are separate from GitHub downloads. See [release status](RELEASE-STATUS.md).
 
-Download `kicad-visual-review-chrome-edge-brave-opera-vivaldi-chromium-0.12.92.zip`,
-or `kicad-visual-review-firefox-0.12.92.zip` / `kicad-visual-review-vscode-0.12.92.vsix`
-from [the 0.12.92 GitHub release](https://github.com/wayri/KiCad-Online/releases/tag/v0.12.92).
-Android: `pocket-kivi-android-phone-tablet-1.94-development.apk` is included in the matching release.
+Download `kicad-visual-review-chrome-edge-brave-opera-vivaldi-chromium-0.12.93.zip`,
+or `kicad-visual-review-firefox-0.12.93.zip` / `kicad-visual-review-vscode-0.12.93.vsix`
+from [the 0.12.93 GitHub release](https://github.com/wayri/KiCad-Online/releases/tag/v0.12.93).
+Android: `pocket-kivi-android-phone-tablet-1.95-development.apk` is included in the matching release.
 GitHub's automatic Source code archives are source checkouts, not installable extensions.
 
 The browser and VS Code editions support Windows, Linux and macOS. Ordinary
@@ -42,7 +42,7 @@ code --install-extension wayri.kicad-visual-review
 For a downloaded VSIX, replace the filename with the actual package:
 
 ```sh
-code --install-extension ./kicad-visual-review-vscode-0.12.92.vsix
+code --install-extension ./kicad-visual-review-vscode-0.12.93.vsix
 ```
 
 On macOS, VS Code's **Shell Command: Install 'code' command in PATH** enables this optional terminal route. The Extensions UI does not need it.
@@ -85,7 +85,7 @@ For online projects, open a normal repository file page for `.kicad_sch` or `.ki
 
 Install the signed store version from [Mozilla Add-ons](https://addons.mozilla.org/en-US/firefox/addon/pocket-kiview-kicad-review/). The store lists the version currently available; it may differ from GitHub while an update is under review.
 
-To try the unsigned [Firefox 0.12.92 ZIP](https://github.com/wayri/KiCad-Online/releases/download/v0.12.92/kicad-visual-review-firefox-0.12.92.zip), use desktop Firefox 140+, extract it, open `about:debugging#/runtime/this-firefox`, and select **Load Temporary Add-on → manifest.json**. Temporary installations end at browser restart.
+To try the unsigned [Firefox 0.12.93 ZIP](https://github.com/wayri/KiCad-Online/releases/download/v0.12.93/kicad-visual-review-firefox-0.12.93.zip), use desktop Firefox 140+, extract it, open `about:debugging#/runtime/this-firefox`, and select **Load Temporary Add-on → manifest.json**. Temporary installations end at browser restart.
 
 The [Firefox guide](FIREFOX.md) covers updates, local projects, Firefox-based browsers and mobile limits. Firefox Android 142+ is declared by the package; physical-device extension testing is not complete. The separate Android APK is available below. Keep signature checks and organization policies enabled.
 
