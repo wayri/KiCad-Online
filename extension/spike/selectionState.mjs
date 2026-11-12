@@ -35,6 +35,16 @@ export function tapGesture(limit = 6) {
   };
 }
 
+/** Native contextmenu can arrive before right-drag movement. Pick only on release. */
+export function selectionGesture({onPick,onContextMenu,isHeld=()=>false},limit=6){
+  const tap=tapGesture(limit);
+  return {
+    down:event=>tap.down(event),move:event=>tap.move(event),cancel:event=>tap.cancel(event),
+    up(event,{select=true}={}){const tapped=tap.up(event);if(select&&tapped&&!isHeld()){if(event.button===0)onPick(event);else if(event.button===2)onContextMenu(event);}return tapped;},
+    context(event){event.preventDefault?.();if(event.button!==2&&!isHeld())onContextMenu(event);}
+  };
+}
+
 /** Long press is exclusive with orbit, pinch and tap, including cancelled touches. */
 export function holdGesture(open, { later = setTimeout, clear = clearTimeout, delay = 550, limit = 8 } = {}) {
   const pointers = new Set(); let timer = null, start = null, held = false;
@@ -59,6 +69,7 @@ export function selectableRecord(record, mode = 'all') {
   if (!record) return false;
   const terminal = record.type === 'Pad' || (typeof record.ref === 'string' && typeof record.name === 'string' && Array.isArray(record.at) && Number.isFinite(record.width) && Number.isFinite(record.height));
   if (mode === 'pin') return terminal;
+  if (mode === 'object') return terminal || !(record.type === 'Component' || typeof record.library === 'string');
   if (mode === 'part') return !terminal && (record.type === 'Component' || typeof record.library === 'string');
   if (mode === 'net') return typeof record.net === 'string' && Boolean(record.net);
   return true;

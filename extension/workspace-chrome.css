@@ -171,3 +171,38 @@ body[data-workspace-chrome] #commentsSidebar>.sidebar-heading button .button-lab
 body[data-workspace-chrome] #commentsSidebar>.sidebar-heading #closeComments{width:32px;padding:6px}
 body[data-workspace-chrome] #commentsSidebar>.sidebar-heading #closeComments:has(.ui-icon) .button-label{display:none}
 @media(pointer:coarse){body[data-workspace-chrome] #commentsSidebar>.sidebar-heading button{min-height:44px;min-width:44px}}
+
+/* Primary navigation is stable; secondary tools live in the More menu. */
+body[data-workspace-chrome] #reviewHeader{grid-template-columns:auto minmax(140px,1fr) auto;gap:8px;padding:4px 8px;min-height:40px}
+body[data-workspace-chrome] #workspaceTabs{flex:1 1 auto;overflow-x:auto}
+body[data-workspace-chrome] #workspaceTabs button,body[data-workspace-chrome] #projectTools>button,#workspaceHelpers>summary{height:32px;min-height:32px;padding:5px 8px;font:500 12px/1.2 var(--kiview-font,system-ui);display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+body[data-workspace-chrome] #workspaceTabs button span{font-size:inherit}
+body[data-workspace-chrome] #workspaceTabs .ui-icon{width:18px;height:18px;flex:0 0 18px}
+body[data-workspace-chrome] #sourceLink,body[data-workspace-chrome] #projectTools>.revision-picker{display:none}
+.workspace-nav-cluster{justify-content:flex-start}.workspace-action-cluster{justify-content:flex-end}
+#workspaceHelpers{position:relative;order:8}#workspaceHelpers>summary{cursor:pointer;border-radius:6px;list-style:none}#workspaceHelpers>summary::-webkit-details-marker{display:none}
+#workspaceHelpers[open]>summary{background:var(--selected,#293c59)}
+#workspaceHelpers>div{position:absolute;right:0;top:calc(100% + 6px);z-index:1500;width:240px;max-height:calc(100dvh - 60px);overflow:auto;display:grid;gap:3px;padding:6px;background:var(--panel,#1e2128);border:1px solid var(--line,#343944);border-radius:8px;box-shadow:0 10px 30px #0005}
+#workspaceHelpers button,#workspaceHelpers summary{font:500 12px/1.4 var(--kiview-font,system-ui)}
+#workspaceHelpers>div>button{display:flex;align-items:center;gap:8px;min-height:34px;width:100%;text-align:left;background:transparent;border:0}
+#workspaceHelpers .split-options>span{position:static;width:100%;box-shadow:none}
+#projectTools>#navigationHelpButton{order:10;width:32px;min-width:32px;padding:6px;margin-left:2px}
+body[data-workspace-chrome] #frameControls button{height:30px;min-height:30px;padding:5px 7px;font-size:12px}
+body[data-workspace-chrome] #frameControls button.icon-only{width:30px;min-width:30px;padding:6px}
+#frameControls>#navigationHelpButton{margin-left:auto;order:90}
+.navigation-help-dialog{position:fixed;inset:48px 12px auto auto;margin:0;width:min(460px,calc(100vw - 24px));max-height:calc(100dvh - 64px);padding:0;overflow:auto;box-sizing:border-box;color:var(--text,#e6e9ef);background:var(--panel,#1e2128);border:1px solid var(--line,#343944);border-radius:12px;box-shadow:0 16px 48px #0005;font:13px/1.5 system-ui}
+.navigation-help-dialog::backdrop{background:#0002}
+.navigation-help-dialog>header{display:flex;align-items:center;justify-content:space-between;gap:12px;position:sticky;top:0;padding:12px 16px;background:var(--panel,#1e2128);border-bottom:1px solid var(--line,#343944);z-index:1}
+.navigation-help-dialog h2{font-size:15px;margin:0}
+.navigation-help-dialog>header button{width:30px;height:30px;min-height:30px;padding:5px;border:0;border-radius:6px;background:transparent;color:inherit;cursor:pointer}
+.navigation-help-dialog .shortcut-help{padding:4px 16px 12px;margin:0;border:0;font-size:12px}
+.navigation-help-dialog .shortcut-help>summary{display:none}
+.navigation-help-dialog section{margin:12px 0 16px}.navigation-help-dialog h3{font-size:12px;margin:0 0 8px;color:var(--muted,#9ca5b5)}
+.navigation-help-dialog dl{display:grid;grid-template-columns:minmax(110px,.85fr) minmax(0,1.5fr);gap:7px 12px;margin:0;align-items:baseline}
+.navigation-help-dialog dt,.navigation-help-dialog dd{margin:0;overflow-wrap:anywhere}
+.navigation-help-dialog kbd{display:inline-block;font:11px/1.5 system-ui;border:1px solid var(--line,#343944);border-radius:4px;padding:1px 5px;background:var(--raised,#292d36)}
+.navigation-help-dialog .help-note{font-size:11px;line-height:1.5;color:var(--muted,#9ca5b5);border-top:1px solid var(--line,#343944);padding-top:10px;margin-bottom:0}
+@media(max-width:850px){body[data-workspace-chrome] #reviewHeader{grid-template-columns:minmax(0,1fr) auto}.workspace-action-cluster{grid-column:2;grid-row:1;justify-content:flex-end}#workspaceSearchHost{grid-column:1/-1;width:100%;max-width:none;justify-self:stretch}.workspace-nav-cluster{justify-content:flex-start}body[data-workspace-chrome] #reviewHeader #projectTools{justify-content:flex-end}}
+
+@media(min-width:851px){.workspace-action-cluster{grid-column:auto;grid-row:auto}}
+body[data-workspace-chrome] #frameControls .top-sheet-navigation button{height:30px;min-height:30px;min-width:30px;padding:5px}

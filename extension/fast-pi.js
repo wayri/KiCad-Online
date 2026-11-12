@@ -35,6 +35,7 @@ function geometry(ast,net,layers){
  if(shapes.length+holes.length>10000||vias.length>1000)fail('Copper geometry budget exceeded');if(unsupported.length)fail('Unsupported selected-net geometry: '+[...new Set(unsupported)].join(', '));if(!shapes.length)fail('No supported copper on the selected net');return {shapes,vias,holes,polygonPoints};
 }
 function solveBoard(ast,options){
+ if(options?.loadPowerW!==undefined)fail('Use solveAdaptive with loadPowerW and omit currentA for a constant-power load');
  const {layers,source,sink}=options||{};if(!Array.isArray(ast)||tag(ast)!=='kicad_pcb')fail('A parsed KiCad PCB is required');if(!Array.isArray(layers)||!layers.length||layers.length>64)fail('Explicit ordered copper stackup required');
  const sigma=positive(options.conductivitySm,'conductivity (S/m)'),step=positive(options.cellSizeMm,'cell size (mm)'),current=positive(options.currentA,'sink current (A)'),voltage=options.sourceVoltageV;if(!Number.isFinite(voltage))fail('Explicit source voltage required');const net=options.net;if(net===undefined||net===null||net==='')fail('Explicit net ID required');
  const seen=new Set();for(let i=0;i<layers.length;i++){const l=layers[i];if(typeof l.name!=='string'||seen.has(l.name)||!Number.isFinite(l.zMm))fail('Unique copper layer names and finite elevations required');positive(l.thicknessMm,'copper thickness');if(i&&l.zMm<=layers[i-1].zMm)fail('Copper elevations must strictly increase');seen.add(l.name);}
@@ -60,12 +61,35 @@ function solveBoard(ast,options){
  if(!Number.isFinite(residual)||residual>current*1e-8)fail('DC solver did not converge within its work budget; no result accepted');const offsets=nodes.map((node,i)=>connected.has(i)?(i===s?0:x[remap.get(i)]):null);const solved=nodes.map((node,i)=>({...node,voltageV:connected.has(i)?voltage+offsets[i]:null}));let loss=0;const flows=edges.filter(e=>connected.has(e.a)&&connected.has(e.b)).map(e=>{const drop=offsets[e.a]-offsets[e.b],I=drop*e.g,P=drop*I;loss+=P;return {...e,currentA:I,currentDensityAm2:I/e.areaM2,lossW:P};});const drop=-offsets[t];if(!Number.isFinite(drop)||!Number.isFinite(loss)||solved.some(n=>n.voltageV!==null&&!Number.isFinite(n.voltageV))||flows.some(e=>![e.currentA,e.currentDensityAm2,e.lossW].every(Number.isFinite))||Math.abs(loss-drop*current)>Math.max(loss,Math.abs(drop*current))*1e-6)fail('Result failed finite-value or power-conservation checks; no result accepted');
  return {experimental:true,method:'fixed-temperature 2.5D finite-volume DC',nodes:solved,edges:flows,sourceIndex:s,sinkIndex:t,voltageV:solved[t].voltageV,dropV:drop,resistanceOhm:drop/current,currentA:current,lossW:loss,residualA:residual,iterations,cellSizeMm:step,unconnectedCells:nodes.length-connected.size,warnings:['Screening approximation: perform mesh refinement before relying on extrema. Cell-center sampling can miss narrow gaps, thin traces and thermal-relief spokes; inspect connectivity at multiple resolutions.','Single-net voltage is relative to the supplied ideal source; return-network impedance is not included.','Via barrels use lumped resistance attached to one nearby mesh cell; pad spreading is mesh dependent.','No AC, temperature feedback, dielectric, or physical qualification is provided.']};
 }
+// A passive fixed-temperature network is linear. One unit-current solve supplies
+// its Thevenin resistance and the complete field; no nonlinear mesh solves are
+// needed. Select Vload = (Vs + sqrt(Vs^2 - 4RP))/2, using ratios to avoid Vs^2
+// overflow and cancellation at small drops. The fold itself is not a stable
+// high-voltage operating point, and is rejected with a small rounding margin.
+function constantPowerResult(reference,sourceVoltageV,loadPowerW){
+ const resistance=reference.resistanceOhm;
+ if(!Number.isFinite(resistance)||resistance<=0)fail('Constant-power resistance is outside positive finite numerical range; no result accepted');
+ const ratio=Math.sqrt(resistance)*Math.sqrt(loadPowerW)/sourceVoltageV,utilization=4*ratio*ratio;
+ if(!Number.isFinite(utilization)||utilization>=1-1e-12)fail('Constant-power load reaches or exceeds the voltage-collapse limit (or is numerically too close); no high-voltage operating point accepted');
+ const loadVoltage=sourceVoltageV*(.5+.5*Math.sqrt(1-utilization)),current=loadPowerW/loadVoltage;
+ if(!Number.isFinite(current)||current<=0||!Number.isFinite(current*current)||current*current===0)fail('Constant-power current is outside numerical range; no result accepted');
+ const nodes=reference.nodes.map(node=>({...node,voltageV:node.voltageV===null?null:sourceVoltageV+node.voltageV*current}));
+ const edges=reference.edges.map(edge=>({...edge,currentA:edge.currentA*current,currentDensityAm2:edge.currentDensityAm2*current,lossW:edge.lossW*current*current}));
+ const loss=edges.reduce((sum,edge)=>sum+edge.lossW,0),drop=reference.dropV*current,voltage=nodes[reference.sinkIndex].voltageV;
+ const balance=new Float64Array(nodes.length);for(const edge of edges){balance[edge.a]+=edge.currentA;balance[edge.b]-=edge.currentA;}
+ const residual=current*Math.sqrt(balance.reduce((sum,value,i)=>sum+(i===reference.sourceIndex||nodes[i].voltageV===null?0:(value/current+(i===reference.sinkIndex?1:0))**2),0));
+ if(!Number.isFinite(loss)||!Number.isFinite(drop)||!Number.isFinite(residual)||residual>current*1e-8||voltage<=0||nodes.some(node=>node.voltageV!==null&&!Number.isFinite(node.voltageV))||edges.some(edge=>![edge.currentA,edge.currentDensityAm2,edge.lossW].every(Number.isFinite))||!Number.isFinite(sourceVoltageV*current)||Math.abs(voltage*current-loadPowerW)>loadPowerW*1e-6||Math.abs(loss-drop*current)>Math.max(loss,Math.abs(drop*current))*1e-6)fail('Constant-power result failed finite-value, residual or power-conservation checks; no result accepted');
+ return {...reference,nodes,edges,currentA:current,voltageV:voltage,dropV:drop,lossW:loss,residualA:residual,loadMode:'power',loadPowerW,requestedLoadPowerW:loadPowerW,operatingPoint:'high-voltage',warnings:[...reference.warnings,'Constant-power load uses the high-voltage DC operating point; transient stability and regulator dynamics are not modeled.']};
+}
 // Recover under-resolved contacts with at most two finer meshes. Every attempt
 // retains the same geometry, explicit inputs, work limits and acceptance checks.
 function solveAdaptive(ast,options){
- const requested=options?.cellSizeMm;let last;
+ const powerMode=options?.loadPowerW!==undefined;
+ if(powerMode&&options.currentA!==undefined)fail('Supply either currentA or loadPowerW, not both');
+ if(powerMode){positive(options.loadPowerW,'load power (W)');positive(options.sourceVoltageV,'constant-power source voltage (V)');}
+ const {loadPowerW,...linearOptions}=options||{},requested=options?.cellSizeMm;let last;
  for(let attempt=0;attempt<3;attempt++){
-  try{const result=solveBoard(ast,{...options,cellSizeMm:requested/2**attempt});
+  try{const linear=solveBoard(ast,{...linearOptions,...(powerMode?{currentA:1,sourceVoltageV:0}:{}),cellSizeMm:requested/2**attempt}),result=powerMode?constantPowerResult(linear,options.sourceVoltageV,loadPowerW):{...linear,loadMode:'current'};
    return {...result,meshAttempts:attempt+1,requestedCellSizeMm:requested,warnings:[...(attempt?['Contacts required automatic mesh refinement from '+requested+' to '+result.cellSizeMm+' mm.']:[]),...result.warnings]};
   }catch(error){
    const recoverable=/unresolved|disconnected at this mesh|same cell; refine mesh/.test(error.message);

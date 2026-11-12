@@ -1,6 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const helpers = import('../spike/selectionState.mjs');
+test('individual picking can reach pads, vias and tracks behind a component body',async()=>{
+ const {selectableRecord}=await helpers;assert.equal(selectableRecord({type:'Component',ref:'U1'},'object'),false);assert.equal(selectableRecord({type:'Pad',ref:'U1',name:'1'},'object'),true);assert.equal(selectableRecord({type:'Via',uuid:'v1'},'object'),true);assert.equal(selectableRecord({type:'Track',uuid:'t1'},'object'),true);
+});
 test('perspective fit contains the board sphere on portrait phones and tablets', async () => {
   const {sphereFitDistance} = await import('../spike/fitPolicy.mjs');
   for (const aspect of [400/700, 900/650, 1600/800]) {
@@ -45,4 +48,30 @@ test('pin-only picking excludes component bodies and unrelated copper',async()=>
  for(const record of [{type:'Board'},{type:'Component',ref:'U1',library:'IC'},{type:'Track',net:'GND'},null])assert.equal(selectableRecord(record,'pin'),false);
  assert.equal(selectableRecord(pad,'part'),false);
  const precise=selectionMatcher({uuids:['pad']},{pads:[pad]});assert.equal(precise(pad),true);assert.equal(precise({...pad,id:'other',uuid:'other',name:'2'}),false);assert.equal(precise({type:'Component',ref:'U1'}),false);
+});
+
+
+test('right-drag panning never picks or clears the selected 3D net, regardless of native menu timing',async()=>{
+ const {selectionGesture}=await helpers;
+ for(const early of [true,false]){let selected='GND',menus=0,prevented=0;const gesture=selectionGesture({onPick:()=>{selected=null;},onContextMenu:()=>{menus++;}}),point=(x,y,type)=>({pointerId:1,button:2,clientX:x,clientY:y,type,preventDefault(){prevented++;}});
+ gesture.down(point(10,10,'pointerdown'));if(early)gesture.context(point(10,10,'contextmenu'));gesture.move(point(40,30,'pointermove'));gesture.up(point(40,30,'pointerup'));if(!early)gesture.context(point(40,30,'contextmenu'));
+ assert.equal(selected,'GND');assert.equal(menus,0);assert.equal(prevented,1);
+ }
+});
+
+test('stationary right-click opens one context menu while left clicks, cancelled drags and long-press remain distinct',async()=>{
+ const {selectionGesture}=await helpers;let picks=0,menus=0,held=false;const gesture=selectionGesture({onPick:()=>picks++,onContextMenu:()=>menus++,isHeld:()=>held}),point=button=>({pointerId:1,button,clientX:10,clientY:20,preventDefault(){}});
+ gesture.down(point(2));gesture.context(point(2));assert.equal(menus,0);gesture.up(point(2));gesture.context(point(2));assert.equal(menus,1);assert.equal(picks,0);
+ gesture.down(point(0));gesture.up(point(0));assert.equal(picks,1);
+ gesture.down(point(0));gesture.cancel(point(0));gesture.up(point(0));assert.equal(picks,1);
+ held=true;gesture.down(point(0));gesture.up(point(0));assert.equal(picks,1);gesture.context(point(0));assert.equal(menus,1);
+ held=false;gesture.context(point(0));assert.equal(menus,2,'keyboard context menus remain supported');
+ gesture.down(point(0));gesture.up(point(0),{select:false});assert.equal(picks,1,'measurement touch release does not perform ordinary selection');
+});
+
+
+test('orbit drags and two-finger camera gestures retain selection through the final release',async()=>{
+ const {selectionGesture}=await helpers;let selected='GND';const gesture=selectionGesture({onPick:()=>{selected=null;},onContextMenu:()=>{selected=null;}}),point=(id,x)=>({pointerId:id,button:0,clientX:x,clientY:10});
+ gesture.down(point(1,10));gesture.move(point(1,30));gesture.up(point(1,30));assert.equal(selected,'GND');
+ gesture.down(point(1,10));gesture.down(point(2,30));gesture.up(point(2,30));gesture.up(point(1,10));assert.equal(selected,'GND');
 });

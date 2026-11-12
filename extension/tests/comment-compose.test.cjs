@@ -2,6 +2,22 @@
 const test=require('node:test'), assert=require('node:assert/strict');
 const compose=require('../comment-compose.js');
 
+test('autocomplete distinguishes tags from issue references, code, email and URLs',()=>{
+ assert.deepEqual(compose.autocompleteAt('Ask @al',7),{kind:'mention',start:4,end:7,query:'al'});
+ assert.deepEqual(compose.autocompleteAt('Check #pow',10),{kind:'tag',start:6,end:10,query:'pow'});
+ for(const text of ['#123','https://example.com/#power','mail#power@example.com','`#power`','```\n#power\n```'])assert.equal(compose.autocompleteAt(text,text.length),null,text);
+ assert.deepEqual(compose.insertTag('Check #powxx next',10,'power'),{text:'Check #power next',cursor:13});
+ assert.throws(()=>compose.insertTag('#pow',4,'../secret'),/Invalid tag/);
+ assert.equal(compose.tagAt('#'+'x'.repeat(41),42),null);
+});
+
+test('suggestions rank exact and username prefix before matching display names, deduplicate and bound results',()=>{
+ const rows=[{login:'other',name:'Alice Reviewer'},{login:'alice-two',name:'Bob'},{login:'alice',name:'Someone'},{login:'ALICE',name:'Duplicate'},{login:'bad user',name:'Alice'}];
+ assert.deepEqual(compose.rankSuggestions(rows,'alice').map(row=>row.login),['alice','alice-two','other']);
+ assert.deepEqual(compose.rankSuggestions(['power-rail',{name:'power'},{name:'unsafe tag'}],'power','tag').map(row=>row.name),['power','power-rail']);
+ assert.equal(compose.rankSuggestions(Array.from({length:600},(_,i)=>({login:'user'+i})),'').length,12);
+});
+
 test('comment title always comes from the trimmed first line with a bounded length',()=>{
  assert.equal(compose.titleFromText('  Check connector clearance \r\nMore detail'),'Check connector clearance');
  assert.equal(compose.titleFromText('\nBody'),'');

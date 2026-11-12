@@ -8,7 +8,7 @@
   const MAX_NODES = 1000000;
   const SCHEMATIC = new Set(["symbol", "sheet", "wire", "bus", "bus_entry", "label",
     "global_label", "hierarchical_label", "junction", "no_connect", "text", "text_box",
-    "polyline", "rectangle", "circle", "arc", "image"]);
+    "polyline", "rectangle", "circle", "arc", "bezier", "image"]);
   const BOARD = new Set(["module", "footprint", "segment", "arc", "via", "zone", "gr_line",
     "gr_rect", "gr_circle", "gr_arc", "gr_poly", "gr_curve", "gr_text", "gr_text_box",
     "gr_bitmap", "dimension", "target"]);

@@ -1,5 +1,15 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const {create}=require('../github-project-buffer.js'),repo='owner/project',sha='a'.repeat(40),sha2='b'.repeat(40),tick=()=>new Promise(r=>setImmediate(r));
+
+test('foreground folder discovery fills three transport slots, preserves order and reuses the warm inventory',async()=>{
+ let release;const gate=new Promise(resolve=>release=resolve),calls=[];let active=0,peak=0;const api=create({foregroundOnly:true,fetch:()=>assert.fail('No background fetch'),readSession:async(_repo,_ref,_action,path)=>{calls.push(path);if(path==='')return{sha,items:['a','b','c','d'].map(path=>({path,type:'directory'}))};active++;peak=Math.max(peak,active);await gate;active--;return{sha,items:[{path:path+'/board.kicad_sch',type:'file'}]};}});
+ const flight=api.inventory(repo,sha);for(let i=0;i<8;i++)await tick();assert.deepEqual(calls,['','a','b','c']);assert.equal(peak,3);release();const result=await flight;assert.deepEqual(result.files.map(item=>item.path),['a/board.kicad_sch','b/board.kicad_sch','c/board.kicad_sch','d/board.kicad_sch']);assert.equal(peak,3);const count=calls.length;assert.deepEqual(await api.inventory(repo,sha),result);assert.equal(calls.length,count);api.dispose();
+});
+
+test('cancelling a parallel directory wave never caches late source results',async()=>{
+ let release;const gate=new Promise(resolve=>release=resolve),controller=new AbortController();let children=0;const api=create({foregroundOnly:true,fetch:()=>assert.fail('No background fetch'),readSession:async(_repo,_ref,_action,path)=>{if(path==='')return{sha,items:['a','b','c'].map(path=>({path,type:'directory'}))};children++;await gate;return{sha,items:[{path:path+'/late.kicad_sch',type:'file'}]};}});
+ const pending=api.inventory(repo,sha,controller.signal);for(let i=0;i<8;i++)await tick();assert.equal(children,3);controller.abort();await assert.rejects(pending,/cancelled/);api.clear();release();for(let i=0;i<8;i++)await tick();assert.equal(api.stats().bytes,0);assert.equal(api.stats().inFlight,0);api.dispose();
+});
 test('literal hash in a model filename does not abort foreground project discovery or asset reads',async()=>{
  const path='local/part/IC#PBF.STEP',reads=[],api=create({foregroundOnly:true,fetch:()=>{throw Error('No background reads');},readSession:async(repository,ref,action,directory)=>{
   reads.push({action,path:directory});if(action==='asset')return {sha,base64:'AAEC'};
@@ -134,4 +144,20 @@ test('scoped pinned inventory stays inside selected project and never requires r
  assert.deepEqual(reads,['design','design/sub']);
  await api.inventory(repo,sha,undefined,{directory:'design',scoped:true});assert.equal(reads.length,2);
  await assert.rejects(api.inventory(repo,sha),/Unrelated root unavailable/);api.dispose();
+});
+
+
+test('pinned discovery reads an accessible project folder when the repository root is unavailable',async()=>{
+ const reads=[],api=create({foregroundOnly:true,readSession:async(repository,ref,action,path)=>{reads.push({ref,action,path});assert.equal(ref,sha);assert.equal(action,'directory');if(path==='')throw Error('Website access unavailable');return{sha,items:[{path:'design/root.kicad_sch',type:'file'}]};}});
+ const result=await api.inventory(repo,sha,undefined,{directory:'design'});assert.deepEqual(result.files.map(f=>f.path),['design/root.kicad_sch']);assert.match(result.warnings.join(' '),/incomplete/);assert.equal(reads.some(r=>r.action==='resolve'),false);api.dispose();
+});
+
+test('partial project discovery expires quickly and recovers missing sheets after website access returns',async()=>{
+ let time=0,allowed=false,childReads=0;const api=create({foregroundOnly:true,now:()=>time,readSession:async(repository,ref,action,path)=>{if(path==='child'){childReads++;if(!allowed)throw Error('Complete website SSO');return{sha,items:[{path:'child/sub.kicad_sch',type:'file'}]};}return{sha,items:[{path:'root.kicad_sch',type:'file'},{path:'child',type:'directory'}]};}});
+ const first=await api.inventory(repo,sha);assert.equal(first.files.length,1);allowed=true;time=29999;assert.equal((await api.inventory(repo,sha)).files.length,1);time=30000;const recovered=await api.inventory(repo,sha);assert.equal(recovered.files.length,2);assert.equal(childReads,2);time+=30001;assert.equal((await api.inventory(repo,sha)).files.length,2);assert.equal(childReads,2);api.dispose();
+});
+
+test('partial model discovery can recover after SSO without waiting for immutable cache expiry',async()=>{
+ let time=0,allowed=false,reads=0;const api=create({foregroundOnly:true,now:()=>time,readSession:async(repository,ref,action,path)=>{if(path==='hw/models'){reads++;if(!allowed)throw Error('Complete website SSO');return{sha,items:[{path:'hw/models/part.step',type:'file'}]};}return{sha,items:path==='hw'?[{path:'hw/models',type:'directory'}]:[]};}});
+ assert.equal((await api.modelInventory(repo,sha,'hw/board.kicad_pcb')).files.length,0);allowed=true;time=30000;assert.equal((await api.modelInventory(repo,sha,'hw/board.kicad_pcb')).files.length,1);assert.equal(reads,2);api.dispose();
 });

@@ -5,6 +5,12 @@ const board={path:'board.kicad_pcb',content:'(kicad_pcb (footprint "Part:QFN" (a
 const sheet={path:'root.kicad_sch',content:'(kicad_sch (symbol (lib_id "Part:QFN") (at 33 44) (property "Reference" "U1") (property "Value" "CONTROLLER") (uuid "symbol-1")))'};
 const search=(input,query)=>searchRecords(buildRecords(input),query);
 const pause=()=>new Promise(resolve=>setImmediate(resolve));
+
+test('sheet-browser aliases expose a local reopen command without reading repository files',async()=>{
+ const controller=createController({scope,request:()=>assert.fail('A local tool needs no repository read')});
+ for(const query of ['sheet browser','Sheet Tree','show sheet tree','sheet navigator','mini-map','> open sheet tree']){const result=await controller.search(query);assert.equal(result.results.length,1);assert.equal(result.results[0].action,'sheet-tree');assert.equal(result.results[0].kind,'command');assert.equal(result.results[0].label,'Show sheet browser');}
+ controller.destroy();assert.equal(await controller.search('sheet tree'),null);
+});
 const deferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return{promise,resolve,reject};};
 
 test('saved schematic/layout objects preserve file identity, location and explicit PCB 3D action',()=>{

@@ -46,6 +46,13 @@ const parameters = {repository:'wayri/board', headRepository:'fork/board', file:
   oldFile:'old.kicad_sch', base:'a'.repeat(40), head:'b'.repeat(40)};
 const sch = (value) => `(kicad_sch (symbol (lib_id "Device:R") (uuid "one") (at 10 20 0) (property "Reference" "R1") (property "Value" "${value}")))`;
 
+test('sheet-browser search from Layout waits for the schematic frame and never sends the action to the PCB',async()=>{
+ let search;const view=viewer({...parameters,base:'',file:'board.kicad_pcb'},message=>({ok:true,result:{files:[{path:'root.kicad_sch'}]}}),{KiCadWorkspaceSearch:{mount:options=>{search=options;return{destroy(){}};}}}),pcb=view.get('headDrawing').children[0];
+ view.message({origin:'chrome-extension://test-id',source:pcb.contentWindow,data:{type:'kicad-review:view',phase:'ready',file:'board.kicad_pcb',view:{x:0,y:0,zoom:1}}});await search.open({kind:'command',action:'sheet-tree'});
+ assert.equal(pcb.messages.some(item=>item.message.command==='search-result'),false);const schematic=view.get('pairDrawing').children[0];assert.ok(schematic);assert.equal(schematic.messages.length,0);
+ view.message({origin:'chrome-extension://test-id',source:schematic.contentWindow,data:{type:'kicad-review:view',phase:'ready',file:'root.kicad_sch',view:{x:0,y:0,zoom:1}}});assert.equal(schematic.messages.at(-1).message.command,'search-result');assert.equal(schematic.messages.at(-1).message.result.action,'sheet-tree');
+});
+
 test('renamed designs compare properties and focus inside extension frames', async () => {
   const view = viewer(parameters, ({ref,file}) => ({ok:true, result:[{path:file,content:sch(ref[0] === 'a' ? '1k' : '2k')}]}));
   view.click('Changes'); await tick();
@@ -225,9 +232,9 @@ test('shared hierarchy relays from the current head and sheet commands only from
 test('primary workspace tabs retain drawings while project settings are open', async () => {
  const view=viewer({...parameters,base:''},()=>({ok:false,error:'unexpected read'}));
  const frame=view.get('headDrawing').children[0];
- const tab=name=>view.get('workspaceTabs').children.find(button=>button.getAttribute('aria-label')===name+' view');
- assert.deepEqual(view.get('workspaceTabs').children.map(button=>button.getAttribute('aria-label')),['Project view','Schematic view','Layout view','3D view','BoM view','Draftsman view','Simulation view','History view']);
- tab('Project').click();assert.equal(view.get('comparison').hidden,true);
+ const tab=name=>[...view.get('workspaceTabs').children,...view.get('workspaceHelpers').children[1].children].find(button=>button.getAttribute('aria-label')===name+' view');
+ assert.deepEqual(view.get('workspaceTabs').children.map(button=>button.getAttribute('aria-label')),['Schematic view','Layout view','3D view','BoM view','Simulation view','History view']);
+ view.get('workspaceHelpers').open=true;tab('Project').click();assert.equal(view.get('workspaceHelpers').open,false);assert.equal(view.get('comparison').hidden,true);
  const project=view.get('projectWorkspace').children[0];assert.equal(new URL(project.src).searchParams.get('projectOnly'),'1');
  tab('Schematic').click();assert.equal(view.get('comparison').hidden,false);assert.equal(view.get('headDrawing').children[0],frame);
  tab('Project').click();assert.equal(view.get('projectWorkspace').children[0],project);assert.equal(view.calls.length,0);
@@ -255,7 +262,7 @@ test('project entry opens settings without a nested drawing and accepts only its
 
 test('ambiguous drawings need a choice and late discovery cannot reopen a hidden workspace', async () => {
  let resolve;const view=viewer({...parameters,base:''},()=>new Promise(done=>resolve=done));
- const tabs=view.get('workspaceTabs').children;tabs.find(button=>button.getAttribute('aria-label')==='Layout'+' view').click();
+ const tabs=[...view.get('workspaceTabs').children,...view.get('workspaceHelpers').children[1].children];tabs.find(button=>button.getAttribute('aria-label')==='Layout'+' view').click();
  tabs.find(button=>button.getAttribute('aria-label')==='Project'+' view').click();resolve({ok:true,result:{files:[{path:'a.kicad_pcb'},{path:'b.kicad_pcb'}]}});await tick();assert.equal(view.get('pairDrawing').children.length,0);assert.equal(view.get('comparison').hidden,true);
  tabs.find(button=>button.getAttribute('aria-label')==='Layout'+' view').click();await tick();assert.equal(view.get('pairDrawing').children.length,0);assert.equal(view.get('companionSelect').children.length,3);
  view.get('companionSelect').value='b.kicad_pcb';view.get('companionSelect').listeners.change();assert.equal(new URL(view.get('pairDrawing').children[0].src).searchParams.get('file'),'b.kicad_pcb');
@@ -264,7 +271,7 @@ test('ambiguous drawings need a choice and late discovery cannot reopen a hidden
 test('project tab receives cached schematic hierarchy only after its trusted ready message',()=>{
  const view=viewer({...parameters,base:''},()=>({ok:false})),frame=view.get('headDrawing').children[0];
  view.message({origin:'chrome-extension://test-id',source:frame.contentWindow,data:{type:'kicad-review:hierarchy',hierarchy:{active:'new.kicad_sch'}}});
- view.get('workspaceTabs').children.find(button=>button.getAttribute('aria-label')==='Project'+' view').click();const project=view.get('projectWorkspace').children[0];
+ view.get('workspaceHelpers').children[1].children.find(button=>button.getAttribute('aria-label')==='Project'+' view').click();const project=view.get('projectWorkspace').children[0];
  view.message({origin:'chrome-extension://test-id',source:{},data:{type:'kicad-review:project-ready'}});assert.equal(project.messages.length,0);
  view.message({origin:'chrome-extension://test-id',source:project.contentWindow,data:{type:'kicad-review:project-ready'}});assert.equal(project.messages[0].message.type,'kicad-review:hierarchy');assert.equal(project.messages[0].message.repository,'fork/board');
  view.message({origin:'chrome-extension://test-id',source:project.contentWindow,data:{type:'kicad-review:project-sheet',file:'child.kicad_sch'}});assert.equal(frame.messages.at(-1).message.command,'open-sheet');assert.equal(view.get('comparison').hidden,false);
@@ -276,11 +283,11 @@ test('split selection supersedes delayed workspace discovery and late split fail
  resolveInventory({ok:true,result:{files:[{path:'other.kicad_pcb'}]}});rejectSplit(Error('Old lookup failed'));await tick();assert.equal(new URL(view.get('pairDrawing').children[0].src).searchParams.get('file'),'manual.kicad_pcb');assert.doesNotMatch(view.get('status').textContent,/Old lookup/);assert.equal(view.get('splitView').attributes['aria-pressed'],'true');
 });
 test('Project tab cancels a delayed split lookup',async()=>{
- let resolve;const view=viewer({...parameters,base:''},()=>new Promise(done=>resolve=done));view.get('projectTools').children.find(b=>b.textContent==='Split view').click();view.get('workspaceTabs').children.find(b=>b.getAttribute('aria-label')==='Project'+' view').click();resolve({ok:true,result:{files:['board.kicad_pcb']}});await tick();assert.equal(view.get('pairDrawing').children.length,0);assert.equal(view.get('comparison').hidden,true);
+ let resolve;const view=viewer({...parameters,base:''},()=>new Promise(done=>resolve=done));view.get('projectTools').children.find(b=>b.textContent==='Split view').click();view.get('workspaceHelpers').children[1].children.find(b=>b.getAttribute('aria-label')==='Project'+' view').click();resolve({ok:true,result:{files:['board.kicad_pcb']}});await tick();assert.equal(view.get('pairDrawing').children.length,0);assert.equal(view.get('comparison').hidden,true);
 });
 test('GitHub branch is resolved once before main, companion and project reads',async()=>{
  const sha='d'.repeat(40),view=viewer({repository:'wayri/board',head:'main',file:'board.kicad_pcb',pairedFile:'root.kicad_sch'},message=>({ok:true,result:message.type==='revision-resolve'?{sha}:{files:[]}}));assert.equal(view.get('headDrawing').children.length,0);await tick();assert.equal(view.calls.filter(m=>m.type==='revision-resolve').length,1);
- for(const id of ['headDrawing','pairDrawing'])assert.equal(new URL(view.get(id).children[0].src).searchParams.get('ref'),sha);view.get('workspaceTabs').children.find(b=>b.getAttribute('aria-label')==='Project'+' view').click();assert.equal(new URL(view.get('projectWorkspace').children[0].src).searchParams.get('ref'),sha);
+ for(const id of ['headDrawing','pairDrawing'])assert.equal(new URL(view.get(id).children[0].src).searchParams.get('ref'),sha);view.get('workspaceHelpers').children[1].children.find(b=>b.getAttribute('aria-label')==='Project'+' view').click();assert.equal(new URL(view.get('projectWorkspace').children[0].src).searchParams.get('ref'),sha);
 });
 
 
@@ -314,7 +321,7 @@ test('outer request deadline and page exit cancel pending work without requiring
 
  test('compact view tabs wait for trusted ready before switching 3D and expose saved analysis and Draftsman',async()=>{
  const view=viewer({...parameters,base:'',file:'board.kicad_pcb'},()=>({ok:true,result:{files:[]}}));
- const tab=name=>view.get('workspaceTabs').children.find(button=>button.getAttribute('aria-label')===name+' view');
+ const tab=name=>[...view.get('workspaceTabs').children,...view.get('workspaceHelpers').children[1].children].find(button=>button.getAttribute('aria-label')===name+' view');
  const frame=view.get('headDrawing').children[0];tab('3D').click();await tick();assert.equal(frame.messages.length,0);
  view.message({origin:'chrome-extension://test-id',source:frame.contentWindow,data:{type:'kicad-review:view',phase:'ready',file:'board.kicad_pcb',view:{x:0,y:0,zoom:1}}});
  assert.ok(frame.messages.some(({message})=>message.command==='workspace-view'&&message.mode==='3d'));
@@ -327,7 +334,7 @@ test('outer request deadline and page exit cancel pending work without requiring
 test('embedded drawing Project tab returns to the owning shell without nesting a second project viewer',async()=>{
  const view=viewer({...parameters,base:'',projectShell:'1'},()=>({ok:false,error:'unexpected read'}));
  const drawing=view.get('headDrawing').children[0];
- view.get('workspaceTabs').children.find(button=>button.getAttribute('aria-label')==='Project view').click();await tick();
+ view.get('workspaceHelpers').children[1].children.find(button=>button.getAttribute('aria-label')==='Project view').click();await tick();
  assert.equal(view.parentMessages.at(-1).message.type,'kicad-review:show-project-settings');
  assert.equal(view.get('projectWorkspace').children.length,0);
  assert.equal(view.get('headDrawing').children[0],drawing);
@@ -380,7 +387,7 @@ test('failed mutable revision opens a single error pane rather than stale Base a
 test('History is a top-level workspace tab and returning preserves the existing drawing frame',async()=>{
  let picker;
  const view=viewer({...parameters,base:''},()=>({ok:false,error:'No drawing lookup expected'}),{KiCadRevisionPicker:{mount(options){picker=options;return{openGraph(){options.onOpenGraph();return Promise.resolve();}};}}});
- const tab=name=>view.get('workspaceTabs').children.find(b=>b.getAttribute('aria-label')===name+' view');
+ const tab=name=>[...view.get('workspaceTabs').children,...view.get('workspaceHelpers').children[1].children].find(b=>b.getAttribute('aria-label')===name+' view');
  const frame=view.get('headDrawing').children[0];
  tab('History').click();await tick();
  assert.equal(picker.workspaceHolder,view.get('historyWorkspace'));
@@ -397,3 +404,44 @@ test('History is a top-level workspace tab and returning preserves the existing 
 });
 
 test('BoM top tab uses head inventory and preserves the loaded drawing',async()=>{let options,shows=0;const view=viewer({...parameters,base:''},message=>message.type==='project-inventory'?{ok:true,result:{files:[{path:'BoM.csv'}]}}:{ok:true,result:[]},{KiCadBomBrowser:{mount(value){options=value;return {show:async()=>{shows++;await value.inventory();}};}}});const drawing=view.get('headDrawing').children[0];const tab=view.get('workspaceTabs').children.find(n=>n.attributes['aria-label']==='BoM view');assert(tab);tab.click();await tick();assert.equal(view.get('comparison').hidden,true);assert.equal(view.get('bomWorkspace').hidden,false);assert.equal(options.scope.repository,'fork/board');assert.equal(options.scope.ref,parameters.head);assert.equal(view.calls.find(x=>x.type==='project-inventory').repository,'fork/board');assert.equal(view.get('headDrawing').children[0],drawing);view.get('workspaceTabs').children.find(n=>n.attributes['aria-label']==='Schematic view').click();await tick();assert.equal(view.get('bomWorkspace').hidden,true);assert.equal(view.get('headDrawing').children[0],drawing);});
+
+test('one split button opens and closes a paired drawing without a second Unsplit control',async()=>{
+ const view=viewer({...parameters,base:''},message=>message.type==='drawing-files'?{ok:true,result:{files:['board.kicad_pcb']}}:{ok:true,result:[]});
+ const split=view.get('splitView');split.click();await tick();assert.equal(split.textContent,'Unsplit');assert.equal(split.getAttribute('aria-pressed'),'true');assert.equal(view.get('pairPanel').hidden,false);
+ assert.equal(view.get('projectTools').children.filter(n=>n.textContent==='Unsplit').length,1);split.click();await tick();assert.equal(split.textContent,'Split view');assert.equal(split.getAttribute('aria-pressed'),'false');assert.equal(view.get('pairPanel').hidden,true);assert.equal(view.get('pairDrawing').children.length,0);
+});
+test('BoM loads exact saved project parts and keeps companion frame selection synchronized',async()=>{
+ let options,lastSelection;const view=viewer({...parameters,base:''},message=>message.type==='project-inventory'?{ok:true,result:{files:[{path:'new.kicad_sch'},{path:'new.kicad_pcb'}]}}:message.type==='project'?{ok:true,result:[{path:'new.kicad_sch',content:sch('4k7')}]}:{ok:true,result:[]},{KiCadDesignModel:require('../design-model.js'),KiCadBomBrowser:{mount(value){options=value;return {show:async()=>{},select(value){lastSelection=value;}};}}});
+ view.get('workspaceTabs').children.find(n=>n.attributes['aria-label']==='BoM view').click();await tick();const model=await options.loadDrawing();assert.equal(model.objects.find(o=>o.reference==='R1').properties.Value,'4k7');assert.equal(view.calls.find(m=>m.type==='project').repository,'fork/board');assert.equal(view.calls.find(m=>m.type==='project').ref,parameters.head);
+ const companion=await options.companion('3d'),query=new URL(companion.url).searchParams;assert.equal(query.get('file'),'new.kicad_pcb');assert.equal(query.get('ref'),parameters.head);const frame=view.get('bomDrawing');options.onFrame(frame);
+ const selection={kind:'part',reference:'R1',uuid:'one',path:'new.kicad_pcb'};view.message({source:frame.contentWindow,origin:'chrome-extension://test-id',data:{type:'kicad-review:selection',selection}});assert.equal(lastSelection,selection);assert.equal(view.get('headDrawing').children[0].messages.at(-1).message.selection,selection);
+});
+test('only scoped native drawing variant events update BoM and new companions receive the selected variant',async()=>{
+ let options,updated;const view=viewer({...parameters,base:''},message=>message.type==='project'?{ok:true,result:[{path:'new.kicad_sch',content:sch('4k7')}]}:{ok:true,result:{files:[{path:'new.kicad_sch'},{path:'new.kicad_pcb'}]}},{KiCadDesignModel:require('../design-model.js'),KiCadBomBrowser:{mount(value){options=value;return{show:async()=>{},refreshDrawing(value){updated=value;}};}}});
+ view.get('workspaceTabs').children.find(n=>n.attributes['aria-label']==='BoM view').click();await tick();const frame=view.get('headDrawing').children[0],config={schemaVersion:1,variants:[{id:'prototype',name:'Prototype',parts:[{path:'new.kicad_sch',reference:'R1',populated:false,properties:{Value:'2k2'}}]}]},message={type:'kicad-review:assembly-variant',repository:'fork/board',ref:parameters.head,file:'new.kicad_sch',rootFile:'new.kicad_sch',variant:'prototype',config};
+ for(const event of [{source:{}},{origin:'https://github.com'},{data:{...message,ref:parameters.base}},{data:{...message,file:'unrelated.kicad_sch'}},{data:{...message,variant:'missing'}}]){view.message({source:frame.contentWindow,origin:'chrome-extension://test-id',data:message,...event});await tick();assert.equal(updated,undefined);}
+ view.message({source:frame.contentWindow,origin:'chrome-extension://test-id',data:message});await tick();await tick();assert.equal(updated.variant,'prototype');assert.equal(updated.objects.find(o=>o.reference==='R1').populated,false);assert.equal(updated.objects.find(o=>o.reference==='R1').properties.Value,'2k2');
+ const companion=await options.companion('3d'),paired=view.get('bomDrawing');paired.src=companion.url;options.onFrame(paired);view.message({source:paired.contentWindow,origin:'chrome-extension://test-id',data:{type:'kicad-review:view',phase:'ready',file:'new.kicad_pcb',view:{x:0,y:0,zoom:1},ref:parameters.head}});assert.equal(paired.messages.find(m=>m.message.command==='assembly-variant').message.variant,'prototype');
+});
+test('native BoM resolves variables after the active variant overlay using the saved file context',async()=>{
+ let options,updated;const source={path:'new.kicad_sch',content:sch('${MPN}'),textVariables:{MPN:'OPA197',ALT_MPN:'TLV9004'}},view=viewer({...parameters,base:''},message=>message.type==='project'?{ok:true,result:[source]}:{ok:true,result:{files:[{path:source.path}]}},{KiCadDesignModel:require('../design-model.js'),KiCadBomBrowser:{resolveDrawing:require('../bom-browser.js').resolveDrawing,mount(value){options=value;return{show:async()=>{},refreshDrawing(value){updated=value;}};}}});view.get('workspaceTabs').children.find(n=>n.attributes['aria-label']==='BoM view').click();await tick();const initial=await options.loadDrawing();assert.equal(initial.objects.find(o=>o.reference==='R1').properties.Value,'OPA197');
+ const frame=view.get('headDrawing').children[0],config={schemaVersion:1,variants:[{id:'alternate',name:'Alternate',parts:[{path:source.path,reference:'R1',properties:{Value:'${ALT_MPN}'}}]}]};view.message({source:frame.contentWindow,origin:'chrome-extension://test-id',data:{type:'kicad-review:assembly-variant',repository:'fork/board',ref:parameters.head,file:source.path,rootFile:source.path,variant:'alternate',config}});await tick();await tick();const part=updated.objects.find(o=>o.reference==='R1');assert.equal(part.properties.Value,'TLV9004');assert.equal(part.variableProvenance.Value.raw,'${ALT_MPN}');assert.equal(part.variableProvenance.Value.variables[0].source,'Project');
+});
+
+
+test('workspace theme adopts the ready primary preference and rejects unscoped pane changes',async()=>{
+ const view=viewer({...parameters,base:''},()=>({ok:true,result:[]})),frame=view.get('headDrawing').children[0];
+ const send=data=>view.message({source:frame.contentWindow,origin:'chrome-extension://test-id',data});
+ send({type:'kicad-review:view',phase:'ready',file:parameters.file,ref:parameters.head,view:{x:0,y:0,zoom:1},uiTheme:'light',drawingTheme:'light'});
+ const button=view.get('workspaceTheme');assert.equal(button.getAttribute('aria-pressed'),'false');button.click();assert.equal(frame.messages.at(-1).message.drawingTheme,'dark');
+ const theme={type:'kicad-review:theme',repository:parameters.headRepository,ref:parameters.head,file:parameters.file,uiTheme:'light',drawingTheme:'dark'},before=frame.messages.length;
+ for(const data of [{...theme,repository:'other/repo'},{...theme,file:'wrong.kicad_sch'},{...theme,ref:parameters.base},{...theme,uiTheme:'bad'}])send(data);
+ assert.equal(frame.messages.length,before);send(theme);assert.equal(frame.messages.at(-1).message.uiTheme,'light');const count=frame.messages.length;send(theme);assert.equal(frame.messages.length,count);
+});
+
+
+test('new project panes inherit the workspace theme and their toggle updates the drawing',async()=>{
+ const view=viewer({...parameters,base:''},()=>({ok:true,result:[]})),head=view.get('headDrawing').children[0];view.get('workspaceTheme').click();
+ view.get('workspaceHelpers').children[1].children.find(n=>n.getAttribute('aria-label')==='Project view').click();const project=view.get('projectWorkspace').children[0];project.listeners.load();assert.equal(project.messages.at(-1).message.uiTheme,'light');
+ view.message({source:project.contentWindow,origin:'chrome-extension://test-id',data:{type:'kicad-review:theme',repository:parameters.headRepository,ref:parameters.head,file:parameters.file,uiTheme:'dark',drawingTheme:'dark'}});assert.equal(head.messages.at(-1).message.drawingTheme,'dark');assert.equal(view.get('workspaceTheme').getAttribute('aria-pressed'),'true');
+});

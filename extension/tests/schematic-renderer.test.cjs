@@ -6,6 +6,17 @@ const { build } = require("../schematic-renderer.js");
 const render = (source, path = "hardware/root.kicad_sch") => build(parse(source), path);
 const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-6, `${actual} != ${expected}`);
 
+test('native graphic RGBA, independent fills, dash styles and font colors survive symbol transforms',()=>{
+ const source=`(kicad_sch (lib_symbols (symbol "X" (symbol "X_0_1" (rectangle (start -2 -1) (end 2 1) (stroke (width .2) (type dash_dot) (color 132 0 0 .5)) (fill (type color) (color 10 80 240 .25)))))) (symbol (lib_id "X") (at 50 60 90) (unit 1) (uuid "u1")) (circle (center 10 10) (radius 3) (stroke (width .3) (type dot) (color 0 0 0 0)) (fill (type cross_hatch) (color 20 30 40 1)) (uuid "hatch")) (text "Saved color" (at 20 30) (effects (font (size 1 1) (color 1 2 3 .7))) (uuid "text")))`;
+ const before=parse(source),snapshot=JSON.stringify(before),result=build(before,'native.kicad_sch'),body=result.primitives.find(p=>p.uuid==='u1'&&p.type==='polygon'&&p.stroke!==false),hatch=result.primitives.find(p=>p.uuid==='hatch'),text=result.primitives.find(p=>p.uuid==='text');
+ assert.equal(body.sourceColor,'rgba(132,0,0,0.5)');assert.equal(body.fillColor,'rgba(10,80,240,0.25)');assert.equal(body.fill,'color');assert.equal(body.lineStyle,'dash_dot');assert.equal(body.width,.2);assert.equal(hatch.fill,'cross_hatch');assert.equal(hatch.sourceColor,undefined);assert.equal(hatch.fillColor,'rgba(20,30,40,1)');assert.equal(text.sourceColor,'rgba(1,2,3,0.7)');assert.equal(JSON.stringify(before),snapshot);
+});
+
+test('native sheet fills, text-box font colors and invalid color fallback remain independent',()=>{
+ const result=render(`(kicad_sch (sheet (at 10 10) (size 20 15) (stroke (width .4) (color 8 9 10 1)) (fill (color 40 50 60 .3)) (uuid "sheet")) (text_box "Hello" (at 40 10) (size 20 10) (stroke (width .2) (color 200 10 20 1)) (fill (type background)) (effects (font (size 1 1) (color 10 200 20 1))) (uuid "box")) (rectangle (start 0 0) (end 5 5) (stroke (color 999 1 2 1)) (fill (type none)) (uuid "bad")))`);
+ const sheet=result.primitives.find(p=>p.uuid==='sheet'&&p.type==='polygon'),border=result.primitives.find(p=>p.uuid==='box'&&p.type==='polygon'),text=result.primitives.find(p=>p.uuid==='box'&&p.type==='text'),bad=result.primitives.find(p=>p.uuid==='bad');assert.equal(sheet.fill,'color');assert.equal(sheet.fillColor,'rgba(40,50,60,0.3)');assert.equal(sheet.width,.4);assert.equal(border.fill,'background');assert.equal(border.sourceColor,'rgba(200,10,20,1)');assert.equal(text.sourceColor,'rgba(10,200,20,1)');assert.equal(bad.sourceColor,undefined);assert.equal(bad.fill,undefined);
+});
+
 test("placed unit graphics and pins use world-mm rotation while hidden fields stay hidden", () => {
   const source = `(kicad_sch
     (lib_symbols (symbol "Device:Test" (pin_numbers (hide yes)) (pin_names (offset 0.5))
@@ -103,7 +114,7 @@ test("unsupported constructs and incomplete arcs produce warnings, not invented 
   assert.equal(result.primitives.some((item) => item.uuid === "old-arc"), false);
   assert.ok(result.primitives.some((item) => item.uuid === "g1" && item.text === "CLK"));
   assert.ok(result.warnings.some((warning) => /Unsupported paper size/.test(warning)));
-  assert.ok(result.warnings.some((warning) => /construct image/.test(warning)));
+  assert.ok(result.warnings.some((warning) => /image was not rendered/.test(warning)));
   assert.ok(result.warnings.some((warning) => /Legacy or incomplete arc/.test(warning)));
   assert.ok(result.primitives.some((item) => item.uuid === "g1" && item.type === "polygon"));
 });
@@ -113,6 +124,66 @@ test("malformed root is rejected before drawing", () => {
   const result = render("(kicad_sch (paper \"User\" 300 200))");
   near(result.page.width, 300);
   near(result.page.height, 200);
+});
+
+test("saved cubic graphics retain four transformed control points and off-page coordinates",()=>{
+ const result=render(`(kicad_sch (paper "A4")
+  (bezier (pts (xy -20 220) (xy -10 240) (xy 310 250) (xy 320 230)) (stroke (width 0.3)) (uuid "outside-curve"))
+  (lib_symbols (symbol "Graphic:Curve" (symbol "Curve_0_1" (bezier (pts (xy 0 0) (xy 1 2) (xy 3 4) (xy 5 6)) (stroke (width 0.2))))))
+  (symbol (lib_id "Graphic:Curve") (at 40 50 90) (unit 1) (uuid "placed-curve")))`);
+ assert.deepEqual(result.primitives.find(p=>p.uuid==='outside-curve').points,[{x:-20,y:220},{x:-10,y:240},{x:310,y:250},{x:320,y:230}]);
+ const placed=result.primitives.find(p=>p.uuid==='placed-curve'&&p.type==='bezier');assert.deepEqual(placed.points,[{x:40,y:50},{x:38,y:49},{x:36,y:47},{x:34,y:45}]);
+ assert.equal(result.warnings.some(w=>/bezier.*not rendered|unrecognized.*bezier|unknown.*bezier/i.test(w)),false);
+ const bad=render('(kicad_sch (bezier (pts (xy 0 0) (xy 1 1) (xy 2 2)) (uuid "invalid-curve")))');assert.equal(bad.primitives.some(p=>p.uuid==='invalid-curve'),false);assert.match(bad.warnings.join(' '),/four valid control points/);
+});
+
+test("saved text boxes render outside paper with wrapping, margins, styles and exact border coordinates",()=>{
+ const result=render(`(kicad_sch (paper "A4") (text_box "Alpha beta gamma delta" (at -30 220 0) (size 20 15) (margins 1 2 3 4) (stroke (width 0.2)) (fill (type background)) (effects (font (size 1 1) bold) (justify left top)) (uuid "outside-box")))`);
+ const owned=result.primitives.filter(p=>p.uuid==='outside-box'),border=owned.find(p=>p.type==='polygon'),lines=owned.filter(p=>p.type==='text');
+ assert.deepEqual(border.points,[{x:-30,y:220},{x:-10,y:220},{x:-10,y:235},{x:-30,y:235}]);assert.equal(border.fill,'background');assert.equal(border.stroke,true);assert.ok(lines.length>1);assert.equal(lines.map(p=>p.text).join(' '),'Alpha beta gamma delta');assert.equal(lines[0].x,-29);assert.equal(lines[0].y,222.5);assert.equal(lines[0].bold,true);assert.equal(lines[0].align,'left');assert.equal(lines[1].y-lines[0].y,1.5);
+ assert.ok(result.warnings.some(w=>/preview font metrics/.test(w)));assert.equal(result.warnings.some(w=>/construct text_box/.test(w)),false);
+});
+
+test("vertical and borderless legacy text boxes honor saved bounds without accepting malformed geometry",()=>{
+ const result=render(`(kicad_sch
+  (text_box "Vertical" (at 10 20 90) (size 12 30) (margins 1 2 3 4) (stroke (width -1)) (effects (font (size 1 1)) (justify left top)) (uuid "vertical"))
+  (text_box "Legacy" (start 50 60) (end 70 80) (margins 0 0 0 0) (effects (font (size 1 1)) (justify right bottom)) (uuid "legacy-box"))
+  (text_box "No" (at 0 0 0) (size 2 2) (margins 3 0 0 0) (uuid "no-room"))
+  (text_box "Skip" (at 0 0 0) (size 0 1) (uuid "bad-box")))`);
+ const vertical=result.primitives.filter(p=>p.uuid==='vertical');assert.equal(vertical.find(p=>p.type==='polygon').stroke,false);assert.equal(vertical.find(p=>p.type==='text').angle,-90);assert.deepEqual([vertical.find(p=>p.type==='text').x,vertical.find(p=>p.type==='text').y],[11.5,46]);
+ const legacy=result.primitives.find(p=>p.uuid==='legacy-box'&&p.type==='text');assert.equal(legacy.x,70);assert.equal(legacy.y,79.5);assert.equal(legacy.align,'right');assert.equal(result.primitives.some(p=>p.uuid==='no-room'&&p.type==='text'),false);assert.equal(result.primitives.some(p=>p.uuid==='bad-box'),false);
+});
+
+function pngFixture(width=3,height=2,ppm=null,extra=[]){
+ const {crc32,deflateSync}=require('node:zlib'),chunk=(type,data)=>{const name=Buffer.from(type),header=Buffer.alloc(4),checksum=Buffer.alloc(4);header.writeUInt32BE(data.length);checksum.writeUInt32BE(crc32(Buffer.concat([name,data])));return Buffer.concat([header,name,data,checksum]);};
+ const ihdr=Buffer.alloc(13);ihdr.writeUInt32BE(width);ihdr.writeUInt32BE(height,4);ihdr[8]=8;ihdr[9]=6;const parts=[Buffer.from([137,80,78,71,13,10,26,10]),chunk('IHDR',ihdr)];
+ if(ppm!==null){const physical=Buffer.alloc(9);physical.writeUInt32BE(ppm);physical.writeUInt32BE(ppm,4);physical[8]=1;parts.push(chunk('pHYs',physical));}
+ for(const [type,data]of extra)parts.push(chunk(type,data));
+ // Oversize header test cases need no large pixel buffer: they must be rejected
+ // by IHDR validation before browser decoding is permitted.
+ const pixels=width*height<=100000?Buffer.alloc((width*4+1)*height):Buffer.alloc(5);parts.push(chunk('IDAT',deflateSync(pixels)),chunk('IEND',Buffer.alloc(0)));return Buffer.concat(parts);
+}
+const imageSource=(png,version=20260623,attributes='')=>`(kicad_sch (version ${version}) (image (at -5 230) (scale 2) ${attributes} (uuid "saved-image") (data "${png.toString('base64')}")))`;
+
+test('embedded PNGs retain off-page world quads and KiCad saved physical-resolution eras',()=>{
+ const png=pngFixture(300,150,3780);
+ for(const [version,ppi]of [[20230121,300],[20231120,94],[20260623,96]]){
+  const result=render(imageSource(png,version)),image=result.primitives.find(p=>p.type==='image');assert.ok(image,result.warnings.join(' '));assert.equal(image.pixelWidth,300);assert.equal(image.pixelHeight,150);assert.equal(image.dataUrl,'data:image/png;base64,'+png.toString('base64'));assert.equal(image.opacity,1);
+  const width=300*25.4/ppi*2,height=150*25.4/ppi*2;near(image.points[0].x,Math.round((-5-width/2)*1e6)/1e6);near(image.points[0].y,Math.round((230-height/2)*1e6)/1e6);near(image.points[2].x,Math.round((-5+width/2)*1e6)/1e6);near(image.points[2].y,Math.round((230+height/2)*1e6)/1e6);
+ }
+ const noResolution=render(imageSource(pngFixture(300,150))).primitives.find(p=>p.type==='image');near(noResolution.points[1].x-noResolution.points[0].x,50.8);
+ const rotated=render(imageSource(pngFixture(3,2),20260623,'(rotate 90) (opacity 0.4)')).primitives.find(p=>p.type==='image');assert.equal(rotated.opacity,.4);assert.equal(rotated.points[0].y>rotated.points[1].y,true);
+});
+
+test('PNG validation blocks external data, corrupt chunks, oversized decoded images and animation before image emission',()=>{
+ const corrupted=Buffer.from(pngFixture());corrupted[29]^=1;
+ for(const png of [corrupted,pngFixture(4001,4000),pngFixture(3,2,null,[['acTL',Buffer.alloc(8)]]),Buffer.from('not PNG')]){
+  const result=render(imageSource(png));assert.equal(result.primitives.some(p=>p.type==='image'),false);assert.ok(result.warnings.some(w=>/image was not rendered/.test(w)));
+ }
+ const external=render('(kicad_sch (image (at 0 0) (data "https://example.com/image.png")))');assert.equal(external.primitives.some(p=>p.type==='image'),false);
+ const png=pngFixture();for(const attrs of ['(scale -1)','(opacity 2)']){const result=render(`(kicad_sch (image (at 0 0) ${attrs} (data "${png.toString('base64')}")))`);assert.equal(result.primitives.some(p=>p.type==='image'),false);}
+ const count=render('(kicad_sch '+Array.from({length:17},(_,i)=>`(image (at ${i} 0) (data "${png.toString('base64')}"))`).join(' ')+')');assert.equal(count.primitives.filter(p=>p.type==='image').length,16);assert.match(count.warnings.join(' '),/16-image/);
+ const large=pngFixture(4000,4000),budget=render('(kicad_sch '+Array.from({length:3},(_,i)=>`(image (at ${i} 0) (data "${large.toString('base64')}"))`).join(' ')+')');assert.equal(budget.primitives.filter(p=>p.type==='image').length,1);assert.match(budget.warnings.join(' '),/16 megapixel/);
 });
 
 test("bare and list effect flags hide fields and style text without treating no as yes", () => {

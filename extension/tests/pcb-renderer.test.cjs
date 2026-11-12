@@ -3,6 +3,11 @@ const assert = require('node:assert/strict');
 const { parse } = require('../design-diff.js');
 const { build } = require('../pcb-renderer.js');
 
+test('saved PCB graphics preserve solid/none fills and individual stroke styles',()=>{
+ const result=build(parse(`(kicad_pcb (layers (37 "F.SilkS" user)) (gr_rect (start 0 0) (end 5 5) (stroke (width .2) (type dash_dot_dot)) (fill solid) (layer "F.SilkS") (uuid "filled")) (gr_circle (center 10 10) (end 12 10) (stroke (width .1) (type dot)) (fill none) (layer "F.SilkS") (uuid "open")))`),'styles.kicad_pcb');
+ const filled=result.primitives.find(p=>p.uuid==='filled'),open=result.primitives.find(p=>p.uuid==='open');assert.equal(filled.fill,true);assert.equal(filled.lineStyle,'dash_dot_dot');assert.equal(open.fill,false);assert.equal(open.lineStyle,'dot');assert.equal(open.layer,'F.SilkS');
+});
+
 const board = `(kicad_pcb (version 20241229) (paper "A4")
   (layers (0 "F.Cu" signal) (31 "B.Cu" signal) (37 "F.SilkS" user) (44 "Edge.Cuts" user))
   (gr_rect (start 80 60) (end 170 110) (stroke (width 0.1)) (fill none) (layer "Edge.Cuts") (uuid "edge"))

@@ -33,7 +33,7 @@ test('subsheet-origin probes resolve the loaded root stem and explicit pair befo
 });
 test('popup Layers button changes only its own layer set and can close independently',()=>{
  const f=fixture(1);f.entries[0].path='board.kicad_pcb';f.entries[0].design.layers=['F.Cu','In1.Cu','F.SilkS','Edge.Cuts','F.Fab'];f.quick.openProbe(occurrences(f.entries)[0]);
- const viewport=f.viewports[0];assert.deepEqual([...viewport.visibleLayers],['F.Cu','In1.Cu','F.SilkS','Edge.Cuts']);
+ const viewport=f.viewports[0];assert.deepEqual([...viewport.visibleLayers],['F.Cu','In1.Cu','F.SilkS','Edge.Cuts','F.Fab']);
  f.button('Probe layers').emit('click');const panel=descendants(f.holder).find(n=>n.attributes['aria-label']==='Probe layers'&&n.tag==='div');assert.equal(panel.hidden,false);
  const fab=descendants(panel).find(n=>n.attributes['aria-label']==='Show F.Fab');fab.checked=true;fab.emit('change');assert.equal(viewport.visibleLayers.has('F.Fab'),true);
  f.button('Copper and silk').emit('click');assert.equal(viewport.visibleLayers.has('F.Fab'),false);f.button('Close layers').emit('click');assert.equal(panel.hidden,true);f.quick.dispose();

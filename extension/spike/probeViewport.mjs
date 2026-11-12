@@ -1,3 +1,4 @@
+import {createExplodeView} from './explodeView.mjs';
 import {projectionCamera,resizeProjection,fitProjection} from './cameraProjection.mjs';
 import {selectionMatcher,selectionNetNames,selectableRecord,tapGesture} from './selectionState.mjs';
 import {boardViewPresets,boardViewPreset} from './viewPresets.mjs';
@@ -52,7 +53,7 @@ export function cloneProbeTree(THREE,source,{materialFor=node=>node.material,ins
   for(const child of node.children)copy.add(clone(child));return copy;
  }
  const root=clone(source);
- return {root,pickables,copyOf:node=>mapping.get(node),sourceAdded(node){
+ return {root,pickables,copyOf:node=>mapping.get(node),syncTransforms(){source.traverse(node=>{const copy=mapping.get(node);if(!copy)return;copy.position.copy(node.position);copy.quaternion.copy(node.quaternion);copy.scale.copy(node.scale);copy.matrix.copy(node.matrix);if(node.isInstancedMesh){copy.boundingBox=node.boundingBox;copy.boundingSphere=node.boundingSphere;}});},sourceAdded(node){
   const pending=[];for(let current=node;current&&!mapping.has(current);current=current.parent)pending.unshift(current);
   if(!pending.length)return false;
   const first=pending[0],parent=mapping.get(first.parent);if(!parent)return false;parent.add(clone(first));return true;
@@ -74,8 +75,9 @@ export function createProbeNetInspection(THREE,source,{maxRecords=8192,maxZonePo
  return {group,update,state,setColorMode(value){colorMode=value==='accent'?'accent':'layer';current?.setColorMode(colorMode);},dispose:clear};
 }
 
-export function createSharedProbeViewport({THREE,OrbitControls,host,source,sourceScene,sourceRenderer,board,materialFor,instanceColorFor,selection={},selectionMode='all',orthographic=false,netHighlightColor='layer',dark=true,onSelect,onViewChange,terminalSource,netInspectionSource,showNetNames=false,showTerminalNumbers,raf=requestAnimationFrame,caf=cancelAnimationFrame,Observer=ResizeObserver}){
+export function createSharedProbeViewport({THREE,OrbitControls,host,source,sourceScene,sourceRenderer,board,materialFor,instanceColorFor,selection={},selectionMode='all',orthographic=false,explodeAmount=0,netHighlightColor='layer',dark=true,onSelect,onViewChange,terminalSource,netInspectionSource,showNetNames=false,showTerminalNumbers,raf=requestAnimationFrame,caf=cancelAnimationFrame,Observer=ResizeObserver}){
  if(!host?.append)throw Error('A connected probe viewport host is required.');
+ const explosion=createExplodeView(THREE,netInspectionSource?.plan||{layers:[]});explosion.set(explodeAmount);
  const tree=cloneProbeTree(THREE,source,{materialFor,instanceColorFor}),scene=new THREE.Scene();scene.background=new THREE.Color(dark?0x151820:0xe7ebf1);scene.add(tree.root);
  const netInspection=netInspectionSource?createProbeNetInspection(THREE,netInspectionSource):null;if(netInspection){netInspection.setColorMode(netHighlightColor);scene.add(netInspection.group);}let netStatus=null;
  // Reuse light settings, not shadow targets or GPU-generated PMREM targets,
@@ -84,6 +86,8 @@ export function createSharedProbeViewport({THREE,OrbitControls,host,source,sourc
  let camera=new THREE.PerspectiveCamera(45,1,.01,10000);camera.up.set(0,0,1);camera.position.set(30,-40,60);
  const clipCenter=new THREE.Vector3();let clipRadius=1;let renderer,controls,observer,alive=true,frame=0,contextLost=false,currentSelection=selection,selectionDim=true,mode=selectionMode,selectionBounds=null,selectionPoint=null,selectionStats={matched:0,highlighted:0,limited:false},terminalAnnotations=null,terminalStatus=null;
  const overlayMaterial=new THREE.MeshBasicMaterial({color:dark?0x4de3ee:0x007b91,transparent:true,opacity:.65,depthTest:false,depthWrite:false,toneMapped:false,side:THREE.DoubleSide}),overlay=new THREE.Group();overlay.name='probe-selected-geometry';scene.add(overlay);
+ const layerMaterials=new Map();
+ function selectedMaterial(record){const layer=record?.layer;if(netHighlightColor!=='layer'||!layer||typeof netInspectionSource?.colorForLayer!=='function')return overlayMaterial;if(!layerMaterials.has(layer)){if(layerMaterials.size>=64)return overlayMaterial;const material=overlayMaterial.clone();material.color.set(netInspectionSource.colorForLayer(layer));layerMaterials.set(layer,material);}return layerMaterials.get(layer);}
  const dimMaterial=new THREE.MeshBasicMaterial({color:0x80858c,transparent:true,opacity:.2,depthWrite:false,side:THREE.DoubleSide}),dimLineMaterial=new THREE.LineBasicMaterial({color:0x80858c,transparent:true,opacity:.2,depthWrite:false}),normalMaterials=new WeakMap(),normalInstanceColors=new WeakMap();
  const matrix=new THREE.Matrix4(),local=new THREE.Matrix4(),box=new THREE.Box3(),raycaster=new THREE.Raycaster(),pointer=new THREE.Vector2(),gesture=tapGesture();
  const visible=node=>{for(let n=node;n;n=n.parent)if(!n.visible)return false;return true;};
@@ -107,7 +111,7 @@ export function createSharedProbeViewport({THREE,OrbitControls,host,source,sourc
  function paint(){frame=0;if(!alive||contextLost)return;controls.update();const clip=boardClipRange(camera.position.distanceTo(controls.target),clipRadius+clipCenter.distanceTo(controls.target));camera.near=clip.near;camera.far=clip.far;camera.updateProjectionMatrix();terminalAnnotations?.update();renderer.render(scene,camera);onViewChange?.();}
  function resize(){if(!alive)return;const w=Math.max(1,host.clientWidth||320),h=Math.max(1,host.clientHeight||240),ratio=probeViewportPlan(w,h,globalThis.devicePixelRatio).ratio;renderer.setPixelRatio(ratio);renderer.setSize(w,h,false);resizeProjection(camera,w/h);invalidate();}
  function selectedBounds(){
-  const netState=netInspection?.update(currentSelection),netActive=netState?.active;
+  const netState=netInspection?.update(currentSelection),netActive=netState?.active;if(netInspection){netInspection.group.traverse(object=>{if(object.isInstancedMesh&&sourceMatrices.has(object))object.instanceMatrix=sourceMatrices.get(object);});explosion.overlay(netInspection.group);}
   if(netStatus){netStatus.hidden=!netState?.nets.length;netStatus.textContent=netState?.nets.length?`Full net 3D: ${netState.tracks} rendered segments · ${netState.pads} pad surfaces · ${netState.vias} vias · ${netState.fills} fills${netState.omitted?`; ${netState.omitted} omitted`:""}. ${selectionDim?"Translucent grey":"Original color"} context.`:"";netStatus.title=netState?.warnings.join("\n")||"";}
   applyLayers();const matches=selectionMatcher(currentSelection,board);let matched=0,count=0;const union=new THREE.Box3();tree.root.updateWorldMatrix(true,true);overlay.clear();
   for(const object of tree.pickables){if(!visible(object))continue;const records=object.userData.records||[object.userData.record];
@@ -116,7 +120,7 @@ export function createSharedProbeViewport({THREE,OrbitControls,host,source,sourc
     if(box.isEmpty())continue;union.union(box);
     // Exact source geometry and instance transform, not a projected bounding box.
     // Geometry is shared read-only; only this lightweight object/material is ours.
-    if(object.isMesh){const highlight=new THREE.Mesh(object.geometry,overlayMaterial);highlight.matrix.copy(matrix);highlight.matrixAutoUpdate=false;highlight.frustumCulled=false;highlight.renderOrder=100;overlay.add(highlight);count++;}
+    if(object.isMesh){const highlight=new THREE.Mesh(object.geometry,selectedMaterial(records[index]));highlight.matrix.copy(matrix);highlight.matrixAutoUpdate=false;highlight.frustumCulled=false;highlight.renderOrder=100;overlay.add(highlight);count++;}
    }
   }
   if(netActive){netInspection.group.updateWorldMatrix(true,true);netInspection.group.traverse(object=>{if(!object.geometry||!visible(object))return;if(!object.geometry.boundingBox)object.geometry.computeBoundingBox();if(object.geometry.boundingBox)union.union(box.copy(object.geometry.boundingBox).applyMatrix4(object.matrixWorld));});}
@@ -130,13 +134,14 @@ export function createSharedProbeViewport({THREE,OrbitControls,host,source,sourc
  }
  function setSelection(value={}){if(!alive)return {matched:0,highlighted:0,limited:false};currentSelection=value||{};selectionPoint=null;const result=selectedBounds();invalidate();return result;}
  function pick(event){const rect=renderer.domElement.getBoundingClientRect();if(!(rect.width>0&&rect.height>0))return;pointer.set((event.clientX-rect.left)/rect.width*2-1,-(event.clientY-rect.top)/rect.height*2+1);camera.updateMatrixWorld();scene.updateMatrixWorld(true);raycaster.setFromCamera(pointer,camera);
-  const hit=raycaster.intersectObjects([...tree.pickables,...(netInspection?.group.children.flatMap(group=>group.children)||[])].filter(visible),false).find(hit=>selectableRecord(hit.object.userData.records?.[hit.instanceId]||hit.object.userData.record,mode)),record=hit?(hit.object.userData.records?.[hit.instanceId]||hit.object.userData.record):null;
-  setSelection(!record?{}:mode==='net'&&record.net?{netNames:[record.net]}:record.type==='Component'||typeof record.library==='string'?{references:[record.ref]}:{uuids:[record.uuid||record.id]});onSelect?.(record);selectionPoint=hit?.point?.clone()||null;invalidate();
+  const individual=Boolean(event.shiftKey&&!event.ctrlKey&&!event.metaKey),pickMode=individual?'object':mode;
+  const hit=raycaster.intersectObjects([...tree.pickables,...(netInspection?.group.children.flatMap(group=>group.children)||[])].filter(visible),false).find(hit=>selectableRecord(hit.object.userData.records?.[hit.instanceId]||hit.object.userData.record,pickMode)),record=hit?(hit.object.userData.records?.[hit.instanceId]||hit.object.userData.record):null;
+  setSelection(!record?{}:!individual&&mode==='net'&&record.net?{netNames:[record.net]}:record.type==='Component'||typeof record.library==='string'?{references:[record.ref]}:{uuids:[record.uuid||record.id]});onSelect?.(record,{individual});selectionPoint=hit?.point?.clone()||null;invalidate();
  }
  const down=event=>gesture.down(event),move=event=>gesture.move(event),up=event=>{if(gesture.up(event)&&event.button===0)pick(event);},cancel=event=>gesture.cancel(event),lost=event=>{event.preventDefault();contextLost=true;if(frame)caf(frame);frame=0;},restored=()=>{contextLost=false;invalidate();};
  function dispose(){if(!alive)return;alive=false;netInspection?.dispose();netStatus?.remove();terminalAnnotations?.dispose();terminalStatus?.remove();if(frame)caf(frame);observer?.disconnect();controls?.removeEventListener('change',invalidate);controls?.dispose();
   if(renderer){for(const [name,handler]of [['pointerdown',down],['pointermove',move],['pointerup',up],['pointercancel',cancel],['webglcontextlost',lost],['webglcontextrestored',restored]])renderer.domElement.removeEventListener(name,handler);renderer.renderLists?.dispose();renderer.dispose();renderer.forceContextLoss?.();renderer.domElement.remove();}
-  scene.remove(tree.root);tree.release();overlay.clear();overlayMaterial.dispose();dimMaterial.dispose();dimLineMaterial.dispose();scene.clear();
+  scene.remove(tree.root);tree.release();overlay.clear();overlayMaterial.dispose();for(const material of layerMaterials.values())material.dispose();layerMaterials.clear();dimMaterial.dispose();dimLineMaterial.dispose();scene.clear();
  }
  try{
   renderer=new THREE.WebGLRenderer({antialias:true,alpha:false,powerPreference:'low-power'});renderer.shadowMap.enabled=false;renderer.outputColorSpace=sourceRenderer.outputColorSpace;renderer.toneMapping=sourceRenderer.toneMapping;renderer.toneMappingExposure=sourceRenderer.toneMappingExposure;
@@ -151,7 +156,7 @@ export function createSharedProbeViewport({THREE,OrbitControls,host,source,sourc
   if(orthographic)camera=projectionCamera(THREE,camera,controls,true);terminalAnnotations?.setCamera(camera);
   observer=new Observer(resize);observer.observe(host);resize();setSelection(selection);fit();
  }catch(error){dispose();throw error;}
- return {fit,setSelection,setVisibleLayers(value){if(!Array.isArray(value)||value.some(layer=>typeof layer!=='string'||layer.length>100))return false;visibleLayers=new Set(value);setSelection(currentSelection);return true;},getVisibleLayers:()=>visibleLayers?[...visibleLayers]:null,setOrthographic(enabled){camera=projectionCamera(THREE,camera,controls,Boolean(enabled));terminalAnnotations?.setCamera(camera);resize();controls.update();invalidate();return Boolean(camera.isOrthographicCamera);},isOrthographic:()=>Boolean(camera.isOrthographicCamera),setNetHighlightColor(value){netInspection?.setColorMode(value);invalidate();},setSelectionDim(enabled){selectionDim=Boolean(enabled);setSelection(currentSelection);return selectionDim;},projectAnchor,setTerminalNumbers(value){const result=terminalAnnotations?.setNumbers(value);invalidate();return result;},setTerminalLabels(value){const result=terminalAnnotations?.setNets(value);invalidate();return result;},getTerminalLabelState(){return terminalAnnotations?.getState()||null;},setSelectionMode(value){mode=['all','part','net','pin'].includes(value)?value:'all';},setTheme(value){if(!alive)return;scene.background.setHex(value?0x151820:0xe7ebf1);overlayMaterial.color.setHex(value?0x4de3ee:0x007b91);invalidate();},
+ return {fit,setSelection,setExplode(value){explosion.set(value);tree.syncTransforms();updateSceneBounds();setSelection(currentSelection);return explosion.get();},getExplode:()=>explosion.get(),setVisibleLayers(value){if(!Array.isArray(value)||value.some(layer=>typeof layer!=='string'||layer.length>100))return false;visibleLayers=new Set(value);setSelection(currentSelection);return true;},getVisibleLayers:()=>visibleLayers?[...visibleLayers]:null,setOrthographic(enabled){camera=projectionCamera(THREE,camera,controls,Boolean(enabled));terminalAnnotations?.setCamera(camera);resize();controls.update();invalidate();return Boolean(camera.isOrthographicCamera);},isOrthographic:()=>Boolean(camera.isOrthographicCamera),setNetHighlightColor(value){netHighlightColor=value==='layer'?'layer':'accent';netInspection?.setColorMode(netHighlightColor);setSelection(currentSelection);},setSelectionDim(enabled){selectionDim=Boolean(enabled);setSelection(currentSelection);return selectionDim;},projectAnchor,setTerminalNumbers(value){const result=terminalAnnotations?.setNumbers(value);invalidate();return result;},setTerminalLabels(value){const result=terminalAnnotations?.setNets(value);invalidate();return result;},getTerminalLabelState(){return terminalAnnotations?.getState()||null;},setSelectionMode(value){mode=['all','part','net','pin'].includes(value)?value:'all';},setTheme(value){if(!alive)return;scene.background.setHex(value?0x151820:0xe7ebf1);overlayMaterial.color.setHex(value?0x4de3ee:0x007b91);for(const material of layerMaterials.values())material.dispose();layerMaterials.clear();setSelection(currentSelection);},
   setView(view){if(!alive||!boardViewPresets.some(preset=>preset.id===view))return false;return fit(view);},
   rotate(degrees=15){if(!alive||!Number.isFinite(degrees))return false;const offset=camera.position.clone().sub(controls.target).applyAxisAngle(camera.up,degrees*Math.PI/180);camera.position.copy(controls.target).add(offset);controls.update();invalidate();return true;},
   flip(){if(!alive)return false;const offset=camera.position.clone().sub(controls.target);camera.position.copy(controls.target).sub(offset);controls.update();invalidate();return true;},

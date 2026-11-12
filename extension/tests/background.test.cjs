@@ -820,7 +820,7 @@ test('3D model retrieval accepts bounded private session assets and rejects over
  const fixture=withWebsite(t,'owner/models',{'models/part.wrl':'VRML'},{private:true,sha:sha('b')});const request={type:'repo-asset',repository:'owner/models',ref:sha('b'),file:'models/part.wrl'};const result=await message(request);assert.equal(result.ok,true,result.error);assert.equal(result.result.base64,btoa('VRML'));assert.ok(fixture.session.some(r=>r.action==='asset'));fixture.files.set('models/too-big.glb',new Uint8Array(8*1024*1024+1));assert.match((await message({...request,file:'models/too-big.glb'})).error,/byte limit|size limit/);
 });
 
-test('drawing pairing lists only same-directory KiCad files and opens a validated extension popup', async (t) => {
+test('drawing pairing prefers the local project and opens a validated extension popup', async (t) => {
   const fixture=withWebsite(t,'owner/board',{'boards/main.kicad_sch':'(kicad_sch)','boards/main.kicad_pcb':'(kicad_pcb)','boards/notes.txt':'note','other/forged.kicad_pcb':'(kicad_pcb)'});
   const request = { type: 'drawing-files', repository: 'owner/board', ref: 'a'.repeat(40),
     file: 'boards/main.kicad_sch' };
@@ -846,6 +846,13 @@ test('drawing pairing lists only same-directory KiCad files and opens a validate
   assert.match((await message({ type: 'open-viewer-window', repository: 'owner/board',
     ref: 'main', file: 'boards/main.kicad_sch', pairedFile: 'boards/other.kicad_sch' })).error, /opposite/);
   assert.equal(calls.windows.length, 1);
+});
+
+test('website-only companion discovery finds PCB and schematic drawings in sibling project folders at one pinned revision',async t=>{
+ const fixture=withWebsite(t,'owner/private-layout',{'hardware/sch/main.kicad_sch':'(kicad_sch)','hardware/pcb/main.kicad_pcb':'(kicad_pcb)'});
+ const reply=await message({type:'drawing-files',repository:'owner/private-layout',ref:sha('a'),file:'hardware/sch/main.kicad_sch'});
+ assert.equal(reply.ok,true,reply.error);assert.deepEqual(reply.result.files,['hardware/pcb/main.kicad_pcb','hardware/sch/main.kicad_sch']);assert.equal(reply.result.snapshotRef,sha('a'));
+ assert.equal(fixture.raw.length,0,'file discovery stays in the signed-in foreground website session');assert.ok(fixture.session.every(request=>request.ref===sha('a')));
 });
 
 test('repository policy defaults to all but publishing still needs a token', async (t) => {

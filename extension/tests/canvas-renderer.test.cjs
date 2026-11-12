@@ -21,6 +21,38 @@ test('picking uses shape geometry, tolerances and excludes frame and drill holes
 test('fit bounds exclude worksheet and include physical track width',()=>{
  const b=core.bounds([{type:'line',points:[{x:10,y:20},{x:30,y:20}],width:2},{type:'line',points:[{x:0,y:0},{x:297,y:210}],frame:true}]);assert.deepEqual(b,{x:9,y:19,w:22,h:2});
 });
+test('cubic graphics use their actual curve for drawing and picking, including outside the worksheet',()=>{
+ const curve={type:'bezier',kind:'bezier',uuid:'curve',points:[{x:400,y:0},{x:400,y:10},{x:410,y:10},{x:410,y:0}],width:.15};
+ assert.equal(core.hitPrimitive(curve,{x:405,y:7.5},.02),true);assert.equal(core.hitPrimitive(curve,{x:405,y:10},.02),false);assert.equal(core.hitPrimitive({...curve,fill:true},{x:405,y:3},.02),true);
+ const {canvas,operations}=runtime();canvas.setDocument({primitives:[curve],layers:[]},'drawing');canvas.viewport.camera.bbox={x:398,y:-2,w:14,h:14};operations.length=0;canvas.draw();assert.ok(operations.some(row=>row[0]==='bezierCurveTo'));canvas.dispose();
+});
+test('embedded PNGs decode once, use saved world geometry and release pending loads on source replacement',()=>{
+ const decoded=[];class Image{constructor(){decoded.push(this);}set src(value){this.source=value;}get src(){return this.source;}}
+ const {canvas,operations}=runtime(1,{Image}),png={type:'image',uuid:'png',pixelWidth:2,pixelHeight:1,dataUrl:'data:image/png;base64,iVBORw0KGgoAAA==',points:[{x:400,y:10},{x:420,y:10},{x:420,y:20},{x:400,y:20}]};
+ canvas.primitives=[png];canvas.viewport.camera.bbox={x:395,y:5,w:30,h:20};canvas.draw();assert.equal(decoded.length,1);assert.equal(decoded[0].decoding,'async');decoded[0].naturalWidth=2;decoded[0].naturalHeight=1;decoded[0].onload();operations.length=0;canvas.draw();assert.ok(operations.some(row=>row[0]==='drawImage'));assert.equal(decoded.length,1);assert.equal(canvas.query({x:410,y:15})[0],png);
+ const unsafe={...png,dataUrl:'https://example.com/private.png'};canvas.imageResource(unsafe);assert.equal(decoded.length,1);canvas.primitives=[];assert.equal(decoded[0].onload,null);assert.equal(decoded[0].src,'');canvas.dispose();
+});
+test('outline rectangles do not capture their interior while filled pads and component bodies remain selectable',()=>{
+ const outline={type:'polygon',kind:'rectangle',uuid:'outline',points:[{x:0,y:0},{x:20,y:0},{x:20,y:20},{x:0,y:20}],width:.15};
+ assert.equal(core.hitPrimitive(outline,{x:10,y:10},.1),false);assert.equal(core.hitPrimitive(outline,{x:0,y:10},.1),true);
+ assert.equal(core.hitPrimitive({...outline,kind:'symbol'},{x:10,y:10},.1),true);
+ const {canvas}=runtime();canvas.primitives=[outline,{type:'circle',kind:'via',uuid:'via',x:10,y:10,r:.4,fill:true}];canvas.viewport.camera.zoom=20;
+ assert.deepEqual(Array.from(canvas.query({x:10,y:10}),p=>p.uuid),['via']);canvas.dispose();
+});
+test('filled background drawings remain behind enclosed wires when picking',()=>{
+ const {canvas}=runtime(),background={type:'polygon',kind:'rectangle',fill:true,uuid:'background',points:[{x:0,y:0},{x:20,y:0},{x:20,y:20},{x:0,y:20}]},wire={type:'line',kind:'wire',uuid:'wire',points:[{x:5,y:10},{x:15,y:10}],width:.15};canvas.primitives=[background,wire];canvas.viewport.camera.zoom=20;assert.equal(canvas.query({x:10,y:10})[0],wire);canvas.dispose();
+});
+test('smart picking ranks actual screen-space proximity before nearby pad priority or source order',()=>{
+ const {canvas}=runtime(),wire={type:'line',kind:'wire',uuid:'wire',points:[{x:-2,y:0},{x:2,y:0}],width:.1},pad={type:'circle',kind:'pad',uuid:'pad',x:0,y:.4,r:.1,fill:true};canvas.viewport.camera.zoom=10;canvas.primitives=[pad,wire];
+ assert.equal(canvas.query({x:0,y:0})[0],wire);assert.equal(canvas.query({x:0,y:.4})[0],pad);
+ const near={...pad,uuid:'near',x:.1,y:0},far={...pad,uuid:'far',x:.4,y:0};canvas.primitives=[far,near];assert.equal(canvas.query({x:0,y:0})[0],near);assert.ok(canvas.pickDistance(far,{x:0,y:0})>canvas.pickDistance(near,{x:0,y:0}));canvas.dispose();
+});
+test('all saved layers start visible and layer focus cannot dim selected net members on other layers',()=>{
+ const {canvas}=runtime(),layers=['F.Cu','In1.Cu','B.Cu','F.SilkS','F.Fab','Edge.Cuts'];
+ const members=layers.slice(0,3).map((layer,i)=>({type:'circle',kind:'track',uuid:layer,x:i*3,y:0,r:.5,layer,opacity:.2}));
+ canvas.setDocument({primitives:members,layers},'board.kicad_pcb');assert.deepEqual([...canvas.visibleLayers],layers);canvas.focusLayer('F.Cu');canvas.setNetHighlights([{primitives:members}],{selectionColor:'layer',mode:'dim'});
+ const painted=[];canvas.paint=(p,style)=>painted.push({p,style});canvas.draw();assert.equal(painted.length,3);for(const row of painted)assert.equal(row.style.opacity,1);canvas.dispose();
+});
 test('text culling uses rendered metrics, keeps crossing and rotated labels, and caches measurements by zoom and flip',()=>{
  const {canvas}=runtime();let measurements=0;
  canvas.ctx.measureText=()=>{measurements++;return {actualBoundingBoxLeft:80,actualBoundingBoxRight:80,actualBoundingBoxAscent:10,actualBoundingBoxDescent:10};};
@@ -56,8 +88,27 @@ function runtime(dpr=1,extra={}){
   let created=false;const env={EventTarget,CustomEvent,document:{createElement:()=>{if(!created){created=true;return element;}return {...element,style:{}};}},devicePixelRatio:dpr,ResizeObserver:class{observe(){}disconnect(){}},module:{exports:{}},...extra};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../pad-labels.js'),'utf8'),env);
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../owned-canvas.js'),'utf8'),env);
-  const canvas=env.KiCadOwnedCanvas.mount(host,{pcb:true,dark:true});return{canvas,element,operations,listeners};
+  const canvas=env.KiCadOwnedCanvas.mount(host,{pcb:true,dark:true});return{canvas,ctx,element,host,operations,listeners};
 }
+
+test('saved RGBA bypasses theme remapping, background fills use the body color and dash state resets',()=>{
+ const {canvas,ctx,operations}=runtime();canvas.pcb=false;const p={type:'polygon',points:[{x:0,y:0},{x:5,y:0},{x:5,y:5}],width:.2,color:'rgba(132,0,0,0.5)',sourceColor:'rgba(132,0,0,0.5)',fill:'color',fillColor:'rgba(20,80,240,0.25)',lineStyle:'dash_dot'};
+ for(const dark of [false,true]){canvas.dark=dark;canvas.paint(p);assert.equal(ctx.strokeStyle,p.sourceColor);assert.equal(ctx.fillStyle,p.fillColor);assert.ok(operations.some(row=>row[0]==='setLineDash'&&row[1].length===4));}
+ canvas.dark=false;canvas.paint({...p,sourceColor:undefined,color:'#840000',fill:'background',lineStyle:undefined});assert.equal(ctx.strokeStyle,'#840000');assert.equal(ctx.fillStyle,'#ffffc2');assert.equal(operations.findLast(row=>row[0]==='setLineDash')[1].length,0);canvas.paint(p,{color:'#00ffff'});assert.equal(ctx.fillStyle,'#00ffff');canvas.dispose();
+});
+
+test('hatch fills reuse bounded patterns and release them with the viewer',()=>{
+ const {canvas,ctx}=runtime();ctx.createPattern=()=>({setTransform(value){assert.ok(value.a>0&&value.d>0);}});const p={type:'polygon',points:[{x:0,y:0},{x:5,y:0},{x:5,y:5}],fill:'hatch',color:'#ab1234'};
+ canvas.paint(p);const first=[...canvas.hatchPatterns.values()][0];canvas.paint(p);assert.equal([...canvas.hatchPatterns.values()][0],first);for(let i=0;i<50;i++)canvas.paint({...p,color:`rgb(${i},0,0)`});assert.ok(canvas.hatchPatterns.size<=32);canvas.dispose();assert.equal(canvas.hatchPatterns.size,0);
+});
+
+test('a hidden drawing defers its initial fit and retains user zoom after hide/reveal and resize',()=>{
+ const {canvas,host}=runtime();let size={width:0,height:0};host.getBoundingClientRect=()=>size;
+ const design={layers:['Edge.Cuts'],primitives:[{type:'line',points:[{x:0,y:0},{x:100,y:60}],layer:'Edge.Cuts'}]};canvas.setDocument(design,'board.kicad_pcb');assert.equal(canvas.pendingFit,'board');
+ size={width:900,height:600};canvas.resize();assert.equal(canvas.pendingFit,null);assert.ok(canvas.viewport.camera.zoom>1);const camera=canvas.viewport.camera;camera.zoom=18;camera.center.set(35,22);
+ for(const next of [{width:0,height:0},{width:900,height:600},{width:500,height:450}]){size=next;canvas.resize();assert.equal(camera.zoom,18);assert.equal(camera.center.x,35);assert.equal(camera.center.y,22);}
+ size={width:0,height:0};canvas.resize();canvas.zoom_to_page();assert.equal(canvas.pendingFit,'page');size={width:700,height:500};canvas.resize();assert.equal(canvas.pendingFit,null);assert.ok(camera.zoom>1);canvas.dispose();
+});
 
 test('object categories distinguish copper, graphics, text and drill ownership',()=>{
  for(const [primitive,category]of [

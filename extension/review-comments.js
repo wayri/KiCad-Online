@@ -239,7 +239,7 @@ const KiCadReviewComments = (() => {
     return validateComment(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(
       Uint8Array.from(binary, (character) => character.charCodeAt(0)))));
   }
-  function toMarkdown(value, {severityBadge=true,stateBadge=true} = {}) {
+  function toMarkdown(value, {severityBadge=true,stateBadge=true,layout='compact'} = {}) {
     const note = validateComment(value), anchor = note.anchor;
     const fileUrl = revisionUrl(anchor);
     const fileValue = fileUrl ? `[${escaped(anchor.file)}](<${fileUrl}>)` : escaped(anchor.file);
@@ -274,11 +274,16 @@ const KiCadReviewComments = (() => {
     ];
     const commentLines=note.text.split(/\r\n|\r|\n/);
     const level=severityInfo(note.severity);
-    const lines = ["## KiCad visual review", "", ...(severityBadge?[`> ${level.symbol} **${level.label}** · review severity`, ...(stateBadge?[`> ${stateInfo(note.state).symbol} **${stateInfo(note.state).label}** · review state`]:[]), ""]:[]), "### "+escaped(commentLines[0]), "", escapedComment(commentLines.slice(1).join("\n")), "",
+    const lines = layout==='legacy'?["## KiCad visual review", "", ...(severityBadge?[`> ${level.symbol} **${level.label}** · review severity`, ...(stateBadge?[`> ${stateInfo(note.state).symbol} **${stateInfo(note.state).label}** · review state`]:[]), ""]:[]), "### "+escaped(commentLines[0]), "", escapedComment(commentLines.slice(1).join("\n")), "",
       "### Design context", "", "| Detail | Value |", "| --- | --- |",
-      ...rows.map(([label, item, rawMarkdown]) => `| ${tableCell(label)} | ${rawMarkdown ? item : tableCell(item)} |`)];
+      ...rows.map(([label, item, rawMarkdown]) => `| ${tableCell(label)} | ${rawMarkdown ? item : tableCell(item)} |`)]:[escapedComment(note.text)];
     if(note.attachments?.length)for(const attachment of note.attachments)lines.push('',`![Captured drawing area (${attachment.width} × ${attachment.height})](${attachment.url})`);
     else if(note.capture)lines.push("", "A drawing screenshot is stored with the local review note. Download it and attach it manually if needed.");
+    if(layout!=='legacy'){
+      const summary=['Design context',...(severityBadge?[level.label,...(stateBadge?[stateInfo(note.state).label]:[])]:[])].join(' · ');
+      lines.push('',`<details><summary>${summary}</summary>`,'','| Detail | Value |','| --- | --- |',
+        ...rows.map(([label,item,rawMarkdown])=>`| ${tableCell(label)} | ${rawMarkdown?item:tableCell(item)} |`),'','</details>');
+    }
     const {capture,...metadata}=note;
     lines.push("", `<!-- kicad-review:v1 ${encodeNote(metadata)} -->`);
     return lines.join("\n");

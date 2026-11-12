@@ -1,7 +1,7 @@
 /** Geometry-faithful selection tint; no bounds wireframes or source-buffer copies. */
 export function createSelectionGeometry(THREE,{scene,objects,limit=2000,dark=true}){
  const group=new THREE.Group();group.name='Selected source geometry';scene.add(group);
- const material=new THREE.MeshBasicMaterial({color:dark?0x4de3ee:0x007b91,transparent:true,opacity:.42,depthTest:true,depthWrite:false,toneMapped:false,side:THREE.DoubleSide,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2}),matrix=new THREE.Matrix4(),local=new THREE.Matrix4();let disposed=false;
+ const material=new THREE.MeshBasicMaterial({color:dark?0x4de3ee:0x007b91,transparent:true,opacity:.42,depthTest:true,depthWrite:false,toneMapped:false,side:THREE.DoubleSide,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-16}),matrix=new THREE.Matrix4(),local=new THREE.Matrix4();let disposed=false;
  const layerMaterials=new Map();
  function clear(){group.clear();group.visible=false;}
  function update(matches,{colorForRecord}={}){

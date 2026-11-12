@@ -11,4 +11,5 @@ test('missing or excessive overview relationships are omitted explicitly, never 
 test('net routes preserve exact saved connection endpoints',()=>{
  const pages=[{path:'a',x:0,y:0,w:100,h:100},{path:'b',x:160,y:0,w:100,h:100}],fromAnchor={x:90,y:35},toAnchor={x:170,y:60};
  const result=route(pages,[{fromPath:'a',toPath:'b',fromAnchor,toAnchor,name:'POWER'}]);assert.equal(result.links.length,1);assert.deepEqual(result.links[0].points[0],fromAnchor);assert.deepEqual(result.links[0].points.at(-1),toAnchor);assert.notEqual(result.links[0].points[0],fromAnchor);
+ const edge=result.links[0];assert.equal(edge.anchorStubs.length,2);assert.notDeepEqual(edge.exteriorPoints[0],fromAnchor);for(const stub of edge.anchorStubs)for(let i=1;i<stub.length;i++)assert.ok(stub[i-1].x===stub[i].x||stub[i-1].y===stub[i].y,'local endpoint stubs never cut diagonally through a sheet');
 });

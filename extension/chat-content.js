@@ -37,7 +37,7 @@
    }else if(!note)invalidMetadata=true;
    let replaced=false;
    if(note&&api?.toMarkdown){
-    let versions=[];try{versions=[...new Set([api.toMarkdown(note),api.toMarkdown(note,{stateBadge:false}),api.toMarkdown(note,{severityBadge:false})])];}catch{}
+    let versions=[];try{versions=[...new Set(['compact','legacy'].flatMap(layout=>[api.toMarkdown(note,{layout}),api.toMarkdown(note,{layout,stateBadge:false}),api.toMarkdown(note,{layout,severityBadge:false})]))];}catch{}
     for(const canonical of versions){let index=raw.indexOf(canonical);while(index>=0&&protectedAt(index))index=raw.indexOf(canonical,index+1);
      if(index>=0&&index+canonical.length>=match.index+match[0].length&&!edits.some(edit=>index<edit.end&&index+canonical.length>edit.start)){
       edits.push({start:index,end:index+canonical.length,text:note.text});replaced=true;break;

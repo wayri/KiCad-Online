@@ -68,3 +68,37 @@ test('adaptive solve still rejects disconnected islands, off-copper contacts and
  assert.throws(()=>solveAdaptive(ast,{...options(),conductivitySm:undefined}),/conductivity/);
  assert.throws(()=>solveAdaptive(ast,{...options(),source:{x:.5,y:-.1,layer:'F.Cu'}}),/selected net copper/);
 });
+
+test('constant power selects the high-voltage strip operating point and conserves terminal and copper power',()=>{
+ const {solveAdaptive}=require('../fast-pi.js'),o=options(),{currentA,...powerOptions}=o,ast=board(copper('F.Cu')),P=100,R=.009/(o.conductivitySm*.001*.000035),expectedVoltage=(5+Math.sqrt(25-4*R*P))/2;
+ const r=solveAdaptive(ast,{...powerOptions,loadPowerW:P});
+ near(r.voltageV,expectedVoltage);near(r.currentA,P/expectedVoltage);near(r.voltageV*r.currentA,P);near(r.lossW,R*r.currentA**2);near(5*r.currentA,P+r.lossW);near(r.resistanceOhm,R);
+ assert.equal(r.loadMode,'power');assert.equal(r.operatingPoint,'high-voltage');assert.equal(r.loadPowerW,P);assert.equal(r.requestedLoadPowerW,P);assert.equal(r.meshAttempts,1);assert.ok(r.voltageV>2.5);assert.ok(r.currentA>P/5,'uses load voltage, not nominal source voltage');assert.ok(r.residualA<=r.currentA*1e-8);
+ for(const edge of r.edges)near(edge.currentA,r.currentA);assert.equal(r.nodes[r.sourceIndex].voltageV,5);
+ const direct=solveBoard(ast,{...o,currentA:r.currentA});near(r.dropV,direct.dropV);near(r.lossW,direct.lossW);for(let i=0;i<r.nodes.length;i++)near(r.nodes[i].voltageV,direct.nodes[i].voltageV);
+});
+test('constant power rejects collapse and accepts a resolvable point just below the fold',()=>{
+ const {solveAdaptive}=require('../fast-pi.js'),{currentA,...o}=options(),ast=board(copper('F.Cu')),R=.009/(o.conductivitySm*.001*.000035),limit=25/(4*R);
+ for(const power of [limit,limit*(1-1e-13),limit*1.0001,Number.MAX_VALUE])assert.throws(()=>solveAdaptive(ast,{...o,loadPowerW:power}),/voltage-collapse limit/);
+ const r=solveAdaptive(ast,{...o,loadPowerW:limit*(1-1e-6)});near(r.voltageV,2.5*(1+.001),1e-9);near(r.voltageV*r.currentA,r.loadPowerW);assert.ok(r.residualA<=r.currentA*1e-8);
+});
+test('power input is explicit and unambiguous while legacy current voltage semantics remain intact',()=>{
+ const {solveAdaptive}=require('../fast-pi.js'),{currentA,...o}=options(),ast=board(copper('F.Cu'));
+ assert.throws(()=>solveAdaptive(ast,{...o,currentA:2,loadPowerW:10}),/either currentA or loadPowerW/);
+ for(const value of [0,-1,NaN,Infinity,null]){assert.throws(()=>solveAdaptive(ast,{...o,loadPowerW:value}),/load power/);assert.throws(()=>solveAdaptive(ast,{...o,loadPowerW:10,sourceVoltageV:value}),/source voltage/);}
+ assert.throws(()=>solveAdaptive(ast,o),/sink current/);assert.throws(()=>solveBoard(ast,{...o,loadPowerW:10}),/Use solveAdaptive/);
+ for(const voltage of [0,-12]){const r=solveAdaptive(ast,{...o,currentA:2,sourceVoltageV:voltage});assert.equal(r.loadMode,'current');near(r.voltageV,voltage-r.dropV);}
+});
+test('constant power retains mesh recovery, island isolation and contact rejection',()=>{
+ const {solveAdaptive}=require('../fast-pi.js'),{currentA,...o}=options(),ast=board(copper('F.Cu')+copper('F.Cu',5));
+ const r=solveAdaptive(ast,{...o,loadPowerW:10,source:{x:.4,y:.5,layer:'F.Cu'},sink:{x:.6,y:.5,layer:'F.Cu'}});
+ assert.equal(r.meshAttempts,2);assert.equal(r.cellSizeMm,.5);near(r.voltageV*r.currentA,10);assert.ok(r.nodes.some(node=>node.voltageV===null));assert.match(r.warnings[0],/automatic mesh refinement/);
+ assert.throws(()=>solveAdaptive(ast,{...o,loadPowerW:10,sink:{x:.5,y:5.5,layer:'F.Cu'}}),/three mesh resolutions/);
+ assert.throws(()=>solveAdaptive(ast,{...o,loadPowerW:10,source:{x:.5,y:-.1,layer:'F.Cu'}}),/selected net copper/);
+});
+test('constant power handles negligible resistance and large finite voltages without squaring source voltage',()=>{
+ const {solveAdaptive}=require('../fast-pi.js'),{currentA,...o}=options(),ast=board(copper('F.Cu'));
+ const negligible=solveAdaptive(ast,{...o,conductivitySm:1e150,loadPowerW:10});near(negligible.currentA,2);assert.ok(negligible.resistanceOhm>0);assert.ok(negligible.dropV>0);near(negligible.voltageV*negligible.currentA,10);
+ const large=solveAdaptive(ast,{...o,sourceVoltageV:1e155,loadPowerW:1e308});near(large.voltageV*large.currentA,1e308);assert.ok(Number.isFinite(large.lossW));assert.ok(large.voltageV>5e154);
+ assert.throws(()=>solveAdaptive(ast,{...o,sourceVoltageV:1e308,loadPowerW:Number.MIN_VALUE}),/outside numerical range/);
+});

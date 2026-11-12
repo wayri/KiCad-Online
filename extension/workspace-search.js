@@ -163,6 +163,10 @@
     warnings.add('Coverage: saved drawings, file names, project settings, bounded simulation/report text and supplied local Draftsman drafts. Binary/3D model contents and unsaved edits are not indexed.');
     return {records,index,warnings:[...warnings],snapshotRef:input.snapshotRef,drawings:files.length,reportCount};
   }
+  function toolResults(query){
+    const key=String(query||'').trim().toLowerCase().replace(/^>\s*/,'').replace(/[-_]+/g,' ').replace(/\s+/g,' ');
+    return ['sheet tree','sheet browser','sheet navigator','show sheet tree','open sheet tree','minimap','mini map','sheet map'].includes(key)?[{kind:'command',action:'sheet-tree',label:'Show sheet browser',detail:'Reopen the floating schematic sheet tree',path:''}]:[];
+  }
   function searchRecords(index,query,options={}){
     const result=(options.search||Search).search(index.index,query,{limit:LIMITS.results*4}),seen=new Set(),results=[];
     for(const match of result.results){
@@ -217,7 +221,7 @@
     }
     return {
       async search(query){
-        const ticket=++epoch;if(disposed||!query.trim())return null;
+        const ticket=++epoch;if(disposed||!query.trim())return null;const commands=toolResults(query);if(commands.length)return{results:commands,total:commands.length,truncated:false,warnings:[]};
         let indexed;try{indexed=await ensure();}catch(error){if(disposed||ticket!==epoch)return null;throw error;}if(disposed||ticket!==epoch)return null;
         let index=indexed;
         if(options.getDrafts){
@@ -278,6 +282,6 @@
     input.addEventListener('input',onInput);input.addEventListener('keydown',onKey);document.addEventListener('keydown',onGlobalKey);document.addEventListener('pointerdown',onOutside);
     return {input,popover,controller,destroy(){disposed=true;dismiss();controller.destroy();document.removeEventListener('keydown',onGlobalKey);document.removeEventListener('pointerdown',onOutside);host.remove();}};
   }
-  const api={LIMITS,safePath,scopedDrafts,buildRecords,searchRecords,createController,mount};root.KiCadWorkspaceSearch=api;
+  const api={LIMITS,safePath,toolResults,scopedDrafts,buildRecords,searchRecords,createController,mount};root.KiCadWorkspaceSearch=api;
   if(typeof module==='object'&&module.exports)module.exports=api;
 })(typeof globalThis==='object'?globalThis:this);

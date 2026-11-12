@@ -15,11 +15,11 @@ async function revision(query='',extraFiles=[],options={}){
  const initialFile=options.file||(options.pcb?'board.kicad_pcb':'root.kicad_sch');
  const context={Map,AbortController,setTimeout:(fn,ms)=>{const timer=setTimeout(fn,ms);if(ms>100)timer.unref();return timer;},clearTimeout,URL,URLSearchParams,console,location:{search:'?repository=wayri/board&ref=main&file='+initialFile+query},parent,
   document:{getElementById:get,body:new Element(),createElement:()=>new Element(),createElementNS:()=>new Element(),head:new Element()},
-  chrome:{runtime:{getURL:name=>'chrome-extension://ours/'+name,sendMessage:async message=>{(calls.requests||=[]).push(message);if(message.type==='project'&&options.projectReply)return options.projectReply(message);if(message.type==='revision-resolve')return{ok:true,result:{sha:'a'.repeat(40)}};if(message.type==='repo-model-index')return{ok:true,result:options.modelIndex||{paths:[]}};if(message.type==='repo-asset'){(calls.assetRequests||=[]).push(message);return{ok:true,result:{base64:'AAAA'}};}return{ok:true,result:[{path:initialFile,content:options.pcb?'(kicad_pcb)':'(kicad_sch)'},...extraFiles]};}}},
+  chrome:{runtime:{getURL:name=>'chrome-extension://ours/'+name,sendMessage:async message=>{(calls.requests||=[]).push(message);if(message.type==='project'&&options.projectReply)return options.projectReply(message);if(message.type==='revision-resolve')return{ok:true,result:{sha:'a'.repeat(40)}};if(message.type==='repo-model-index')return{ok:true,result:await options.modelIndex||{paths:[]}};if(message.type==='repo-asset'){(calls.assetRequests||=[]).push(message);return{ok:true,result:{base64:'AAAA'}};}return{ok:true,result:[{path:initialFile,content:options.pcb?'(kicad_pcb)':'(kicad_sch)'},...extraFiles]};}}},
   KiCadPairedReview:require('../paired-review.js'),KiCadOverviewConnectivity:require('../overview-connectivity.js'),KiCadReviewTools:require('../review-tools.js'),KiCadWorksheet:require('../worksheet.js'),KiCadBrowserData:require('../browser-data.js'),KiCadDesignModel:require('../design-model.js'),KiCadDesignDiff:require('../design-diff.js'),KiCadViewState:viewState,
   KiCadSchematicRenderer:{build:(_ast,file,metadata)=>{(calls.schematicBuilds||=[]).push({file,metadata});return {primitives:[],layers:[],page:{width:297,height:210},warnings:[]};}},
   KiCadPCBRenderer:{build:()=>({primitives:[],layers:options.layers||[],page:{width:297,height:210},warnings:[]})},
-  SpikeBoard3D:{mountBoard3D(_pane,_source,config){calls.modelOptions=config;return{createProbeViewport(holder,config){calls.probeOptions=config;return{setSelection(){},dispose(){}};},getProbeCount(){return calls.activeProbes||0;},dispose(){calls.sceneDisposed=(calls.sceneDisposed||0)+1;},setTheme(){},setTerminalLabels(visible){calls.terminalLabels=visible;}};}},
+  SpikeBoard3D:{mountBoard3D(_pane,_source,config){calls.sceneMounts=(calls.sceneMounts||0)+1;calls.modelOptions=config;return{createProbeViewport(holder,config){calls.probeOptions=config;return{setSelection(){},dispose(){}};},getProbeCount(){return calls.activeProbes||0;},dispose(){calls.sceneDisposed=(calls.sceneDisposed||0)+1;},setTheme(){},setTerminalLabels(visible){calls.terminalLabels=visible;}};}},
   KiCadOwnedCanvas:{mount:()=>canvas},KiCadReviewWorkspace:{sheetOverviewEntries:require('../review-workspace.js').sheetOverviewEntries,composeSheetOverview:require('../review-workspace.js').composeSheetOverview,sheetPageHighlights:require('../review-workspace.js').sheetPageHighlights,mount:options=>{calls.workspaceOptions=options;return {draw(){},setScene(){},attachCanvas(){calls.attach++;},dispose(){calls.disposed++;},highlightRelated(selection){calls.related=selection;options.onSelection?.(selection);},refreshComments(){calls.refreshed=(calls.refreshed||0)+1;},options};}},
   addEventListener:(type,callback)=>listeners.set(type,callback)};
  if(options.realRender){context.KiCadNetModel=require('../net-model.js');context.KiCadPCBRenderer=require('../pcb-renderer.js');context.KiCadSchematicRenderer=require('../schematic-renderer.js');}
@@ -39,6 +39,9 @@ test('owned dedicated viewer mounts fetched designs and accepts only trusted par
  v.message({type:'kicad-review:command',command:'fit-page'});assert.equal(v.calls.page,1);
  v.message({type:'kicad-review:command',command:'focus',position:{x:50,y:70}});assert.equal(v.camera.center.x,50);assert.equal(v.camera.center.y,70);
  const before=v.calls.draw;v.message({type:'kicad-review:command',command:'fit-page'},{},'chrome-extension://ours');v.message({type:'kicad-review:command',command:'fit-page'},v.parent,'https://github.com');assert.equal(v.calls.draw,before);
+});
+test('assembly variant reports retain the viewer repository revision and requested file',async()=>{
+ const v=await revision(),config={schemaVersion:1,variants:[]};v.calls.workspaceOptions.onAssemblyVariant({variant:'default',config});const report=v.reports.findLast(item=>item.data.type==='kicad-review:assembly-variant');assert.equal(report.origin,'chrome-extension://ours');assert.equal(report.data.repository,'wayri/board');assert.equal(report.data.ref,'a'.repeat(40));assert.equal(report.data.file,'root.kicad_sch');assert.equal(report.data.rootFile,'root.kicad_sch');assert.deepEqual(plain(report.data.config),config);v.hide();
 });
 test('opening a child sheet initially prepares and displays its unambiguous scattered-folder root', async () => {
  const root={path:'design/main.kicad_sch',content:'(kicad_sch (sheet (property "Sheetfile" "../shared/child.kicad_sch")))'};
@@ -98,10 +101,16 @@ test('paired selection relay validates parent and suppresses cross-highlight ech
  assert.equal(v.calls.related,null);
  v.message({type:'kicad-review:command',command:'refresh-comments'});assert.equal(v.calls.refreshed,1);
 });
+test('3D opens the board before slow model inventory finishes and retains later diagnostics',async()=>{
+ let release;const inventory=new Promise(resolve=>release=resolve),v=await revision('',[],{pcb:true,modelIndex:inventory});
+ await v.get('mode3d').click();assert.equal(v.calls.sceneMounts,1);assert.equal(v.get('mode3d').attributes['aria-pressed'],'true');assert.ok(v.calls.modelOptions.assetPathsPromise);assert.deepEqual(plain(v.calls.modelOptions.assetWarnings),[]);
+ release({paths:['models/part.wrl'],warnings:['Partial model inventory']});assert.deepEqual(plain(await v.calls.modelOptions.assetPathsPromise),['models/part.wrl']);assert.deepEqual(plain(v.calls.modelOptions.assetWarnings),['Partial model inventory']);v.hide();
+});
+
 test('3D inventory retains model paths, rejects unsafe paths, and passes diagnostics to the scene',async()=>{
  const v=await revision('',[],{pcb:true,modelIndex:{paths:['models/part.wrl','models/part.step','models/part.glb','board.kicad_pcb','../escape.wrl','/outside.wrl','models/../escape.wrl','https://elsewhere/part.wrl'],warnings:['Inventory truncated']}});
  await v.get('mode3d').click();
- assert.deepEqual(plain(v.calls.modelOptions.assetPaths),['models/part.wrl','models/part.step','models/part.glb']);
+ assert.deepEqual(plain(await v.calls.modelOptions.assetPathsPromise),['models/part.wrl','models/part.step','models/part.glb']);
  assert.deepEqual(plain(v.calls.modelOptions.assetWarnings),['Inventory truncated']);
  assert.equal(v.calls.requests.find(m=>m.type==='repo-model-index').file,'board.kicad_pcb');
 });
@@ -110,7 +119,7 @@ test('3D mode reuses successful model assets across toggles and clears them on p
  const v=await revision('',[],{pcb:true});await v.get('mode3d').click();
  await v.calls.modelOptions.loadAsset('models/part.wrl');
  await v.get('mode3d').click();await v.get('mode3d').click();
- await v.calls.modelOptions.loadAsset('models/part.wrl');assert.equal(v.calls.assetRequests.length,1);
+ await v.calls.modelOptions.loadAsset('models/part.wrl');assert.equal(v.calls.assetRequests.length,1);assert.equal(v.calls.sceneMounts,1,'the camera and explode state stay in the same retained scene');assert.equal(v.calls.sceneDisposed||0,0);
  assert.equal(v.calls.assetRequests[0].repository,'wayri/board');assert.equal(v.calls.assetRequests[0].ref,'a'.repeat(40));assert.equal(v.calls.assetRequests[0].file,'models/part.wrl');
  v.hide();await v.calls.modelOptions.loadAsset('models/part.wrl');assert.equal(v.calls.assetRequests.length,2);
 });
@@ -124,16 +133,27 @@ test('remote viewer pins branch before loading drawings and passes the same comm
 test('floating layer selector highlights with visible context, optionally isolates and restores the previous view',async()=>{
  const v=await revision('',[],{pcb:true,layers:['F.Cu','In1.Cu','In2.Cu','B.Cu','Edge.Cuts']});
  const bar=v.get('drawingHost').children.find(child=>child.id==='floatingLayerSelector');
- assert.ok(bar);assert.equal(bar.hidden,false);const toggle=bar.children[0],mode=bar.children[1].children[0],buttons=bar.children[1].children.slice(1);assert.equal(toggle.attributes['aria-expanded'],'false');toggle.click();assert.equal(toggle.attributes['aria-expanded'],'true');assert.deepEqual(buttons.map(button=>button.dataset.layer),['F.Cu','In1.Cu','In2.Cu','B.Cu','All','Overview','Filled copper','Zone outlines','Worksheet','Numbers','Net names']);
+ assert.ok(bar);assert.equal(bar.hidden,false);const toggle=bar.children[0],mode=bar.children[1].children[0],buttons=bar.children[1].children.slice(1).map(node=>node.className==='compact-layer-item'?node.children[0]:node);assert.equal(toggle.attributes['aria-expanded'],'false');toggle.click();assert.equal(toggle.attributes['aria-expanded'],'true');assert.deepEqual(buttons.map(button=>button.dataset.layer),['F.Cu','In1.Cu','In2.Cu','B.Cu','Edge.Cuts','All','Overview','Filled copper','Zone outlines','Worksheet','Numbers','Net names']);
  v.canvas.visibleLayers=new Set(['F.Cu','Edge.Cuts']);
- buttons[1].click();assert.equal(toggle.attributes['aria-expanded'],'false');assert.equal(toggle.textContent,'In1.Cu');assert.equal(v.canvas.focusedLayer,'In1.Cu');assert.equal(v.canvas.layerFocusMode,'dim');assert.equal(buttons[1].attributes['aria-pressed'],'true');assert.ok(v.canvas.visibleLayers.has('F.Cu'));assert.equal(mode.value,'dim');mode.value='isolate';mode.onchange();assert.equal(v.canvas.layerFocusMode,'isolate');mode.value='dim';mode.onchange();assert.equal(v.canvas.layerFocusMode,'dim');
- buttons[4].click();assert.deepEqual([...v.canvas.visibleLayers],v.canvas.design.layers);assert.equal(v.canvas.focusedLayer,null);
- buttons[5].click();assert.deepEqual([...v.canvas.visibleLayers],['F.Cu','Edge.Cuts']);assert.equal(v.canvas.layerSnapshot,null);
- buttons[8].click();assert.equal(v.canvas.paperVisible,true);buttons[8].click();assert.equal(v.canvas.paperVisible,false);buttons.find(button=>button.dataset.layer==='Net names').click();assert.equal(v.canvas.showNetNames,true);assert.equal(v.get('showNetNames').checked,true);assert.equal(buttons.find(button=>button.dataset.layer==='Net names').attributes['aria-pressed'],'true');buttons.find(button=>button.dataset.layer==='Net names').click();assert.equal(v.canvas.showNetNames,false);
+ buttons[1].click();assert.equal(toggle.attributes['aria-expanded'],'true');assert.equal(toggle.textContent,'In1.Cu');assert.equal(v.canvas.focusedLayer,'In1.Cu');assert.equal(v.canvas.layerFocusMode,'dim');assert.equal(buttons[1].attributes['aria-pressed'],'true');assert.ok(v.canvas.visibleLayers.has('F.Cu'));assert.equal(mode.value,'dim');mode.value='isolate';mode.onchange();assert.equal(v.canvas.layerFocusMode,'isolate');mode.value='dim';mode.onchange();assert.equal(v.canvas.layerFocusMode,'dim');
+ buttons.find(button=>button.dataset.layer==='All').click();assert.deepEqual([...v.canvas.visibleLayers],v.canvas.design.layers);assert.equal(v.canvas.focusedLayer,null);
+ buttons.find(button=>button.dataset.layer==='Overview').click();assert.deepEqual([...v.canvas.visibleLayers],['F.Cu','Edge.Cuts']);assert.equal(v.canvas.layerSnapshot,null);
+ buttons.find(button=>button.dataset.layer==='Worksheet').click();assert.equal(v.canvas.paperVisible,true);buttons.find(button=>button.dataset.layer==='Worksheet').click();assert.equal(v.canvas.paperVisible,false);buttons.find(button=>button.dataset.layer==='Net names').click();assert.equal(v.canvas.showNetNames,true);assert.equal(v.get('showNetNames').checked,true);assert.equal(buttons.find(button=>button.dataset.layer==='Net names').attributes['aria-pressed'],'true');buttons.find(button=>button.dataset.layer==='Net names').click();assert.equal(v.canvas.showNetNames,false);
  await v.get('mode3d').click();assert.equal(bar.hidden,true);await v.get('mode3d').click();assert.equal(bar.hidden,false);
  const schematic=await revision();assert.equal(schematic.get('drawingHost').children.some(child=>child.id==='floatingLayerSelector'),false);
 });
 
+
+test('layer eyes toggle visibility independently and the expanded bar survives clicks until pointer departure',async()=>{
+ const v=await revision('',[],{pcb:true,layers:['F.Cu','In1.Cu','B.Cu','Edge.Cuts','F.SilkS']});
+ const bar=v.get('drawingHost').children.find(child=>child.id==='floatingLayerSelector'),toggle=bar.children[0],items=bar.children[1].children.filter(node=>node.className==='compact-layer-item');
+ assert.deepEqual(items.map(item=>item.children[1].dataset.layerVisibility),v.canvas.design.layers);
+ v.canvas.visibleLayers=new Set(v.canvas.design.layers);v.canvas.draw();toggle.click();const eye=items[1].children[1];eye.click();assert.equal(v.canvas.visibleLayers.has('In1.Cu'),false);assert.equal(eye.attributes['aria-label'],'Show In1.Cu');assert.equal(eye.attributes['aria-pressed'],'false');assert.equal(toggle.attributes['aria-expanded'],'true');
+ eye.click();assert.equal(v.canvas.visibleLayers.has('In1.Cu'),true);assert.equal(eye.attributes['aria-label'],'Hide In1.Cu');assert.equal(toggle.attributes['aria-expanded'],'true');
+ for(const listener of bar.listeners.get('pointerleave'))listener({});assert.equal(toggle.attributes['aria-expanded'],'false');
+ toggle.click();for(const listener of bar.listeners.get('keydown'))listener({key:'Tab'});for(const listener of bar.listeners.get('pointerleave'))listener({});assert.equal(toggle.attributes['aria-expanded'],'true','keyboard navigation is not dismissed by pointer departure');
+ for(const listener of bar.listeners.get('keydown'))listener({key:'Escape',preventDefault(){},stopPropagation(){}});assert.equal(toggle.attributes['aria-expanded'],'false');
+});
 
 test('sheet tree floats below the drawing, minimizes, closes, reopens from settings and focuses a page',async()=>{
  const v=await revision('',[{path:'sub/power.kicad_sch',content:'(kicad_sch)'}],{android:true});
@@ -156,6 +176,31 @@ test('Android all-sheet overview composes every loaded page on a single canvas',
  assert.equal(v.canvas.document.filename,'all-sheets');
  v.context.KiCadSheetOverview.close();assert.equal(v.context.KiCadSheetOverview.isOpen(),false);
  const desktop=await revision();assert.equal(typeof desktop.context.KiCadSheetOverview.open,'function');
+});
+
+test('sheet miniature zoom and drag pan preserve their view through highlight refresh and never navigate after dragging',async()=>{
+ const v=await revision('',[{path:'sub/power.kicad_sch',content:'(kicad_sch)'}],{android:true});await v.context.KiCadSheetOverview.open();
+ const mini=v.get('drawingHost').children.find(node=>node.className==='sheet-tree-miniature'),body=mini.children[1],tools=mini.children[2];let svg=body.children[0];
+ const box=()=>svg.attributes.viewBox.split(' ').map(Number),fire=(type,extra={})=>{for(const listener of svg.listeners.get(type)||[])listener({preventDefault(){},stopPropagation(){},...extra});};
+ svg.getBoundingClientRect=()=>({left:10,top:50,width:280,height:160});const fit=box();tools.children[1].click();assert.ok(box()[2]<fit[2]);assert.equal(tools.children[3].textContent,'125%');
+ fire('wheel',{deltaY:-100,clientX:150,clientY:130});assert.ok(box()[2]<fit[2]/1.25);const zoomed=box();
+ fire('pointerdown',{button:0,pointerId:1,clientX:150,clientY:130});fire('pointermove',{pointerId:1,clientX:185,clientY:140});fire('pointerup',{pointerId:1});assert.ok(box()[0]<zoomed[0]);assert.ok(box()[1]<zoomed[1]);
+ const before={...v.camera.bbox},sheet=svg.children.find(node=>node.attributes['aria-label']==='Go to Power supply');sheet.click();assert.deepEqual(v.camera.bbox,before,'panning a node does not navigate');
+ const panned=box();v.context.KiCadSheetOverview.refreshTree();svg=body.children[0];assert.deepEqual(box(),panned,'highlight redraw preserves miniature camera');
+ fire('keydown',{key:'ArrowRight'});assert.ok(box()[0]>panned[0]);fire('keydown',{key:'Home'});assert.deepEqual(box(),fit);
+ tools.children[0].click();assert.ok(box()[2]>fit[2]);tools.children[2].click();assert.deepEqual(box(),fit);
+ v.context.KiCadSheetOverview.dispose();
+});
+
+test('sheet tree header drag and keyboard move the box within its drawing pane and restore placement after maximizing',async()=>{
+ const v=await revision('',[],{android:true}),host=v.get('drawingHost'),mini=host.children.find(node=>node.className==='sheet-tree-miniature'),header=mini.children[0];
+ host.getBoundingClientRect=()=>({left:100,top:80,width:800,height:600});mini.getBoundingClientRect=()=>({left:100+(parseFloat(mini.style.left)||12),top:80+(parseFloat(mini.style.top)||368),width:280,height:220});
+ const fire=(type,extra={})=>{for(const listener of header.listeners.get(type)||[])listener({target:header,preventDefault(){},stopPropagation(){},...extra});};
+ fire('pointerdown',{pointerId:5,button:0,clientX:150,clientY:450});fire('pointermove',{pointerId:5,clientX:5000,clientY:5000});fire('pointerup',{pointerId:5});assert.equal(mini.style.left,'516px');assert.equal(mini.style.top,'376px');
+ fire('keydown',{key:'ArrowLeft',shiftKey:true});assert.equal(mini.style.left,'484px');fire('keydown',{key:'ArrowUp'});assert.equal(mini.style.top,'364px');
+ header.children.find(node=>node.id==='maximizeSheetTree').click();assert.equal(mini.style.left,'');header.children.find(node=>node.id==='maximizeSheetTree').click();assert.equal(mini.style.left,'484px');assert.equal(mini.style.top,'364px');
+ fire('pointerdown',{pointerId:6,button:0,clientX:150,clientY:450});fire('pointermove',{pointerId:6,clientX:-5000,clientY:-5000});fire('pointercancel',{pointerId:6});assert.equal(mini.style.left,'4px');assert.equal(mini.style.top,'4px');
+ v.context.KiCadSheetOverview.dispose();
 });
 
 test('Android shared overview filters matching sheets then restores all pages',async()=>{
@@ -306,4 +351,12 @@ test('maximized sheet tree restores its size, survives minimize/reopen and retai
  control('Restore sheet tree size').click();assert.equal(tree.classList.contains('maximized'),false);assert.equal(control('Maximize sheet tree').attributes['aria-pressed'],'false');
  control('Maximize sheet tree').click();control('Close sheet tree').click();assert.equal(tree.hidden,true);v.get('viewerSettings').children.find(n=>n.id==='showSheetTree').click();assert.equal(tree.hidden,false);assert.equal(tree.classList.contains('maximized'),true);
  const second=await revision();assert.equal(second.get('drawingHost').children.find(n=>n.className==='sheet-tree-miniature').classList.contains('maximized'),false);v.hide();second.hide();
+});
+
+
+test('theme button toggles both surfaces while drawing shortcut remains independent',async()=>{
+ const v=await revision();v.get('themeButton').click();assert.equal(v.canvas.dark,true);assert.equal(v.context.document.body.dataset.uiTheme,'dark');assert.equal(v.context.document.body.dataset.drawingTheme,'dark');
+ v.get('themeButton').click();assert.equal(v.canvas.dark,false);assert.equal(v.context.document.body.dataset.uiTheme,'light');
+ v.message({type:'kicad-review:command',command:'set-theme',uiTheme:'dark',drawingTheme:'light'});assert.equal(v.canvas.dark,false);assert.equal(v.context.document.body.dataset.uiTheme,'dark');
+ const state=v.reports.filter(r=>r.data.type==='kicad-review:theme').at(-1).data;assert.equal(state.drawingTheme,'light');assert.equal(state.uiTheme,'dark');v.hide();
 });

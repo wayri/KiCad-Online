@@ -43,9 +43,10 @@
    for(const item of value.items)if(!item||item.kind==='group'||!validSelection(item))return false;
    return true;
   }
-  if(!value||typeof value!=='object'||!['part','net','pin'].includes(value.kind))return false;
+  if(!value||typeof value!=='object'||!['part','net','pin','object'].includes(value.kind))return false;
   const bounded=(v,n)=>typeof v==='string'&&v.length>0&&v.length<=n&&!/[\x00-\x1f\x7f]/.test(v);
   if(!bounded(value.path,1000)||!/^.+\.kicad_(?:sch|pcb)$/i.test(value.path)||value.path.startsWith('/')||value.path.split('/').some(p=>!p||p==='.'||p==='..'||/[\\:]/.test(p)))return false;
+  if(value.kind==='object')return Object.keys(value).every(k=>['kind','path','uuid'].includes(k))&&bounded(value.uuid,200);
   const keys=value.kind==='pin'?['kind','reference','path','uuid','ownerUuid','symbolUuid','pinNumber','tstampPath','rootUuid']:value.kind==='part'?['kind','reference','path','uuid','symbolUuid','tstampPath','rootUuid']:['kind','netName','qualifiedNetName','path'];if(Object.keys(value).some(k=>!keys.includes(k)))return false;
   if(value.rootUuid!==undefined&&(typeof value.rootUuid!=='string'||value.rootUuid.length<1||value.rootUuid.length>200||/[\\/:\x00-\x1f\x7f]/.test(value.rootUuid)))return false;
   if(value.tstampPath!==undefined&&(!nativePath(value.tstampPath)||value.symbolUuid&&value.tstampPath.split('/').at(-1)!==value.symbolUuid||/\.kicad_sch$/i.test(value.path)&&value.kind==='part'&&value.uuid&&value.tstampPath.split('/').at(-1)!==value.uuid))return false;

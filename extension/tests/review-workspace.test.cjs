@@ -61,8 +61,8 @@ function workspaceRuntime(respond=async()=>[], hooks={}){
   const receipts=new Map(hooks.unacceptedRules?[]:[['kivi:content-rules','2026-10-10-terms-1']]),localStorage={getItem:key=>receipts.get(key)||null,setItem:(key,value)=>receipts.set(key,value),removeItem:key=>receipts.delete(key)};
   const keyHandlers=new Set();
   let resizeCallback;
-  const context={URL,innerWidth:hooks.width||800,innerHeight:hooks.frameHeight||600,EventTarget,CustomEvent,TextEncoder,Map,Set,console,crypto:require('node:crypto').webcrypto,localStorage,document:{hidden:hooks.hidden===true,body,addEventListener(){},removeEventListener(){},querySelectorAll:selector=>{const found=[];const visit=n=>{if(selector==='dialog[open]'&&n.tagName==='DIALOG'&&n.open)found.push(n);for(const c of n.children)visit(c);};visit(body);return found;},getElementById:id=>{const node=elements.get(id);return node&&body.contains(node)?node:null;},createElement:tag=>new Element(tag),createElementNS:(_,tag)=>new Element(tag)},addEventListener:(type,fn)=>{if(type==='keydown')keyHandlers.add(fn);if(type==='resize')resizeCallback=fn;},removeEventListener:(type,fn)=>{if(type==='keydown')keyHandlers.delete(fn);},matchMedia:()=>({matches:true}),
-    KiCadFileCompatibility:require('../file-compatibility.js'),KiCadDesignDiff:diff,KiCadCommentFocus:require('../comment-focus.js'),KiCadAnalysisData:require('../analysis-data.js'),KiCadViewState:require('../view-state.js'),KiCadBomManager:require('../bom-manager.js'),KiCadReviewHandoff:hooks.handoff,KiCadEngineeringLauncher:hooks.engineeringLauncher,KiCadCommentCompose:{...require('../comment-compose.js'),...(hooks.compose||{})},KiCadReviewTools:require('../review-tools.js'),KiCadDesignModel:require('../design-model.js'),KiCadNetModel:hooks.netModelAPI||require('../net-model.js'),KiCadReviewComments:require('../review-comments.js'),KiCadBrowserData:require('../browser-data.js'),KiCadOwnedCanvas:require('../owned-canvas.js'),
+  const context={URL,URLSearchParams,innerWidth:hooks.width||800,innerHeight:hooks.frameHeight||600,EventTarget,CustomEvent,TextEncoder,Map,Set,console,crypto:require('node:crypto').webcrypto,localStorage,document:{hidden:hooks.hidden===true,body,addEventListener(){},removeEventListener(){},querySelectorAll:selector=>{const found=[];const visit=n=>{if(selector==='dialog[open]'&&n.tagName==='DIALOG'&&n.open)found.push(n);for(const c of n.children)visit(c);};visit(body);return found;},getElementById:id=>{const node=elements.get(id);return node&&body.contains(node)?node:null;},createElement:tag=>new Element(tag),createElementNS:(_,tag)=>new Element(tag)},addEventListener:(type,fn)=>{if(type==='keydown')keyHandlers.add(fn);if(type==='resize')resizeCallback=fn;},removeEventListener:(type,fn)=>{if(type==='keydown')keyHandlers.delete(fn);},matchMedia:()=>({matches:true}),
+    KiCadWorkspaceSearch:hooks.workspaceSearchAPI,KiCadFileCompatibility:require('../file-compatibility.js'),KiCadDesignDiff:diff,KiCadCommentFocus:require('../comment-focus.js'),KiCadAnalysisData:require('../analysis-data.js'),KiCadViewState:require('../view-state.js'),KiCadBomManager:require('../bom-manager.js'),KiCadReviewHandoff:hooks.handoff,KiCadEngineeringLauncher:hooks.engineeringLauncher,KiCadCommentCompose:{...require('../comment-compose.js'),...(hooks.compose||{})},KiCadReviewTools:require('../review-tools.js'),KiCadDesignModel:require('../design-model.js'),KiCadNetModel:hooks.netModelAPI||require('../net-model.js'),KiCadReviewComments:require('../review-comments.js'),KiCadBrowserData:require('../browser-data.js'),KiCadOwnedCanvas:require('../owned-canvas.js'),
     top:hooks.top||{},KiCadRevisionActions:require('../revision-actions.js'),KiCadRepositoryExplorer:hooks.repositoryExplorer,KiCadRatsnest:require('../ratsnest.js'),KiCadTestpointTools:hooks.testpointTools,KiCadPhotoReview:hooks.photoReview,KiCadComponentLinks:require('../component-links.js'),KiCadPairedReview:require('../paired-review.js'),KiCadBomAnalytics:require('../bom-analytics.js'),
     chrome:{storage:{local:hooks.chromeStorage||{get:async()=>({}),set:async()=>{}}},runtime:{sendMessage:async message=>({ok:true,result:await respond(message)})}},setTimeout,clearTimeout,URL,Blob};
   if(hooks.android){context.KiCadAndroidRuntime=true;context.KiCadAndroidOnline=hooks.androidOnline!==false;}
@@ -83,6 +83,23 @@ function workspaceRuntime(respond=async()=>[], hooks={}){
   return{get,workspace,canvas,design,designs,load,receipts,key,document:context.document,chatDraft:()=>context.KiCadChatDraft,resize(width){hooks.width=width;resizeCallback?.();}};
 }
 const descendants=node=>[node,...node.children.flatMap(descendants)];
+
+test('search reopens the floating sheet tree even when repository search is unavailable',async()=>{
+ const view=workspaceRuntime(undefined,{pcb:false,files:[{path:'root.kicad_sch',content:'(kicad_sch)'}],workspaceSearchAPI:{toolResults:require('../workspace-search.js').toolResults,mount(){return{destroy(){}};}}});view.load();let opened=0;view.document.body.append(view.get('showSheetTree'));view.get('showSheetTree').onclick=()=>opened++;
+ for(const term of ['sheet browser','sheet tree','minimap']){const input=view.get('universalSearch');input.value=term;input.onfocus();assert.match(view.get('universalSearchResults').textContent,/Show sheet browser/);input.onkeydown({key:'Enter',preventDefault(){}});assert.equal(view.get('universalSearchResults').hidden,true);}
+ assert.equal(opened,3);await view.workspace.openWorkspaceSearchResult({kind:'command',action:'sheet-tree'});assert.equal(opened,4);view.workspace.dispose();
+});
+
+test('normal flag and label clicks highlight the connected net; Shift selects only the saved flag',()=>{
+ const flags=[['label','(label "SIGNAL" (at 10 0) (uuid "flag"))'],['global_label','(global_label "SIGNAL" (shape input) (at 10 0) (uuid "flag"))'],['hierarchical_label','(hierarchical_label "SIGNAL" (shape input) (at 10 0) (uuid "flag"))'],['sheet-pin','(sheet (at 10 0) (size 10 10) (uuid "sheet") (property "Sheetfile" "child.kicad_sch") (pin "SIGNAL" input (at 10 0 180) (uuid "flag")))'],['symbol',`(lib_symbols (symbol "power:PWR_FLAG" (power) (symbol "PWR_FLAG_1_1" (circle (center 0 0) (radius 1) (stroke (width .15)) (fill (type none))) (pin power_out line (at 0 0 0) (length 0) (name "pwr") (number "1"))))) (symbol (lib_id "power:PWR_FLAG") (at 10 0 0) (unit 1) (uuid "flag") (property "Reference" "#FLG1") (property "Value" "PWR_FLAG"))`]];
+ for(const [kind,flag]of flags){const selections=[],source=`(kicad_sch (version 20250114) ${flag} (wire (pts (xy 0 0) (xy 10 0)) (uuid "wire")))`,view=workspaceRuntime(undefined,{pcb:false,files:[{path:'root.kicad_sch',content:source}],onSelection:value=>selections.push(value)});view.load();const primitive=view.design.primitives.find(p=>p.kind===kind&&(p.pinUuid||p.uuid)==='flag');assert.ok(primitive,kind);view.canvas.query=()=>[primitive];
+  assert.equal(view.canvas.touchNetPick({clientX:10,clientY:0,pointerType:'mouse'}),true,kind);assert.ok([...view.canvas.netPrimitives].some(p=>p.uuid==='wire'),kind);assert.equal(selections.at(-1).kind,'net',kind);
+  assert.equal(view.canvas.touchNetPick({clientX:10,clientY:0,pointerType:'mouse',shiftKey:true}),true,kind);assert.ok([...view.canvas.netPrimitives].some(p=>(p.pinUuid||p.uuid)==='flag'),kind);assert.equal([...view.canvas.netPrimitives].some(p=>p.uuid==='wire'),false,kind);assert.equal(selections.at(-1).kind,'object',kind);view.workspace.dispose();
+ }
+});
+test('assembly variant changes publish current config while parent-applied variants do not echo',()=>{
+ const events=[],view=workspaceRuntime(undefined,{onAssemblyVariant:value=>events.push(value)}),config={schemaVersion:1,variants:[{id:'prototype',name:'Prototype',parts:[{path:'board.kicad_pcb',reference:'R1',populated:false}]}]};view.load();const before=events.length;assert.equal(view.workspace.applyAssemblyVariant({variant:'prototype',config}),true);assert.equal(view.get('variantSelect').value,'prototype');assert.equal(events.length,before);view.get('variantSelect').value='default';view.get('variantSelect').onchange();assert.equal(events.at(-1).variant,'default');assert.deepEqual(JSON.parse(JSON.stringify(events.at(-1).config)),config);assert.throws(()=>view.workspace.applyAssemblyVariant({variant:'missing',config}),/Unknown assembly variant/);assert.equal(view.get('variantSelect').value,'default');view.workspace.dispose();
+});
 const action=(node,text)=>descendants(node).find(item=>item.tagName==='BUTTON'&&item.textContent===text);
 async function sendComment(view){await view.get('postComment').click();if(view.get('commentPostReview').open)await view.get('confirmCommentPost').click();await new Promise(setImmediate);}
 function chooseDestination(view){const button=descendants(view.get('commentEditor')).find(node=>node.attributes['aria-label']==='Choose comment destination');assert.ok(button);return button.click();}
@@ -153,7 +170,7 @@ test('top sheet navigation and optional review tools preserve their existing con
  const view=workspaceRuntime(undefined,{pcb:false,files:[{path:'root.kicad_sch',content:'(kicad_sch (uuid root))'}]});
  assert.equal(view.get('sheetLabel').parentElement.id,'topSheetNavigation');assert.equal(view.get('sheetBack').parentElement.id,'topSheetNavigation');
  assert.equal(view.get('variantBar').parentElement.id,'extraReviewControls');assert.equal(view.get('highlightControls').parentElement.id,'extraReviewControls');assert.equal(view.get('extraReviewControls').hidden,true);
- assert.equal(view.get('shortcutHelp').parentElement.id,'navigationHelpDialog');assert.equal(view.get('diagnostics').parentElement.id,'extraReviewControls');
+ assert.equal(view.get('shortcutHelp').parentElement.id,'navigationHelpDialog');assert.equal(view.get('shortcutHelp').children[0].hidden,true);assert.equal(view.get('shortcutHelp').children.filter(node=>node.tagName==='SECTION').length,3);assert.equal(view.get('diagnostics').parentElement.id,'extraReviewControls');
  view.get('reviewToolsButton').click();assert.equal(view.get('extraReviewControls').hidden,false);view.key('Escape');assert.equal(view.get('extraReviewControls').hidden,true);
  view.key('?');assert.equal(view.get('navigationHelpDialog').open,true);assert.equal(view.get('extraReviewControls').hidden,true);view.key('Escape');assert.equal(view.get('navigationHelpDialog').open,false);
 });
@@ -222,6 +239,28 @@ test('independent layout and 3D windows apply exact same-board part, terminal, n
  assert.equal(view.workspace.applyWindowSelection({kind:'group',items:[{kind:'part',path:'board.kicad_pcb',uuid:'fp',reference:'R1'},{kind:'net',path:'board.kicad_pcb',netName:'SIGNAL'}]}),true);
  assert.equal(view.workspace.applyWindowSelection(null),true);assert.equal(view.canvas.netHighlight,null);
  assert.equal(view.workspace.applyWindowSelection({kind:'part',path:'root.kicad_sch',uuid:'symbol-uuid',reference:'R1'}),true,'opposite schematic mapping still works');
+});
+test('Shift-click selects the saved pad alone while ordinary click highlights its connected net',()=>{
+ const emitted=[],view=workspaceRuntime(undefined,{onSelection:value=>emitted.push(value)});view.load();const pad=view.design.primitives.find(p=>p.kind==='pad');assert.ok(pad);view.canvas.query=()=>[pad];
+ assert.equal(view.canvas.touchNetPick({clientX:30,clientY:40,pointerType:'mouse',shiftKey:true}),true);assert.equal(emitted.at(-1).kind,'pin');assert.equal(emitted.at(-1).pinNumber,'1');
+ assert.ok(view.canvas.netPrimitives.has(pad));assert.ok([...view.canvas.netPrimitives].every(p=>p.kind==='pad'),'terminal selection does not imply a wire connection');assert.equal(view.document.body.querySelector('.touch-net-picker'),null);
+ assert.equal(view.canvas.touchNetPick({clientX:30,clientY:40,pointerType:'mouse'}),true);assert.equal(emitted.at(-1).kind,'net');assert.equal(view.canvas.netHighlight.name,'SIGNAL');
+ view.workspace.select3D({uuid:'pad',ref:'R1',type:'Pad',name:'1',net:1},{individual:true});assert.equal(emitted.at(-1).kind,'pin');assert.equal(emitted.at(-1).pinNumber,'1');view.workspace.dispose();
+});
+test('Smart Select resolves one electrical target directly but keeps overlapping nets explicit',()=>{
+ const view=workspaceRuntime();view.load();const pad=view.design.primitives.find(p=>p.kind==='pad');view.canvas.query=()=>[pad];view.canvas.pickDistance=()=>0;
+ assert.equal(view.canvas.touchNetPick({clientX:30,clientY:40,pointerType:'mouse'}),true);assert.equal(view.canvas.netHighlight.name,'SIGNAL');assert.equal(view.document.body.querySelector('.touch-net-picker'),null);
+ assert.equal(view.canvas.touchNetPick({clientX:30,clientY:40,pointerType:'mouse',altKey:true}),true);assert.ok(view.document.body.querySelector('.touch-net-picker'),'Alt opens the part/net chooser rather than assuming the net');view.workspace.dispose();
+});
+test('desktop Smart Select offers truly overlapping nets but ignores more distant electrical candidates',()=>{
+ const source='(kicad_sch (wire (pts (xy 0 0) (xy 20 0)) (uuid "a")) (label "DATA" (at 0 0) (uuid "la")) (wire (pts (xy 0 1) (xy 20 1)) (uuid "b")) (label "CLOCK" (at 0 1) (uuid "lb")))',view=workspaceRuntime(undefined,{pcb:false,files:[{path:'root.kicad_sch',content:source}]});view.load();view.canvas.query=()=>view.design.primitives.filter(p=>p.kind==='wire');view.canvas.pickDistance=()=>0;
+ assert.equal(view.canvas.touchNetPick({clientX:50,clientY:50,pointerType:'mouse'}),true);const picker=view.document.body.querySelector('.touch-net-picker');assert.ok(picker);assert.match(picker.textContent,/DATA/);assert.match(picker.textContent,/CLOCK/);
+ view.canvas.pickDistance=p=>p.uuid==='a'?0:3;view.canvas.touchNetPick({clientX:50,clientY:50,pointerType:'mouse'});assert.equal(view.document.body.querySelector('.touch-net-picker'),null);assert.equal(view.canvas.netHighlight.name,'DATA');view.workspace.dispose();
+});
+test('individual geometry back-selection stays on its exact saved drawing and never expands into the net',()=>{
+ const view=workspaceRuntime();view.load();const via={type:'circle',kind:'via',uuid:'via-one',x:1,y:2,r:.3,layer:'F.Cu',netName:'SIGNAL'};view.design.primitives.push(via);view.canvas.primitives=view.design.primitives;
+ assert.equal(view.workspace.applyWindowSelection({kind:'object',path:'board.kicad_pcb',uuid:'via-one'}),true);assert.ok(view.canvas.netPrimitives.has(via));assert.equal(view.canvas.netPrimitives.size,1);
+ assert.equal(view.workspace.applyWindowSelection({kind:'object',path:'other.kicad_pcb',uuid:'via-one'}),false);assert.equal(view.workspace.applyWindowSelection({kind:'object',path:'board.kicad_pcb',uuid:'missing'}),false);view.workspace.dispose();
 });
 
 test('point and dragged-area review tools persist millimetre anchors and disable ruler interception',async()=>{
@@ -369,7 +408,7 @@ test('missing sheet double click reports absence; parent navigation rejects ambi
 test('review shortcuts inspect pointer, highlight net, focus search, respect typing and never mutate sources',()=>{
  const focused=[],messages=[],view=workspaceRuntime(async request=>{messages.push(request.type);return[];},{navigation:true,query:()=>[{bbox:{context:{uuid:'pad'}}}],focus:p=>focused.push(p)});view.load();
  view.get('designInspector').hidden=true;view.key('e',{ctrlKey:true});assert.equal(view.get('designInspector').hidden,true);view.key('e',{composedPath:()=>[{tagName:'TEXTAREA'}]});assert.equal(view.get('designInspector').hidden,true);
- const move=new Event('pointermove');Object.assign(move,{clientX:400,clientY:300,buttons:0});view.canvas.canvas.dispatchEvent(move);view.key('e');assert.equal(view.get('selectedName').textContent,'R1 pad 1');assert.equal(view.get('designInspector').hidden,false);
+ const move=new Event('pointermove');Object.assign(move,{clientX:400,clientY:300,buttons:0});view.canvas.canvas.dispatchEvent(move);view.key('e');assert.equal(view.get('selectedName').textContent,'R1.1');assert.equal(view.get('designInspector').hidden,false);
  view.key('h');assert.equal(view.canvas.netHighlight.name,'SIGNAL');view.key(' ');assert.equal(focused[0].x,0);assert.equal(focused[0].y,0);view.key('/');assert.equal(view.get('universalSearch').focused,true);view.key('?');assert.equal(view.get('shortcutHelp').open,true);
  for(const key of ['`','~']){view.get('clearHighlights').click();view.key(key);assert.equal(view.canvas.netHighlight.name,'SIGNAL');view.get('clearHighlights').click();view.key(key,{composedPath:()=>[{tagName:'INPUT'}]});assert.equal(view.canvas.netHighlight,null);}
  for(const key of ['Delete','Backspace','x','g'])assert.equal(view.key(key).defaultPrevented,undefined);
@@ -562,7 +601,7 @@ test('editor posts formatted Issue and Discussion directly and saves confirmed t
   const view=workspaceRuntime(async m=>{calls.push(m);if(m.type==='comment-list')return notes;if(m.type==='comment-save'){notes=[m.comment];return m.comment;}if(m.type==='github-discussion-categories')return[{id:'category-1',name:'Design review'}];if(m.type==='github-publish-comment')return{remoteRef};return[];});view.load();await new Promise(resolve=>setImmediate(resolve));
   view.get('newComment').click();view.get('commentText').value='Check connector clearance';view.get('commentSeverity').value='major';view.get('editorThreadType').value=type;view.get('editorThreadType').onchange();view.get('editorTitle').value='Connector clearance review';
   if(type==='discussion'){view.get('editorDestination').value='discussion';view.get('editorDestination').onchange();await view.get('editorLoadCategories').click();}
-  view.get('editorPreview').click();assert.match(view.get('editorMarkdown').textContent,/## KiCad visual review/);assert.doesNotMatch(view.get('editorMarkdown').textContent,/kicad-review:v1/);assert.equal(calls.some(m=>m.type==='github-publish-comment'),false);
+  view.get('editorPreview').click();assert.match(view.get('editorMarkdown').textContent,/^Check connector clearance/);assert.match(view.get('editorMarkdown').textContent,/<details><summary>Design context/);assert.doesNotMatch(view.get('editorMarkdown').textContent,/kicad-review:v1/);assert.equal(calls.some(m=>m.type==='github-publish-comment'),false);
   await sendComment(view);const publication=calls.find(m=>m.type==='github-publish-comment');assert.equal(publication.destination,`new-${type}`);assert.equal(publication.title,'Check connector clearance');assert.equal(publication.comment.threadType,type);if(type==='discussion')assert.equal(publication.categoryId,'category-1');assert.equal(notes[0].remoteRefs[0].url,remoteRef.url);assert.equal(view.get('commentEditor').hidden,true);assert.match(view.get('commentStatus').textContent,/Posted to GitHub/);
  }
 });
@@ -664,8 +703,30 @@ test('context menu on an object does not open Properties until Inspect is chosen
 test('context comment uses the pressed object without opening Properties',()=>{
  const view=workspaceRuntime(undefined,{query:()=>[{bbox:{context:{uuid:'fp',reference:'R1'}}}]});view.load();
  view.canvas.canvas.dispatchEvent(uiEvent('contextmenu',{clientX:30,clientY:30,button:2}));
- view.get('objectMenu').children.find(b=>b.textContent==='Comment on object').click();
+ view.get('objectMenu').children.find(b=>b.textContent==='Comment on R1').click();
  assert.equal(view.get('designInspector').hidden,true);assert.equal(view.get('commentsSidebar').hidden,false);assert.match(view.get('commentAnchor').textContent,/R1/);view.workspace.dispose();
+});
+
+test('smart context comments target the exact pad or net, and empty space never inherits a previous target',()=>{
+ const view=workspaceRuntime();view.load();const pad=view.design.primitives.find(p=>p.kind==='pad');assert.ok(pad);
+ view.canvas.query=()=>[pad];view.canvas.canvas.dispatchEvent(uiEvent('contextmenu',{clientX:31,clientY:40,button:2}));
+ view.get('objectMenu').children.find(b=>b.textContent==='Comment on R1.1').click();assert.match(view.get('commentAnchor').textContent,/R1\.1/);assert.equal(view.get('designInspector').hidden,true);
+ view.canvas.canvas.dispatchEvent(uiEvent('contextmenu',{clientX:31,clientY:40,button:2}));
+ view.get('objectMenu').children.find(b=>b.textContent==='Comment on net SIGNAL').click();assert.match(view.get('commentAnchor').textContent,/SIGNAL/);
+ view.canvas.query=()=>[];view.canvas.canvas.dispatchEvent(uiEvent('contextmenu',{clientX:300,clientY:200,button:2}));
+ view.get('objectMenu').children.find(b=>b.textContent==='Comment on this point').click();assert.doesNotMatch(view.get('commentAnchor').textContent,/R1|SIGNAL/);view.workspace.dispose();
+});
+
+test('3D context comments retain terminal identity and resolve a unique saved net',()=>{
+ const view=workspaceRuntime();view.load();view.workspace.comment3D({uuid:'pad',ref:'R1',type:'Pad',name:'1',net:1});assert.match(view.get('commentAnchor').textContent,/R1\.1/);
+ view.workspace.comment3D({type:'Track',net:1});assert.match(view.get('commentAnchor').textContent,/SIGNAL/);view.workspace.dispose();
+});
+
+test('area comment can start from the conversation navigation or context menu and is disabled in 3D',()=>{
+ const view=workspaceRuntime();view.load();view.get('drawCommentArea').click();assert.equal(view.get('drawCommentArea').attributes['aria-pressed'],'true');assert.equal(view.canvas.canvas.classList.contains('area-mode'),true);
+ view.get('drawCommentArea').click();assert.equal(view.canvas.canvas.classList.contains('area-mode'),false);
+ view.canvas.canvas.dispatchEvent(uiEvent('contextmenu',{clientX:300,clientY:200,button:2}));view.get('objectMenu').children.find(b=>b.textContent==='Draw comment area').click();assert.equal(view.get('objectMenu').hidden,true);assert.equal(view.canvas.canvas.classList.contains('area-mode'),true);
+ view.workspace.setScene({setPopulation(){}});assert.equal(view.get('drawCommentArea').disabled,true);assert.equal(view.canvas.canvas.classList.contains('area-mode'),false);view.workspace.dispose();
 });
 test('interaction within a panel cancels pending mouse dismissal without blocking outside dismissal',async()=>{
  for(const action of ['pointerdown','wheel','scroll']){
@@ -744,14 +805,14 @@ test('received group highlights all matched footprints without enabling the mult
  const uuids=new Set([...view.canvas.netPrimitives].map(p=>p.ownerUuid||p.uuid));assert.ok(uuids.has('fp0'));assert.ok(uuids.has('fp1'));
  view.workspace.highlightRelated({kind:'group',items:[]});assert.equal(view.canvas.netPrimitives.size,0);
 });
-test('selecting a loaded sheet includes its descendant parts in one cross-highlight group',()=>{
+test('opening a loaded sheet leaves its descendant parts unselected',()=>{
  const symbol=(ref,uuid)=>`(symbol (lib_id "Device:R") (at 20 20 0) (uuid "${uuid}") (property "Reference" "${ref}") (property "Value" "10k"))`;
  const files=[{path:'root.kicad_sch',content:'(kicad_sch (sheet (at 0 0) (size 10 10) (uuid "s") (property "Sheetname" "Power") (property "Sheetfile" "child.kicad_sch")))'},
  {path:'child.kicad_sch',content:'(kicad_sch '+symbol('R1','r1')+' (sheet (at 0 0) (size 10 10) (uuid "t") (property "Sheetfile" "leaf.kicad_sch")))'},
  {path:'leaf.kicad_sch',content:'(kicad_sch '+symbol('R2','r2')+')'}];
  const selections=[],view=workspaceRuntime(undefined,{pcb:false,files,onSelection:s=>selections.push(s)});view.load();view.get('navSheets').click();
  const tree=view.get('sheetList').children.find(node=>node.classList.contains('sheet-tree'));tree.children[1].children.find(node=>node.classList.contains('sheet-open')).click();
- assert.deepEqual(Array.from(selections.at(-1).items,i=>i.reference),['R1','R2']);assert.match(view.get('reviewNotice').textContent,/2 loaded sheets/);
+ assert.deepEqual(Array.from(selections.at(-1).items),[]);assert.equal(view.canvas.netPrimitives.size,0);
 });
 
 test('toolbar opens an independent movable, minimizable check window and explorer navigation preserves it',()=>{
@@ -807,6 +868,15 @@ test('compact composer inserts an inline mention and derives title and mentions 
  let notes=[];const calls=[];const view=workspaceRuntime(async m=>{calls.push(m);if(m.type==='comment-list')return notes;if(m.type==='comment-mention-users')return{users:[{login:'wayri',name:'Reviewer'}]};if(m.type==='comment-save'){notes=[m.comment];return m.comment;}return[];});view.load();await new Promise(r=>setImmediate(r));view.get('newComment').click();
  assert.equal(view.get('commentComposeTop').children.length,3);assert.equal(view.get('editorTitleLabel').parentElement.hidden,true);assert.equal(view.get('editorDestination').value,'issue');
  const box=view.get('commentText');box.value='Review title\nAsk @wa';box.selectionStart=box.value.length;box.dispatchEvent(new Event('input'));await new Promise(r=>setTimeout(r,240));assert.equal(view.get('inlineMentionSuggestions').hidden,false);view.get('inlineMentionSuggestions').children[0].click();assert.equal(box.value,'Review title\nAsk @wayri ');assert.equal(view.get('inlineMentionSuggestions').hidden,true);await view.get('saveComment').click();assert.deepEqual([...notes[0].mentions],['wayri']);assert.match(view.get('commentList').textContent,/Review title/);
+});
+
+test('tag completion uses existing annotation tags and chat receives the same local suggestions',async()=>{
+ const chat=captureChat(),note={id:'tag-note',text:'Review power',createdAt:'2026-10-04T00:00:00.000Z',tags:['power-rail','power','bad tag'],anchor:{repository:'wayri/fixture',ref:'main',file:'board.kicad_pcb',kind:'drawing'}};
+ const calls=[],view=workspaceRuntime(async m=>{calls.push(m);return m.type==='comment-list'?[note]:[];},{chatPanel:chat.panel});view.load();await new Promise(r=>setImmediate(r));
+ assert.equal(chat.options.enterToSend,true);assert.deepEqual(Array.from(chat.options.onTags({query:'pow'}),row=>row.name),['power-rail','power']);
+ view.get('newComment').click();const box=view.get('commentText');box.value='Check #pow';box.selectionStart=box.value.length;box.dispatchEvent(new Event('input'));
+ assert.equal(view.get('inlineMentionSuggestions').hidden,false);view.get('inlineMentionSuggestions').children[0].click();assert.equal(box.value,'Check #power-rail ');assert.equal(calls.some(m=>m.type==='comment-mention-users'),false);
+ box.value='Ask @wa';box.selectionStart=box.value.length;box.dispatchEvent(new Event('input'));box.selectionStart=0;await new Promise(r=>setTimeout(r,240));assert.equal(calls.some(m=>m.type==='comment-mention-users'),false);view.workspace.dispose();
 });
 
 test('pasted screenshot is saved with a draft and cancelled conversions cannot contaminate another draft',async()=>{
@@ -1484,7 +1554,7 @@ test('cross-view popup selections first back-highlight the main drawing rather t
 });
 test('probe view switches use host callbacks and 3D native records normalize before cross-selection',async()=>{
  let probe,config3D;const calls=[],emitted=[];const view=workspaceRuntime(undefined,{onSelection:s=>emitted.push(s),quickView:{mount:config=>{probe=config;return{open(){},dispose(){}};}},resolveProbeViews:async(...args)=>{calls.push(args);return {hostResolved:true};},mountProbe3D:async(holder,config)=>{config3D=config;return {dispose(){}};}});view.load();view.get('objectList').children[0].click();const entry=probe.getEntries()[0],group=entry.groups[0],row={entry,group};assert.equal((await probe.resolveViews(row,null,'layout')).hostResolved,true);assert.equal(calls[0][1].canonical.kind,'part');
- const selected=[],viewport=await probe.mount3D({}, {entry,group,onSelect:value=>selected.push(value)});config3D.onSelect({uuid:'fp',reference:'R1',pinNumber:'1',probeRecord:true});assert.equal(selected[0].canonical.kind,'pin');assert.equal(selected[0].canonical.ownerUuid,'fp');config3D.onSelect({kind:'net',net:1,probeRecord:true});assert.equal(selected[1].canonical.netName,'SIGNAL');viewport.setSelectionFilter('net');config3D.onSelect({uuid:'fp',reference:'R1',pinNumber:'1',net:1,probeRecord:true});assert.equal(selected[2].canonical.kind,'net');config3D.onSelect({type:'Pad',ref:'R1',name:'1',net:'SIGNAL',probeRecord:true});assert.equal(selected[3].canonical.kind,'net');viewport.setSelectionFilter('all');config3D.onSelect({type:'Pad',ref:'R1',name:'1',probeRecord:true});assert.equal(selected[4].canonical.kind,'pin');assert.equal(selected[4].canonical.pinNumber,'1');config3D.onSelect({type:'Component',ref:'R1',probeRecord:true});assert.equal(selected[5].canonical.kind,'part');assert.equal(selected[5].canonical.reference,'R1');assert.equal(emitted.length,1,'3D normalization alone does not publish until manager accepts the selection');view.workspace.dispose();
+ const selected=[],viewport=await probe.mount3D({}, {entry,group,onSelect:value=>selected.push(value)});config3D.onSelect({uuid:'fp',reference:'R1',pinNumber:'1',probeRecord:true});assert.equal(selected[0].canonical.kind,'pin');assert.equal(selected[0].canonical.ownerUuid,'fp');config3D.onSelect({kind:'net',net:1,probeRecord:true});assert.equal(selected[1].canonical.netName,'SIGNAL');viewport.setSelectionFilter('net');config3D.onSelect({uuid:'fp',reference:'R1',pinNumber:'1',net:1,probeRecord:true});assert.equal(selected[2].canonical.kind,'net');config3D.onSelect({type:'Pad',ref:'R1',name:'1',net:'SIGNAL',probeRecord:true});assert.equal(selected[3].canonical.kind,'net');viewport.setSelectionFilter('all');config3D.onSelect({type:'Pad',ref:'R1',name:'1',probeRecord:true});assert.equal(selected[4].canonical.kind,'pin');assert.equal(selected[4].canonical.pinNumber,'1');config3D.onSelect({type:'Component',ref:'R1',probeRecord:true});assert.equal(selected[5].canonical.kind,'part');assert.equal(selected[5].canonical.reference,'R1');viewport.setSelectionFilter('net');config3D.onSelect({type:'Pad',ref:'R1',name:'1',net:'SIGNAL',probeRecord:true},{individual:true});assert.equal(selected.at(-1).canonical.kind,'pin');assert.equal(emitted.length,1,'3D normalization alone does not publish until manager accepts the selection');view.workspace.dispose();
 });
 
 test('foreign probe selections emit saved identity without moving the current drawing or trusting foreign coordinates',()=>{
@@ -1643,7 +1713,7 @@ test('keep-context checkbox defaults on and consistently controls 2D and 3D sele
 });
 
 test('net color choice persists independently of context dimming and reaches the 3D host',()=>{
- const view=workspaceRuntime();view.load();assert.equal(view.get('netHighlightColor').value,'accent');assert.equal(view.get('netHighlightColorControl').hidden,false);
+ const view=workspaceRuntime();view.load();assert.equal(view.get('netHighlightColor').value,'layer');assert.equal(view.get('netHighlightColorControl').hidden,false);
  const colors=[];view.workspace.setScene({setPopulation(){},setSelection(){},setNetHighlightColor:value=>colors.push(value)});
  view.get('netHighlightColor').value='layer';view.get('netHighlightColor').onchange();assert.equal(colors.at(-1),'layer');assert.equal(view.receipts.get('kicad:net-highlight-color:v1'),'layer');assert.equal(view.get('keepContextColors').checked,true);
  view.get('keepContextColors').checked=false;view.get('keepContextColors').onchange();assert.equal(colors.at(-1),'layer');view.get('netHighlightColor').value='accent';view.get('netHighlightColor').onchange();assert.equal(colors.at(-1),'accent');view.workspace.dispose();
@@ -1705,4 +1775,75 @@ test('screenshot-only and type-only editor changes advance the optimistic-concur
  if(change==='screenshot'){const event=new Event('paste',{cancelable:true});Object.defineProperty(event,'clipboardData',{value:{items:[{kind:'file',type:'image/png',getAsFile:()=>new Blob(['image'],{type:'image/png'})}]}});view.get('commentText').dispatchEvent(event);await new Promise(setImmediate);}
  else{view.get('editorThreadType').value='discussion';view.get('editorThreadType').onchange();view.get('editorDestination').value='existing-discussion';view.get('editorDestination').onchange();view.get('editorThreadNumber').value='19';}
  await sendComment(view);assert.notEqual(saved.at(-1).comment.updatedAt,before,change);assert.equal(saved.at(-1).expectedUpdatedAt,before,change);view.workspace.dispose();}
+});
+
+
+test('ordinary sheet navigation preserves only a matching highlighted net and clears unrelated selections',()=>{
+ const content=name=>`(kicad_sch (version 20250114) (global_label "${name}" (at 0 0) (uuid "g")) (wire (pts (xy 0 0) (xy 10 0)) (uuid "w")))`;
+ const files=[{path:'root.kicad_sch',content:content('SUPPLY')},{path:'child.kicad_sch',content:content('SUPPLY')},{path:'other.kicad_sch',content:content('OTHER')}],selections=[];let active=files[0].path;
+ const view=workspaceRuntime(undefined,{pcb:false,files,currentFile:()=>active,openSheet:path=>{active=path;},onSelection:value=>selections.push(value)});view.load();view.get('netList').children[0].click();
+ view.workspace.followSheet('child.kicad_sch');assert.equal(view.canvas.netHighlight.name,'SUPPLY');assert.equal(view.canvas.netHighlight.path,'child.kicad_sch');assert.equal(selections.at(-1).kind,'net');
+ view.workspace.followSheet('other.kicad_sch');assert.equal(view.canvas.netPrimitives.size,0);assert.equal(selections.at(-1).items.length,0);view.workspace.dispose();
+});
+
+
+test('net matching-sheet navigation retains inspector scroll, collapsed sections and keyboard focus across interim redraws',()=>{
+ const content='(kicad_sch (version 20250114) (global_label "SUPPLY" (at 0 0) (uuid "g")) (wire (pts (xy 0 0) (xy 10 0)) (uuid "w")))',files=[{path:'root.kicad_sch',content},{path:'child.kicad_sch',content}];let active=files[0].path,view;
+ view=workspaceRuntime(undefined,{pcb:false,files,currentFile:()=>active,openSheet:path=>{active=path;const next=require('../schematic-renderer.js').build(require('../design-diff.js').parse(content),path);view.canvas.design=next;view.canvas.primitives=next.primitives;view.get('propertiesPane').scrollTop=0;view.workspace.draw();}});view.load();view.get('netList').children[0].click();
+ const pane=view.get('propertiesPane'),list=view.get('propertyList'),replace=list.replaceChildren.bind(list);list.replaceChildren=(...children)=>{pane.scrollTop=0;pane.scrollLeft=0;return replace(...children);};
+ const section=title=>list.children.find(node=>node.children[0]?.textContent===title),connections=view.get('netMembers').children.find(node=>node.tagName==='DETAILS');section('Wiring').open=false;connections.open=false;pane.scrollTop=640;pane.scrollLeft=17;
+ const link=section('Matching sheets').children.find(node=>node.getAttribute('data-sheet-path')==='child.kicad_sch');view.document.activeElement=link;link.click();
+ assert.equal(active,'child.kicad_sch');assert.equal(view.get('selectedName').textContent,'SUPPLY');assert.equal(view.canvas.netHighlight.path,'child.kicad_sch');assert.equal(pane.scrollTop,640);assert.equal(pane.scrollLeft,17);assert.equal(section('Wiring').open,false);assert.equal(connections.open,false);assert.equal(section('Matching sheets').children.find(node=>node.getAttribute('data-sheet-path')==='child.kicad_sch').focused,true);view.workspace.dispose();
+});
+
+test('net instance navigation keeps the properties query and allows subsequent scroll changes to persist',()=>{
+ const content='(kicad_sch (global_label "SUPPLY" (at 0 0) (uuid "g")) (wire (pts (xy 0 0) (xy 10 0)) (uuid "w")))',files=[{path:'root.kicad_sch',content},{path:'child.kicad_sch',content}];let active=files[0].path;
+ const view=workspaceRuntime(undefined,{pcb:false,files,currentFile:()=>active,openSheet:path=>{active=path;view.get('propertiesPane').scrollTop=0;}});view.load();view.get('netList').children[0].click();const pane=view.get('propertiesPane'),search=view.get('propertySearch');search.value='wire';search.oninput();pane.scrollTop=210;
+ view.workspace.followSheet('child.kicad_sch');assert.equal(search.value,'wire');assert.equal(pane.scrollTop,210);assert.equal(search.disabled,false);assert.equal(view.get('propertySearchStatus').hidden,false);
+ pane.scrollTop=80;view.workspace.followSheet('root.kicad_sch');assert.equal(pane.scrollTop,80);assert.equal(search.value,'wire');view.workspace.dispose();
+});
+
+
+test('received cross-selections update hidden properties without opening an unpinned inspector',()=>{
+ const view=workspaceRuntime();view.load();const selections=[
+ {kind:'part',path:'board.kicad_pcb',uuid:'fp',reference:'R1'},
+ {kind:'pin',path:'board.kicad_pcb',ownerUuid:'fp',uuid:'pad',reference:'R1',pinNumber:'1'},
+ {kind:'net',path:'board.kicad_pcb',netName:'SIGNAL'},
+ {kind:'object',path:'board.kicad_pcb',uuid:'pad'},
+ {kind:'group',items:[{kind:'part',path:'board.kicad_pcb',uuid:'fp',reference:'R1'}]}];
+ for(const selection of selections){assert.equal(view.workspace.applyWindowSelection(selection),true);assert.equal(view.get('designInspector').hidden,true,selection.kind+' must not open the unpinned receiver');assert.ok(view.canvas.netPrimitives.size>0);}
+ assert.equal(view.workspace.highlightRelated({kind:'part',reference:'R1',uuid:'symbol-uuid',path:'root.kicad_sch'}),true);assert.equal(view.get('designInspector').hidden,true);assert.equal(view.get('selectedName').textContent,'R1');
+ view.get('propertiesButton').click();assert.equal(view.get('designInspector').hidden,false);view.workspace.dispose();
+});
+
+test('pinned properties update on cross-selection and existing unpinned visibility is retained',()=>{
+ const view=workspaceRuntime();view.load();view.get('propertiesButton').click();
+ view.workspace.applyWindowSelection({kind:'net',path:'board.kicad_pcb',netName:'SIGNAL'});assert.equal(view.get('designInspector').hidden,false);assert.equal(view.get('selectedName').textContent,'SIGNAL');
+ view.get('pinProperties').click();view.workspace.applyWindowSelection({kind:'part',path:'board.kicad_pcb',uuid:'fp',reference:'R1'});assert.equal(view.get('designInspector').hidden,false);assert.equal(view.get('pinProperties').attributes['aria-pressed'],'true');assert.equal(view.get('selectedName').textContent,'R1');
+ view.get('pinProperties').click();view.get('closeInspector').click();view.workspace.applyWindowSelection({kind:'net',path:'board.kicad_pcb',netName:'SIGNAL'});assert.equal(view.get('designInspector').hidden,true);
+ view.get('objectList').children.find(row=>row.textContent.includes('R1')).click();assert.equal(view.get('designInspector').hidden,false,'local inspection remains available after passive cross-selection');view.workspace.dispose();
+});
+
+
+test('pin selection inside a probe back-highlights without opening the unpinned main inspector',()=>{
+ let probe;const view=workspaceRuntime(undefined,{quickView:{mount:config=>{probe=config;return{open(){},dispose(){}};}}});view.load();view.get('objectList').children[0].click();const entry=probe.getEntries()[0],pad=entry.design.primitives.find(p=>p.kind==='pad'),pin=probe.resolveSelection(entry,pad,'pin');view.get('closeInspector').click();
+ probe.onSelect(entry,pin);assert.ok(view.canvas.netPrimitives.has(pad));assert.equal(view.get('designInspector').hidden,true);assert.equal(view.get('selectedName').textContent,'R1.1');view.workspace.dispose();
+});
+
+
+test('pad selection properties identify U3.1, retain component fields and survive redraw and part selection',()=>{
+ const source='(kicad_pcb (net 1 "SIGNAL") (footprint "IC" (layer "F.Cu") (at 10 20) (uuid "u3") (property "Reference" "U3") (property "Value" "OPAMP") (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "SIGNAL") (uuid "p1")) (pad "A12" smd rect (at 0 2) (size 1 1) (layers "F.Cu") (net 1 "SIGNAL") (uuid "pa12"))))',view=workspaceRuntime(undefined,{source});view.load();
+ const select=number=>view.workspace.applyWindowSelection({kind:'pin',path:'board.kicad_pcb',ownerUuid:'u3',reference:'U3',pinNumber:number});
+ assert.equal(select('1'),true);assert.equal(view.get('selectedName').textContent,'U3.1');assert.match(view.get('selectedKind').textContent,/Pad 1 of U3/);assert.match(view.get('propertyList').textContent,/Selected pad.*U3.1/);assert.match(view.get('propertyList').textContent,/OPAMP/);
+ view.workspace.draw();assert.equal(view.get('selectedName').textContent,'U3.1');assert.match(view.get('propertyList').textContent,/Selected pad/);
+ assert.equal(select('A12'),true);assert.equal(view.get('selectedName').textContent,'U3.A12');assert.match(view.get('selectedKind').textContent,/Pad A12 of U3/);
+ view.workspace.applyWindowSelection({kind:'part',path:'board.kicad_pcb',uuid:'u3',reference:'U3'});assert.equal(view.get('selectedName').textContent,'U3');assert.doesNotMatch(view.get('propertyList').textContent,/Selected pad/);view.workspace.dispose();
+});
+
+
+test('schematic terminal Properties shows component.pin and resets when a net is selected',()=>{
+ const content=fs.readFileSync(path.join(__dirname,'fixtures/kicad8/custom_fields.kicad_sch'),'utf8'),view=workspaceRuntime(undefined,{pcb:false,files:[{path:'root.kicad_sch',content}]});view.load();
+ assert.equal(view.workspace.applyWindowSelection({kind:'pin',path:'root.kicad_sch',ownerUuid:'8e574303-eef9-471f-8bf9-dbda319f7a68',reference:'R1',pinNumber:'1'}),true);assert.equal(view.get('selectedName').textContent,'R1.1');assert.match(view.get('selectedKind').textContent,/Pin 1 of R1/);assert.match(view.get('propertyList').textContent,/Selected pin.*R1.1/);
+ view.get('focusSelected').click();assert.equal(view.get('selectedName').textContent,'R1.1');assert.match(view.get('propertyList').textContent,/Selected pin/);
+ view.get('netList').children[0].click();assert.doesNotMatch(view.get('selectedKind').textContent,/Pin 1/);assert.doesNotMatch(view.get('propertyList').textContent,/Selected pin/);view.workspace.dispose();
 });

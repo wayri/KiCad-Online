@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "KiCad Online",
-  "version": "0.12.93",
+  "version": "0.12.94",
   "description": "Browser-only KiCad schematic and PCB review on GitHub, GitLab.com and configured GitLab servers, with issue comments.",
   "host_permissions": [],
   "background": {

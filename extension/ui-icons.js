@@ -55,6 +55,7 @@
     dock:'M3 4h18v16H3z M15 4v16 M6 12h6m-3-3 3 3-3 3',
     testpoints:'M3 17h18 M7 17V9m10 8V9 M4 6a3 3 0 1 0 6 0 3 3 0 0 0-6 0z M14 6a3 3 0 1 0 6 0 3 3 0 0 0-6 0z M12 17v5',
     comment:'M3 4h18v12H9l-5 4v-4H3z M7 8h10m-10 4h7',
+    'comment-add':'M7 4h10a3 3 0 0 1 3 3v7a3 3 0 0 1-3 3H9l-5 4V7a3 3 0 0 1 3-3z M9 10h6m-3-3v6',
     ruler:'M3 16 16 3l5 5L8 21z M7 12l3 3m0-6 3 3m0-6 3 3',
     grid:'M4 4h16v16H4z M4 9h16M4 15h16M9 4v16M15 4v16',
     flip:'M3 5h7v14H3z M15 5h6v14h-6 M12 2v20 M16 9l3 3-3 3',

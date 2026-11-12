@@ -88,9 +88,16 @@ body:has(#signinAvailability){font-size:14px;max-width:48rem;margin:16px auto;pa
 #commentsSidebar .note{padding:8px 10px;border-radius:6px;margin:6px 0;border-width:1px;border-left-width:3px}#commentsSidebar .note h3{font-size:13px;letter-spacing:normal;text-transform:none;line-height:1.35}#commentsSidebar .note>strong,#commentsSidebar .note>small{font-size:10px;font-weight:400;color:var(--muted,#7b8899);line-height:1.35}#commentsSidebar .note .inspector-actions{gap:4px;padding-top:5px;margin-top:5px;flex-wrap:wrap}#commentsSidebar .note button{min-height:28px;font-size:11px;padding:3px 6px}#commentsSidebar .note p{font-size:12px;line-height:1.45;margin:5px 0}.note-more-actions{position:relative}.note-more-actions>summary{padding:3px 8px;cursor:pointer;list-style:none}.note-more-actions>div{display:flex;flex-wrap:wrap;gap:4px;padding:6px;border:1px solid var(--line,#7b8899);border-radius:5px}.comment-post-review{width:min(430px,calc(100vw - 24px));padding:12px;border-radius:9px}.comment-post-review :is(button,input,select){min-height:30px!important;font-size:12px!important;padding:4px 7px!important}.comment-post-review :is(p,label){font-size:12px;line-height:1.4}.comment-post-review header{display:flex;align-items:center;justify-content:space-between}.content-rules-acceptance{display:flex;align-items:flex-start;gap:6px}.content-rules-acceptance input{flex:0 0 16px;min-height:16px!important}
 
 /* Compact review actions keep values readable on touch and desktop. */
-.kicad-field-table .field-comment-action,.bom-manager .field-comment-action,.bom-group .field-comment-action{display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;min-width:26px;width:26px;min-height:26px;height:26px;padding:4px;margin-inline-start:6px;opacity:.75;float:none}
-.field-comment-action svg{width:16px;height:16px;flex:none}
-.field-comment-action:hover,.field-comment-action:focus-visible{opacity:1}
+.kicad-field-table td:has(>.field-comment-action),.bom-manager td:has(>.field-comment-action),.bom-group td:has(>.field-comment-action){position:relative;padding-inline-end:32px;min-height:28px}
+.kicad-field-table .field-comment-action,.bom-manager .field-comment-action,.bom-group .field-comment-action{position:absolute;inset-inline-end:3px;top:3px;display:inline-flex;align-items:center;justify-content:center;min-width:24px;width:24px;min-height:24px;height:24px;padding:5px;margin:0;border:1px solid transparent;border-radius:5px;background:transparent;box-shadow:none;color:var(--muted,#7b8899);opacity:1;float:none}
+.field-comment-action svg{width:13px;height:13px;flex:none}
+.field-comment-action:hover{color:var(--text,#e6e9ef);background:var(--raised,#292d36);border-color:var(--line,#42515c)}
+.field-comment-action:focus-visible{color:var(--text,#e6e9ef);outline:2px solid var(--accent,#59d6bf);outline-offset:1px}
+@media(pointer:coarse){
+ .kicad-field-table td:has(>.field-comment-action),.bom-manager td:has(>.field-comment-action),.bom-group td:has(>.field-comment-action){padding-inline-end:44px;padding-block:12px}
+ .kicad-field-table .field-comment-action,.bom-manager .field-comment-action,.bom-group .field-comment-action{width:36px;min-width:36px;height:36px;min-height:36px;top:4px}
+ .field-comment-action svg{width:15px;height:15px}
+}
 
 /* Transient header menus escape narrow action clusters and stay dismissible. */
 body .revision-picker-panel{position:fixed;right:auto;bottom:auto;max-width:calc(100vw - 16px);max-height:calc(100dvh - 16px);min-width:0;box-sizing:border-box;overflow:auto;overscroll-behavior:contain;white-space:normal}

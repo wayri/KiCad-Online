@@ -11,6 +11,11 @@ function pages(sheets, links) {
 }
 const link = (path, target, uuid, label = uuid) => ({path, uuid, label, properties: {Sheetfile: target}});
 
+test('miniature hierarchy paths use bounded quadratic curves and reject invalid coordinates',()=>{
+ const {pathData}=require('../sheet-hierarchy-links.js'),points=[{x:0,y:0},{x:0,y:40},{x:100,y:40},{x:100,y:80}];
+ const path=pathData(points);assert.match(path,/^M 0 0 L 0 28 Q 0 40 12 40/);assert.match(path,/Q 100 40 100 52 L 100 80$/);assert.equal(pathData([{x:0,y:0},{x:NaN,y:1}]),'');assert.equal(pathData([points[0],points[0]]),'');
+});
+
 test('saved ancestry draws directional page-edge links with exact parent and child instance identities', () => {
   const graph = build(pages(['root.kicad_sch', 'child.kicad_sch', 'leaf.kicad_sch'], [
     link('root.kicad_sch', 'child.kicad_sch', 'child', 'Controller'),

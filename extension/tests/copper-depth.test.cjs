@@ -1,5 +1,16 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const quality=()=>import('../spike/renderQuality.mjs');
+
+test('pad and via cap bias dominates coplanar tracks at face-on and grazing slopes while walls remain unbiased',async()=>{
+ const {copperDepthPolicy}=await quality(),track=copperDepthPolicy('track'),pad=copperDepthPolicy('pad','cap'),via=copperDepthPolicy('via','cap');
+ for(const slope of [0,1e-8,1e-5,.001,.1,1,100,10000])for(const bits of [16,24,32]){
+  const unit=1/(2**bits-1),depth=p=>slope*p.polygonOffsetFactor+p.polygonOffsetUnits*unit;
+  assert.ok(depth(pad)<depth(track)-unit,'pad wins with a depth-unit interpolation margin');assert.ok(depth(via)<depth(pad)-unit);
+  assert.ok(-2*slope-16*unit<depth(via),'selection tint stays in front of the copper caps');
+ }
+ for(const role of ['pad','via']){const wall=copperDepthPolicy(role,'wall');assert.equal(wall.polygonOffset,false);assert.equal(wall.polygonOffsetFactor,0);assert.equal(wall.polygonOffsetUnits,0);}
+ assert.throws(()=>copperDepthPolicy('pad','unknown'),/surface kind/);
+});
 test('overlapping copper has deterministic depth precedence on both board faces',async()=>{
  const {copperDepthPolicy}=await quality(),roles=['zone','track','pad','via'];
  const values=roles.map(role=>copperDepthPolicy(role));

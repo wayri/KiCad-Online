@@ -32,6 +32,52 @@ function harness(overrides={}){
 const thread=(number=1,extra={})=>({kind:'issue',number,title:'Review power stage',state:'open',id:String(number),author:'owner',body:'Root description',createdAt:'2026-10-27T04:00:00.000Z',updatedAt:'2026-10-27T04:00:00.000Z',comments:[{id:'12',author:'reviewer',body:'Check **U3**',createdAt:'2026-10-27T04:10:00.000Z',updatedAt:'2026-10-27T04:10:00.000Z',canReply:true,canEdit:false}],capabilities:{create:true,reply:true,edit:true,reactions:false},...extra});
 const event=(key,extra={})=>({key,preventDefault(){this.prevented=true;},...extra});
 
+test('opt-in Enter review honors newline, IME composition and existing confirmation boundaries',async()=>{
+ const h=harness({enterToSend:true,confirmSend:async()=>false});h.api.render(thread());const input=h.type('Review this');
+ for(const extra of [{shiftKey:true},{isComposing:true},{keyCode:229},{altKey:true}]){const key=event('Enter',extra);input.onkeydown(key);assert.equal(key.prevented,undefined);}
+ const enter=event('Enter');input.onkeydown(enter);await new Promise(setImmediate);assert.equal(enter.prevented,true);assert.equal(h.requests.length,0);assert.equal(input.value,'Review this');
+ assert.match(h.find('chat-keyboard-hint').textContent,/Shift\+Enter/);assert.match(h.find('chat-send').title,/\(Enter\)/);
+ h.options.confirmSend=async()=>true;input.onkeydown(event('Enter'));await new Promise(setImmediate);assert.equal(h.requests.length,1);assert.equal(h.requests[0].payload.confirmedSend,true);h.api.dispose();
+});
+
+test('suggestions win over Enter sending and expose keyboard selection without trapping Tab',()=>{
+ const h=harness({enterToSend:true});h.api.render(thread());const input=h.type('Ask @rev'),list=h.find('chat-mention-suggestions');
+ const tab=event('Tab');input.onkeydown(tab);assert.equal(tab.prevented,undefined);
+ input.onkeydown(event('ArrowUp'));assert.equal(input.getAttribute('aria-activedescendant'),list.children[0].id);assert.equal(list.children[0].getAttribute('aria-selected'),'true');
+ input.onkeydown(event('Enter'));assert.equal(input.value,'Ask @reviewer ');assert.equal(input.getAttribute('aria-activedescendant'),undefined);assert.equal(h.requests.length,0);
+ h.type('Ask @rev');h.events.get('keydown')(event('Escape'));assert.equal(list.hidden,true);assert.equal(h.requests.length,0);h.api.dispose();
+});
+
+test('compact metadata preserves full dates and discoverable participant filters',()=>{
+ const h=harness();h.api.render(thread());const stamp=h.find('chat-time');assert.equal(stamp.dateTime,thread().createdAt);assert.equal(stamp.title,new Date(thread().createdAt).toLocaleString());assert.equal(stamp.getAttribute('aria-label'),stamp.title);
+ assert.equal(stamp.textContent,new Date(thread().createdAt).toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'}));assert.equal(walk(h.container).filter(n=>n.className==='chat-date-divider').length,1);
+ assert.equal(h.find('chat-participants').parentElement,h.find('chat-options-menu'));assert.equal(h.find('chat-provider-link').parentElement,h.find('chat-options-menu'));assert.equal(h.find('chat-participant-summary').textContent,'2 participants');
+ const participant=h.find('chat-participant');participant.focus();participant.onclick();assert.equal(h.doc.activeElement.textContent,participant.textContent);assert.equal(h.doc.activeElement.getAttribute('aria-pressed'),'true');h.api.dispose();
+});
+
+test('a refresh with new content preserves focused message action and the composer selection',()=>{
+ const h=harness();h.api.render(thread());const input=h.type('Unfinished draft');input.setSelectionRange(2,7);const reply=h.find('chat-reply-action'),menu=reply.parentElement.parentElement;menu.children[0].onclick(event('click'));reply.focus();
+ const next=thread();next.comments.push({...next.comments[0],id:'55',body:'Another message'});h.api.render(next);
+ assert.equal(h.doc.activeElement.className,'chat-reply-action');assert.equal(h.doc.activeElement.parentElement.parentElement.open,true);assert.equal(input.value,'Unfinished draft');assert.equal(input.selectionStart,2);assert.equal(input.selectionEnd,7);h.api.dispose();
+});
+
+test('refresh keeps the visible message anchored when earlier content grows',()=>{
+ const h=harness();h.api.render(thread());const list=h.find('chat-messages');list.scrollTop=80;
+ Object.getPrototypeOf(list).getBoundingClientRect=function(){
+  if(this===list)return {top:0,bottom:200};
+  const articles=list.children.filter(node=>node.messageKey),rootHeight=articles[0]?.textContent.includes('Root expanded')?160:80;
+  const top=(this.messageKey?.startsWith('root:')?0:rootHeight)-list.scrollTop;return {top,bottom:top+(this.messageKey?.startsWith('root:')?rootHeight:80)};
+ };
+ h.api.render(thread(1,{body:'Root expanded with more content'}));assert.equal(list.scrollTop,160);assert.equal(list.children.find(node=>node.messageKey==='message:12').getBoundingClientRect().top,0);h.api.dispose();
+});
+
+test('tag suggestions are ranked, keyboard-inserted and discard stale host results',async()=>{
+ let finish;const queries=[],h=harness({enterToSend:true,onTags:({query,thread})=>{queries.push({query,thread});return new Promise(resolve=>{finish=resolve;});}});h.api.render(thread());const input=h.type('Check #po'),pending=h.timers.at(-1)();
+ h.type('Check #si');finish(['power']);await pending;assert.equal(h.find('chat-mention-suggestions').hidden,true);
+ const current=h.timers.at(-1)();finish(['power','signal','signal','<script>']);await current;const list=h.find('chat-mention-suggestions');assert.equal(list.hidden,false);assert.equal(list.getAttribute('aria-label'),'Tag suggestions');assert.deepEqual(list.children.map(row=>row.textContent),['#signal']);
+ input.onkeydown(event('ArrowDown'));input.onkeydown(event('Tab'));assert.equal(input.value,'Check #signal ');assert.equal(h.requests.length,0);assert.deepEqual(queries[1],{query:'si',thread:{kind:'issue',number:1}});h.api.dispose();
+});
+
 test('unchanged polling preserves expanded message controls and focus; new messages preserve existing controls',()=>{
  const h=harness();h.api.render(thread());const menu=h.find('chat-message-more');menu.children[0].onclick(event('click'));menu.children[0].focus();
  h.api.render(thread());assert.equal(h.find('chat-message-more'),menu);assert.equal(menu.open,true);assert.equal(h.doc.activeElement,menu.children[0]);
@@ -152,6 +198,15 @@ test('new messages preserve reading position and offer Jump latest rather than f
 });
 const latestTimer=h=>h.timers.findLast(fn=>!!fn);
 const tick=h=>{const at=h.timers.findLastIndex(fn=>!!fn),fn=h.timers[at];assert.ok(fn,'a timer is scheduled');h.timers[at]=null;return fn();};
+test('polling keeps the visible sync label stable throughout a read and preserves message nodes for transport-only changes',async()=>{
+ let finish;const h=harness();h.api.render(thread());h.type('Keep this draft');const list=h.find('chat-messages'),article=list.children[0],status=h.find('chat-sync-status'),label=status.textContent;list.scrollTop=175;
+ h.options.onRead=()=>new Promise(resolve=>{finish=resolve;});const pending=tick(h);await new Promise(setImmediate);
+ assert.equal(status.textContent,label);assert.equal(status.getAttribute('aria-label'),'Syncing comments…');
+ h.api.render(thread(1,{fetchedAt:Date.now(),warnings:['Fresh website read'],capabilities:{...thread().capabilities,verifiedAt:Date.now()}}));
+ assert.equal(list.children[0],article);assert.equal(list.scrollTop,175);assert.equal(h.byId('chatMessageText').value,'Keep this draft');
+ finish(true);await pending;assert.equal(status.textContent,label);assert.match(status.getAttribute('aria-label'),/^Synced/);
+ const changed=thread();changed.comments[0].body='Updated on GitHub';h.api.render(changed);assert.match(list.textContent,/Updated on GitHub/);
+});
 test('automatic refresh is enabled by default, visible-only and preserves drafts and reading position',async()=>{
  const h=harness();h.api.render(thread());h.type('Unsent message');const list=h.find('chat-messages');list.scrollTop=0;
  assert.equal(h.byId('chatAutoRefresh').checked,true);assert.equal(latestTimer(h).delay,3000);
@@ -185,7 +240,7 @@ test('compact chat shows only its header icons and +/Send strip until tools are 
  let back=0,settings=0,close=0;const h=harness({onBack:()=>back++,onSettings:()=>settings++,onClose:()=>close++,onAccount:()=>{}});h.api.render(thread());
  assert.equal(h.byId('chatMessageText').rows,2);assert.equal(h.find('chat-search').hidden,true);assert.equal(h.find('chat-options-menu').hidden,true);assert.equal(h.find('chat-composer-options').hidden,true);
  assert.deepEqual(h.find('chat-compose-actions').children.map(node=>node.className),['chat-attachment-toggle','chat-format-toggle','chat-send']);
- assert.deepEqual(h.find('chat-header').children.map(node=>node.className),['chat-back','chat-heading','review-state-badge chat-thread-badge','chat-options-toggle','chat-provider-link']);
+ assert.deepEqual(h.find('chat-header').children.map(node=>node.className),['chat-back','chat-heading','review-state-badge chat-thread-badge','chat-options-toggle']);
  assert.equal(h.find('chat-thread-meta').parentElement,h.find('chat-options-menu'));assert.equal(h.find('chat-search-toggle').parentElement,h.find('chat-options-menu'));assert.equal(h.find('chat-close').parentElement,h.find('chat-options-menu'));assert.equal(h.find('chat-format-tools').hidden,true);assert.equal(h.find('chat-send').getAttribute('aria-label'),'Review and send');
  assert.equal(h.find('chat-refresh').parentElement,h.find('chat-options-menu'));assert.equal(h.find('chat-account').parentElement,h.find('chat-options-menu'));assert.equal(h.byId('chatAutoRefresh').parentElement.parentElement,h.find('chat-options-menu'));
  assert.equal(h.find('chat-save-draft').parentElement,h.find('chat-composer-options'));assert.equal(h.find('chat-attach-context').parentElement.parentElement,h.find('chat-composer-options'));
@@ -206,7 +261,7 @@ test('optional pane pin action stays in More, follows host state and never sends
  let pinned=false,calls=0;const h=harness({onPin:()=>{pinned=!pinned;calls++;},isPinned:()=>pinned});h.api.render(thread());
  const pin=h.find('chat-pin');assert.equal(pin.parentElement,h.find('chat-options-menu'));h.find('chat-options-toggle').onclick();assert.equal(pin.textContent,'Pin pane');pin.onclick();assert.equal(pinned,true);assert.equal(pin.textContent,'Unpin pane');assert.equal(pin.getAttribute('aria-pressed'),'true');assert.equal(h.find('chat-options-menu').hidden,true);
  h.find('chat-options-toggle').onclick();pin.onclick();assert.equal(pinned,false);assert.equal(pin.textContent,'Pin pane');assert.equal(calls,2);assert.equal(h.requests.length,0);
- pinned=true;h.find('chat-options-toggle').onclick();assert.equal(pin.textContent,'Unpin pane');assert.equal(h.find('chat-header').children.length,5);
+ pinned=true;h.find('chat-options-toggle').onclick();assert.equal(pin.textContent,'Unpin pane');assert.equal(h.find('chat-header').children.length,4);
 });
 test('tool popovers dismiss outside or Escape, search resets on close, and closing options does not stop enabled polling',()=>{
  const h=harness();h.api.render(thread());h.find('chat-options-toggle').onclick();h.byId('chatAutoRefresh').checked=true;h.byId('chatAutoRefresh').onchange();const polling=latestTimer(h);

@@ -1,6 +1,10 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const {validSelection,relatedPart,symbolUuid,qualifiedNetName,relatedNet,relatedGroup}=require('../paired-review.js');
 const part=(kind,ref,uuid,path='root.kicad_sch',linked)=>({kind,reference:ref,uuid,path,saved:{tree:[kind,...(linked?[["path",{quoted:'/root/'+linked}]]:[])]}});
+test('individual geometry identities require a safe source path and exact UUID only',()=>{
+ assert.equal(validSelection({kind:'object',path:'board.kicad_pcb',uuid:'via-1'}),true);
+ for(const value of [{kind:'object',path:'../board.kicad_pcb',uuid:'via-1'},{kind:'object',path:'board.kicad_pcb'},{kind:'object',path:'board.kicad_pcb',uuid:'via-1',netName:'VCC'}])assert.equal(validSelection(value),false);
+});
 test('cross-probing prefers saved PCB schematic identity over renamed reference',()=>{
  const fp=part('footprint','R9','fp','board.kicad_pcb','sym');
  assert.equal(symbolUuid(fp),'sym');

@@ -27,6 +27,8 @@ Open extension Options and choose **Open local KiCad workspace**. Use **Open fil
 
 Enable **Parallel views** and choose a drawing for each pane to inspect schematic and PCB together. Matching saved part/net identities support cross-probing. Reimport browser-picked files after changing them externally: the viewer holds a saved snapshot. The optional loopback launcher has a separate **Reload saved project** action. See [local browser workspace](LOCAL-VIEWER.md).
 
+Opening a project starts in its matching schematic, or its sole identifiable schematic. A PCB-only project starts in layout. Explicit drawing links keep the requested file. When several schematics could be the entry sheet, choose one from the project files. Settings and other project files remain available from **Project**.
+
 For online review, open a supported GitHub/GitLab repository file page. Allow the extension access to the intended host. Private browser-session reads have provider-specific limits; publishing remote reviews requires a connected account and permissions. See [Git hosts and accounts](GIT-HOSTS.md) and [GitHub sign-in](GITHUB-SIGNIN.md).
 
 ### VS Code
@@ -227,8 +229,16 @@ unresolved ancestry remains visible without inventing parent relationships.
 The compact **Sheet tree** box at the bottom of the schematic viewer provides an
 interactive overview. Click a node to focus that page in All sheets, or navigate
 to it from a single-sheet view. Blue marks the current sheet; gold marks sheets
-containing the highlighted net. Use **−** to minimize or **×** to close it. Reopen
-it through the spanner **More tools → Setup → Show sheet tree**.
+containing the highlighted net. Scroll over the graph or use its **+ / −** buttons
+to zoom, drag the graph to pan, and use **Fit** to restore the overview. Drag the
+header to move the box within the drawing pane. Maximize it for a larger hierarchy,
+minimize it with the header **−**, or close it with **×**. Reopen it through the
+spanner **More tools → Setup → Show sheet tree**.
+
+Entering a sheet clears object and sheet-group selections. A highlighted net stays
+highlighted when it has a matching connection in the destination sheet; otherwise
+nothing is selected. The **Theme** button switches the interface and drawing in
+all open panes. **T** switches only the drawing theme.
 Select a part or net, or double-click a sheet to enter it. Reused files retain
 their placement stack. **Hierarchy links** and **Net links** can be toggled
 independently. Relationship paths use the page gutters rather than running
@@ -337,6 +347,16 @@ megapixels; they are not native KiCad vector plots. PDF/image saving currently
 requires the browser viewer. **BoM CSV…** opens the BoM manager, where columns,
 filters and grouping can be reviewed before **Import / export → Export visible CSV**.
 BoM text export also supports the app's existing save dialog.
+
+### Saved graphic styles
+
+The unreleased candidate preserves saved schematic stroke, fill and text RGBA colours, outline/background/colour fills, hatching and dash styles. Explicit colours are independent of the drawing theme. Without a saved colour, light schematics use KiCad's standard colour roles; dark mode supplies contrasting defaults. PCB graphics use their layer colours and saved solid/outline fill and stroke styles. Symbol background fills use the body-background colour rather than the page colour.
+
+Hatch previews use a bounded repeating pattern with 4 mm spacing and 40% opacity measured in the KiCad 10.0.6 reference export; very small screen spacing is clamped for readability. Imported native theme settings and pixel-identical hatch/font rendering are not claimed. Selection highlighting can temporarily override source colours.
+
+### 3D exploded view
+
+Use the **Explode** slider on the 3D ribbon to separate saved copper layers. Component models follow their board side, via walls span their endpoint layers, and selection highlights and open 3D probes follow the separation. Return the slider to **0%** to restore the assembly. This is visual spacing: the substrate stays centered and saved board coordinates remain unchanged. This control is part of the unreleased candidate.
 
 ### 3D lighting
 

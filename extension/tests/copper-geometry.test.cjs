@@ -2,6 +2,21 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 const project=path.resolve(__dirname,'../..'),roots=[project],git=path.join(project,'.git');if(fs.existsSync(git)&&fs.statSync(git).isFile()){const value=/^gitdir:\s*(.+)/.exec(fs.readFileSync(git,'utf8'))?.[1];if(value)roots.push(path.resolve(project,value,'../../..'));}
 const threePath=roots.flatMap(root=>[path.join(root,'extension/node_modules/three/build/three.module.js'),path.join(root,'.vizdiff/build-deps/node_modules/three/build/three.module.js')]).find(fs.existsSync),helper=()=>import('../spike/copperGeometry.mjs'),close=(a,b,t=1e-8)=>assert.ok(Math.abs(a-b)<=t,`${a} != ${b}`);
 const area=points=>points.slice(1).reduce((sum,b,i)=>sum+points[i][0]*b[1]-b[0]*points[i][1],0)/2;
+
+test('real pad extrusion routes horizontal lids and vertical bore/outer walls to separate depth materials',{skip:!threePath},async()=>{
+ const THREE=await import(pathToFileURL(threePath).href),{copperCapMaterials}=await import('../spike/renderQuality.mjs'),shape=new THREE.Shape();shape.moveTo(-2,-1);shape.lineTo(2,-1);shape.lineTo(2,1);shape.lineTo(-2,1);shape.closePath();const hole=new THREE.Path();hole.absarc(0,0,.4,0,Math.PI*2,true);shape.holes.push(hole);
+ const geometry=new THREE.ExtrudeGeometry(shape,{depth:.035,bevelEnabled:false,curveSegments:16}),positions=geometry.attributes.position.array.slice(),normals=geometry.attributes.normal;
+ for(const role of ['pad','via']){const materials=copperCapMaterials(THREE,role,{color:0xc9ad67,metalness:.5,roughness:.4});assert.equal(materials.length,2);assert.ok(materials[0].polygonOffsetFactor<0);assert.equal(materials[1].polygonOffset,false);assert.equal(materials[0].color.getHex(),materials[1].color.getHex());
+  for(const group of geometry.groups)for(let i=group.start;i<group.start+group.count;i++){const z=Math.abs(normals.getZ(i));assert.equal(group.materialIndex,z>.99?0:1);}
+  for(const side of [1,-1]){const mesh=new THREE.Mesh(geometry,materials);mesh.position.z=side*.8;mesh.updateMatrixWorld();const hit=new THREE.Raycaster(new THREE.Vector3(1,0,side*4),new THREE.Vector3(0,0,-side)).intersectObject(mesh)[0];assert.ok(hit);assert.equal(hit.face.materialIndex,0);assert.equal(mesh.material[hit.face.materialIndex],materials[0]);}
+  materials.forEach(m=>m.dispose());
+ }assert.deepEqual(geometry.attributes.position.array,positions);geometry.dispose();
+});
+
+test('split cap/wall materials survive translucent selection and restore the exact source materials',{skip:!threePath},async()=>{
+ const THREE=await import(pathToFileURL(threePath).href),{copperCapMaterials}=await import('../spike/renderQuality.mjs'),{createSelectionAppearance}=await import('../spike/selectionAppearance.mjs'),geometry=new THREE.BoxGeometry(),materials=copperCapMaterials(THREE,'pad',{color:0xc9ad67}),mesh=new THREE.InstancedMesh(geometry,materials,1);mesh.userData.records=[{uuid:'pad',net:'GND'}];mesh.setMatrixAt(0,new THREE.Matrix4());const appearance=createSelectionAppearance(THREE,()=>[mesh]),sourcePolicies=materials.map(m=>[m.polygonOffset,m.polygonOffsetFactor,m.polygonOffsetUnits]);
+ appearance.update(()=>false,true);assert.ok(Array.isArray(mesh.material));assert.notEqual(mesh.material,materials);assert.ok(mesh.material[0].polygonOffsetFactor<0);assert.equal(mesh.material[1].polygonOffset,false);appearance.restore();assert.equal(mesh.material,materials);assert.deepEqual(materials.map(m=>[m.polygonOffset,m.polygonOffsetFactor,m.polygonOffsetUnits]),sourcePolicies);appearance.dispose();geometry.dispose();materials.forEach(m=>m.dispose());
+});
 test('circular tessellation scales to radius and reports its bounded error or explicit limit',async()=>{
  const {circularTessellation}=await helper();let prior=0;
  for(const radius of [.05,.2,1,3,100]){const plan=circularTessellation(radius);assert.ok(plan.segments>=24&&plan.segments<=128);assert.ok(plan.segments>=prior);prior=plan.segments;close(plan.error,radius*(1-Math.cos(Math.PI/plan.segments)));assert.equal(plan.limited,plan.error>.0025);}

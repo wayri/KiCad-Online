@@ -3,7 +3,7 @@
   "use strict";
   const Compatibility=root.KiCadFileCompatibility||(typeof module==="object"&&module.exports?require("./file-compatibility.js"):null);
   const COLOR = { page: "#a0a0a0", symbol: "#840000", pin: "#840000",
-    wire: "#008400", bus: "#000080", label: "#008400", text: "#000000" };
+    wire: "#008400", bus: "#000080", label: "#008400", text: "#0000c2" };
   const PAPERS = { A0: [1189, 841], A1: [841, 594], A2: [594, 420], A3: [420, 297],
     A4: [297, 210], A5: [210, 148], USLetter: [279.4, 215.9], USLegal: [355.6, 215.9],
     USLedger: [431.8, 279.4] };
@@ -77,6 +77,7 @@
     return { bold: hasFlag(font, "bold"), italic: hasFlag(font, "italic"),
       ...(finite(fontWidth) && fontWidth > 0 ? { fontWidth } : {}),
       ...(finite(fontHeight) && fontHeight > 0 ? { fontHeight } : {}),
+      ...(savedColor(font)&&savedColor(font)!=="rgba(0,0,0,0)"?{sourceColor:savedColor(font),color:savedColor(font)}:{}),
       ...(scalar(font, "face") ? { fontFace: scalar(font, "face") } : {}),
       ...(scalar(font, "thickness") ? { textThickness: scalar(font, "thickness") } : {}),
       lineSpacing: 1.5,
@@ -88,13 +89,55 @@
     const width = scalar(stroke, "width") ?? scalar(node, "width");
     return finite(width) && width > 0 ? width : fallback;
   }
+  function savedColor(node) {
+    const rgba=form(node,"color")?.slice(1).map(value);
+    if(!rgba||rgba.length!==4||rgba.some(n=>!finite(n))||rgba.slice(0,3).some(n=>n<0||n>255))return undefined;
+    const [r,g,b,a]=rgba;return `rgba(${r},${g},${b},${Math.max(0,Math.min(1,a))})`;
+  }
+  function graphicStyle(node) {
+    const stroke=form(node,"stroke"),sourceColor=savedColor(stroke),fill=form(node,"fill"),fillColor=savedColor(fill),lineStyle=scalar(stroke,"type");
+    return {...(sourceColor&&sourceColor!=="rgba(0,0,0,0)"?{sourceColor,color:sourceColor}:{}),...(fillColor?{fillColor}:{}),...(["dash","dot","dash_dot","dash_dot_dot"].includes(lineStyle)?{lineStyle}:{})};
+  }
   function fillType(node) {
     const type = scalar(form(node, "fill"), "type");
-    return ["outline", "background"].includes(type) ? type : undefined;
+    return ["outline", "background", "color", "hatch", "reverse_hatch", "cross_hatch"].includes(type) ? type : undefined;
   }
   function pathPoints(node) {
     const pts = form(node, "pts");
     return forms(pts, "xy").map((xy) => point([xy], "xy")).filter(Boolean);
+  }
+  const MAX_IMAGE_BYTES=4*1024*1024,MAX_IMAGE_PIXELS=16000000,MAX_TOTAL_IMAGE_BYTES=8*1024*1024,MAX_TOTAL_IMAGE_PIXELS=16000000;
+  const PNG_CRC=Uint32Array.from({length:256},(_,n)=>{for(let bit=0;bit<8;bit++)n=n&1?0xedb88320^(n>>>1):n>>>1;return n>>>0;});
+  function embeddedPNG(node,version){
+    const parts=form(node,"data")?.slice(1).map(value);let length=0;
+    if(!parts?.length||parts.some(part=>typeof part!=="string"||(length+=part.length)>Math.ceil(MAX_IMAGE_BYTES/3)*4))throw Error("Embedded PNG exceeds its 4 MiB limit or has invalid base64 data.");
+    const encoded=parts.join("");if(encoded.length%4||! /^[A-Za-z0-9+/]*={0,2}$/.test(encoded))throw Error("Embedded image is not base64 PNG data.");
+    const binary=atob(encoded);if(binary.length>MAX_IMAGE_BYTES||btoa(binary)!==encoded)throw Error("Embedded PNG data is oversized or not canonical base64.");
+    const bytes=Uint8Array.from(binary,char=>char.charCodeAt(0));if(bytes.length<45||[137,80,78,71,13,10,26,10].some((n,i)=>bytes[i]!==n))throw Error("Embedded image is not a PNG.");
+    const view=new DataView(bytes.buffer),read=at=>view.getUint32(at),chunkType=at=>String.fromCharCode(...bytes.subarray(at,at+4));let width=0,height=0,physicalX=null,ended=false,hasData=false,chunks=0;
+    for(let at=8;at<bytes.length;){
+      if(++chunks>4096||at+12>bytes.length)throw Error("Embedded PNG chunk structure is invalid.");
+      const size=read(at),type=chunkType(at+4),end=at+12+size;if(end>bytes.length||!/^[A-Za-z]{4}$/.test(type))throw Error("Embedded PNG chunk is truncated or invalid.");
+      let crc=0xffffffff;for(let i=at+4;i<end-4;i++)crc=PNG_CRC[(crc^bytes[i])&255]^(crc>>>8);if(((crc^0xffffffff)>>>0)!==read(end-4))throw Error("Embedded PNG checksum is invalid.");
+      if(type==="IHDR"){
+        if(at!==8||size!==13)throw Error("Embedded PNG has an invalid header.");width=read(at+8);height=read(at+12);
+        const depth=bytes[at+16],color=bytes[at+17],depths={0:[1,2,4,8,16],2:[8,16],3:[1,2,4,8],4:[8,16],6:[8,16]};
+        if(!width||!height||width*height>MAX_IMAGE_PIXELS||!depths[color]?.includes(depth)||bytes[at+18]!==0||bytes[at+19]!==0||bytes[at+20]>1)throw Error("Embedded PNG exceeds 16 megapixels or uses an invalid header.");
+      }else if(at===8)throw Error("Embedded PNG header is missing.");
+      else if(type==="pHYs"){
+        if(size!==9||physicalX!==null)throw Error("Embedded PNG physical resolution is invalid.");if(bytes[at+16]===1)physicalX=read(at+8);else if(bytes[at+16]!==0)throw Error("Embedded PNG resolution unit is invalid.");
+      }else if(type==="IDAT")hasData=true;
+      else if(type==="IEND"){if(size||end!==bytes.length||!hasData)throw Error("Embedded PNG end marker is invalid.");ended=true;}
+      else if(["acTL","fcTL","fdAT","iCCP","zTXt","iTXt"].includes(type))throw Error("Animated PNGs and compressed image metadata are not supported in the bounded preview.");
+      else if(type[0]===type[0].toUpperCase()&&type!=="PLTE")throw Error("Embedded PNG has an unsupported critical chunk.");
+      at=end;
+    }
+    if(!ended)throw Error("Embedded PNG end marker is missing.");
+    // KiCad parseImage preserves three saved-scale eras. PNG pHYs is pixels/m;
+    // pre-20260623 wxWidgets resolution conversion truncated pixels/cm first.
+    let ppi=300;if(physicalX!==null&&physicalX/100>1){const corrected=Math.round(physicalX*.0254),legacy=Math.floor(physicalX/100)>1?Math.round(Math.floor(physicalX/100)*2.54):corrected;ppi=version<=20230121?300:version<20260623?legacy:corrected;}
+    if(!Number.isFinite(ppi)||ppi<1||ppi>1000000)throw Error("Embedded PNG resolution exceeds the preview limit.");
+    return {dataUrl:"data:image/png;base64,"+encoded,pixelWidth:width,pixelHeight:height,ppi,bytes:bytes.length};
   }
   function pageSettings(ast, warn) {
     const paper = form(ast, "paper"), name = value(paper?.[1]) || "A4";
@@ -117,7 +160,7 @@
     if (!Array.isArray(rootAST) || typeOf(rootAST) !== "kicad_sch") {
       throw new Error("Schematic renderer requires a parsed kicad_sch root.");
     }
-    const primitives = [], warnings = [], seenWarnings = new Set();
+    const primitives = [], warnings = [], seenWarnings = new Set();let imageBytes=0,imagePixels=0,imageCount=0;
     const compatibility=Compatibility?.inspect(rootAST);
     warnings.push(...(compatibility?.warnings||[]));
     const warn = (message) => { if (!seenWarnings.has(message)) { seenWarnings.add(message); warnings.push(message); } };
@@ -174,11 +217,15 @@
     warn("Custom .kicad_wks layouts are not rendered; the KiCad default drawing sheet is shown.");
     if (page.titleBlock.comments.slice(4).some(Boolean)) warn("The KiCad default drawing sheet displays only comments 1–4.");
     function drawGraphic(node, map, owner, color = COLOR.symbol) {
-      const kind = typeOf(node), width = lineWidth(node, 0.15), fill = fillType(node);
+      const kind = typeOf(node), width = lineWidth(node, 0.15), fill = fillType(node);owner={...owner,...graphicStyle(node)};
       if (kind === "polyline" || kind === "wire" || kind === "bus") {
         const points = pathPoints(node).map(map);
-        if (points.length > 1) emit({ type: "polyline", points, color, width, ...owner });
+        if (points.length > 1) emit({ type: "polyline", points, color, width, ...(fill ? { fill } : {}), ...owner });
         else warn(`${kind} without two points was skipped.`);
+      } else if (kind === "bezier") {
+        const points = pathPoints(node);
+        if (points.length !== 4) { warn("Bezier without four valid control points was skipped."); return; }
+        emit({ type: "bezier", points: points.map(map), color, width, ...(fill ? { fill } : {}), ...owner });
       } else if (kind === "rectangle") {
         const a = point(node, "start"), b = point(node, "end");
         if (!a || !b) { warn("Rectangle without start/end was skipped."); return; }
@@ -193,7 +240,39 @@
       } else if (kind === "arc") {
         const start = point(node, "start"), mid = point(node, "mid"), end = point(node, "end");
         if (!start || !mid || !end) { warn("Legacy or incomplete arc without start/mid/end was skipped."); return; }
-        emit({ type: "arc", start: map(start), mid: map(mid), end: map(end), color, width, ...owner });
+        emit({ type: "arc", start: map(start), mid: map(mid), end: map(end), color, width, ...(fill ? { fill } : {}), ...owner });
+      } else if (kind === "text_box") {
+        if (isHidden(node)) return;
+        const at = point(node, "at") || point(node, "start"), size = point(node, "size"), savedEnd = point(node, "end");
+        const end = savedEnd || (at && size ? { x: at.x + size.x, y: at.y + size.y } : null);
+        if (!at || !end || at.x === end.x || at.y === end.y) { warn("Text box without valid position/size was skipped."); return; }
+        const textOwner={...owner};for(const key of ["color","sourceColor","lineStyle","fillColor"])delete textOwner[key];
+        const left=Math.min(at.x,end.x),right=Math.max(at.x,end.x),top=Math.min(at.y,end.y),bottom=Math.max(at.y,end.y),sizeMM=fontSize(node),style=fontStyle(node),strokeWidth=scalar(form(node,"stroke"),"width"),border=!(finite(strokeWidth)&&strokeWidth<0);
+        emit({type:"polygon",points:[{x:left,y:top},{x:right,y:top},{x:right,y:bottom},{x:left,y:bottom}].map(map),color,width,stroke:border,...(fill?{fill}:{}),...owner});
+        const marginForm=form(node,"margins"),fallbackMargin=sizeMM*.75+(border?width/2:0),margins=marginForm?.slice(1).map(value);
+        if(margins&& (margins.length!==4||margins.some(n=>!finite(n)||n<0))){warn("Text box with invalid saved margins has no rendered text.");return;}
+        const [ml,mt,mr,mb]=margins||[fallbackMargin,fallbackMargin,fallbackMargin,fallbackMargin],inner={left:left+ml,top:top+mt,right:right-mr,bottom:bottom-mb};
+        if(inner.right<=inner.left||inner.bottom<=inner.top){warn("Text box margins leave no text area.");return;}
+        const angle=((value(form(node,"at")?.[3])||0)%360+360)%360;
+        if(angle!==0&&angle!==90){warn("Text box with unsupported non-horizontal/non-vertical text angle has no rendered text.");return;}
+        const vertical=angle===90,available=vertical?inner.bottom-inner.top:inner.right-inner.left,span=vertical?inner.right-inner.left:inner.bottom-inner.top,raw=resolveText(value(node[1]),owner),rows=[];
+        if(raw.length>65536){warn("Text box exceeds its 65536-character preview limit; text was skipped.");return;}
+        // Saved margins and orientation follow SCH_TEXTBOX. Wrapping uses the
+        // same bounded stroke-font advance estimate as other preview labels.
+        for(const paragraph of raw.split(/\r\n|\r|\n/)){
+          let row="",advance=0;
+          for(const word of paragraph.match(/\S+\s*|\s+/g)||[]){
+            const wordWidth=textWidth(word,style.fontWidth||sizeMM);
+            if(row&&advance+wordWidth>available){rows.push(row.trimEnd());row="";advance=0;}
+            for(const char of word){const charWidth=textWidth(char,style.fontWidth||sizeMM)-(style.fontWidth||sizeMM)*.16;if(row&&advance+charWidth>available){rows.push(row.trimEnd());row="";advance=0;}row+=char;advance+=charWidth;}
+          }
+          rows.push(row.trimEnd());
+        }
+        const step=sizeMM*style.lineSpacing,height=sizeMM+Math.max(0,rows.length-1)*step,offset=style.baseline==='top'?0:style.baseline==='bottom'?span-height:(span-height)/2;
+        const inline=style.align==='left'?0:style.align==='right'?available:available/2;
+        const local=(x,y)=>vertical?{x:inner.left+y,y:inner.bottom-x}:{x:inner.left+x,y:inner.top+y};
+        for(let i=0;i<rows.length;i++){const p=local(inline,offset+sizeMM/2+i*step),origin=map(p),axis=map(local(inline+1,offset+sizeMM/2+i*step));text(origin,rows[i],sizeMM,Math.atan2(axis.y-origin.y,axis.x-origin.x)*180/Math.PI,color,{...textOwner,...style,baseline:"middle"});}
+        warn("Text-box wrapping uses preview font metrics; exact KiCad font layout may differ.");
       } else if (kind === "text") {
         if (isHidden(node)) return;
         const at = point(node, "at");
@@ -227,7 +306,7 @@
         const unitNumber = Number(match[1]), bodyStyle = Number(match[2]);
         if ((unitNumber === 0 || unitNumber === unit) && (bodyStyle === 0 || bodyStyle === style)) selected.push(nested);
       }
-      if (definition.some((item) => Array.isArray(item) && ["pin", "polyline", "rectangle", "circle", "arc", "text"].includes(typeOf(item)))) {
+      if (definition.some((item) => Array.isArray(item) && ["pin", "polyline", "rectangle", "circle", "arc", "bezier", "text", "text_box"].includes(typeOf(item)))) {
         selected.push(definition);
       }
       return selected;
@@ -308,6 +387,7 @@
       const ref = value(reference?.[2]) || "";
       const owner = { uuid, reference: ref, kind: "symbol" };
       const mainDefinition = definitions.get(id);
+      if(form(mainDefinition,"power"))owner.powerSymbol=true;
       const units = libraryUnits(id, finite(unit) ? unit : 1, finite(style) ? style : 1);
       if (!units.length) warn(`No drawable unit ${unit} style ${style} for ${id}.`);
       const graphicStart = primitives.length;
@@ -315,8 +395,8 @@
         if (!Array.isArray(item)) continue;
         const kind = typeOf(item);
         if (kind === "pin") renderPin(item, map, owner, mainDefinition || body);
-        else if (["polyline", "rectangle", "circle", "arc", "text"].includes(kind)) drawGraphic(item, map, owner);
-        else if (["bezier", "image"].includes(kind)) warn(`Symbol graphic ${kind} is not rendered.`);
+        else if (["polyline", "rectangle", "circle", "arc", "bezier", "text", "text_box"].includes(kind)) drawGraphic(item, map, owner);
+        else if (kind === "image") warn(`Symbol graphic ${kind} is not rendered.`);
       }
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       const include = (p) => {
@@ -395,7 +475,7 @@
       const at = point(node, "at"), size = point(node, "size"), uuid = ownId(node);
       if (!at || !size || size.x <= 0 || size.y <= 0) { warn("Sheet without valid position/size was skipped."); return; }
       const owner = { uuid, kind: "sheet" };
-      rect(at, { x: at.x + size.x, y: at.y + size.y }, COLOR.symbol, 0.15, owner);
+      rect(at, { x: at.x + size.x, y: at.y + size.y }, COLOR.symbol, lineWidth(node), {...owner,...graphicStyle(node)}, fillType(node)||((savedColor(form(node,"fill"))&&!savedColor(form(node,"fill")).endsWith(",0)"))?"color":undefined));
       for (const property of forms(node, "property")) {
         if (isHidden(property)) continue;
         const position = point(property, "at");
@@ -414,12 +494,12 @@
       else if (kind === "sheet") renderSheet(node);
       else if (kind === "wire" || kind === "bus") drawGraphic(node, identity, owner,
         kind === "bus" ? COLOR.bus : COLOR.wire);
-      else if (["polyline", "rectangle", "circle", "arc"].includes(kind)) drawGraphic(node, identity, owner, COLOR.text);
+      else if (["polyline", "rectangle", "circle", "arc", "bezier", "text_box"].includes(kind)) drawGraphic(node, identity, owner, "#0000c2");
       else if (kind === "junction") {
         const at = point(node, "at"), diameter = scalar(node, "diameter");
         if (at) emit({ type: "circle", x: at.x, y: at.y,
           r: finite(diameter) && diameter > 0 ? diameter / 2 : 0.5,
-          color: COLOR.wire, width: 0.15, fill: "outline", ...owner });
+          color: COLOR.wire, width: 0.15, fill: "outline", ...owner, ...(savedColor(node)&&savedColor(node)!=="rgba(0,0,0,0)"?{color:savedColor(node),sourceColor:savedColor(node)}:{}) });
       } else if (kind === "no_connect") {
         const at = point(node, "at");
         if (at) {
@@ -435,7 +515,17 @@
       } else if (kind === "bus_entry") {
         const at = point(node, "at"), size = point(node, "size");
         if (at && size) line(at, { x: at.x + size.x, y: at.y + size.y }, COLOR.bus, 0.3, owner);
-      } else if (["text_box", "image", "embedded_files", "rule_area"].includes(kind)) {
+      } else if (kind === "image") {
+        try{
+          const at=point(node,"at"),scale=scalar(node,"scale")??1,rotation=scalar(node,"rotate")??0,opacity=scalar(node,"opacity")??1;
+          if(!at||!finite(scale)||scale<=0||!finite(rotation)||!finite(opacity)||opacity<0||opacity>1)throw Error("Embedded PNG has invalid position, scale, rotation or opacity.");
+          if(imageCount>=16)throw Error("Schematic exceeds its 16-image preview limit.");
+          const png=embeddedPNG(node,Number(scalar(rootAST,"version"))||20230121),pixels=png.pixelWidth*png.pixelHeight;
+          if(imageBytes+png.bytes>MAX_TOTAL_IMAGE_BYTES||imagePixels+pixels>MAX_TOTAL_IMAGE_PIXELS)throw Error("Schematic exceeds its total 8 MiB / 16 megapixel image preview budget.");
+          const width=png.pixelWidth*25.4/png.ppi*scale,height=png.pixelHeight*25.4/png.ppi*scale;if(!finite(width)||!finite(height)||width>100000||height>100000)throw Error("Embedded PNG physical size exceeds the preview limit.");
+          const map=transform(at,rotation);emit({type:"image",dataUrl:png.dataUrl,pixelWidth:png.pixelWidth,pixelHeight:png.pixelHeight,points:[{x:-width/2,y:-height/2},{x:width/2,y:-height/2},{x:width/2,y:height/2},{x:-width/2,y:height/2}].map(map),opacity,...owner});imageBytes+=png.bytes;imagePixels+=pixels;imageCount++;
+        }catch(error){warn("Schematic image was not rendered: "+error.message);}
+      } else if (["embedded_files", "rule_area"].includes(kind)) {
         warn(`Schematic construct ${kind} is not rendered.`);
       }
     }

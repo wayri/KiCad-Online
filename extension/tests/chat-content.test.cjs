@@ -41,6 +41,15 @@ test('canonical validated annotation becomes message text and small source-bound
  assert.doesNotMatch(result.text,/Design context|kicad-review:v1|KiCad UUID|Repository \|/);
  const rendered=chat.render(document(),body);assert.match(rendered.textContent,/Earlier conversation/);assert.match(rendered.textContent,/decoupling/);assert.doesNotMatch(rendered.textContent,/symbol-uuid|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/);
 });
+
+test('legacy and compact provider posts both reverse-sync to content and unchanged location metadata',()=>{
+ for(const layout of ['legacy','compact'])for(const options of [{},{stateBadge:false},{severityBadge:false}]){
+  const note=sample(),body=comments.toMarkdown(note,{layout,...options}),result=chat.content(body);
+  assert.equal(result.text,note.text);assert.deepEqual(result.anchors,[comments.normalizeAnchor(note.anchor)]);
+  const edited=chat.content(body.replace('Check U3','Review edited on provider'));
+  assert.match(edited.text,/Review edited on provider/);assert.doesNotMatch(edited.text,/kicad-review:v1/);
+ }
+});
 test('malicious or invalid annotation metadata is rejected and never becomes executable DOM or a context card',()=>{
  const bad={...sample(),anchor:{...sample().anchor,file:'../private.kicad_sch'}};
  const result=chat.content('Visible message\n'+marker(bad)+'\n<!-- kicad-review:v1 not-valid-json -->');
@@ -55,7 +64,7 @@ test('markers inside fenced or inline code stay literal and do not create annota
  }
 });
 test('edited exported prose is retained rather than silently replaced with hidden metadata text',()=>{
- const exported=comments.toMarkdown(sample()).replace('### Check U3','### Important edited message');
+ const exported=comments.toMarkdown(sample()).replace('Check U3','Important edited message');
  const result=chat.content(exported);assert.equal(result.anchors.length,1);assert.match(result.text,/Important edited message/);assert.doesNotMatch(result.text,/kicad-review:v1/);
 });
 test('validated attachment URLs are returned without creating images or issuing requests',()=>{

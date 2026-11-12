@@ -81,7 +81,7 @@ test('GitHub body formats user text and drawing context safely while retaining t
  const note={...sample(),threadType:'discussion',severity:'major',state:'resolved',text:'Check **spacing** | fast\n@alice <script>alert(1)</script>',tags:['placement|clearance'],mentions:['alice'],
   anchor:{...sample().anchor,repository:'owner/repo',ref:'feature/review',file:'design/a (rev)#1.kicad_pcb',kind:'footprint',reference:'J1|A',variant:'prototype'}};
  const markdown=comments.toMarkdown(note);
- assert.ok(markdown.startsWith('## KiCad visual review\n\n> 🟠 **Major** · review severity\n> 🟣 **Resolved** · review state\n\n### Check '));
+ assert.ok(markdown.startsWith('Check '));assert.match(markdown,/<details><summary>Design context · Major · Resolved<\/summary>/);assert.doesNotMatch(markdown,/^## /m);
  assert.match(markdown, /Check.*\n@alice/s);
  assert.equal(markdown.includes('<script>'),false);
  assert.ok(markdown.includes('| Destination type | Discussion |'));
@@ -203,7 +203,7 @@ test('created date restrictions combine with type, state, severity, read, search
 test('five review levels preserve old notes, sort consistently and publish self-contained coloured severity banners',()=>{
  assert.deepEqual(comments.severityOptions.map(x=>x.value),['info','level-1','minor','major','critical']);
  const notes=comments.severityOptions.map(level=>({...sample(),id:'note-'+level.value,severity:level.value}));
- for(const [i,note]of notes.entries()){const level=comments.severityOptions[i],body=comments.toMarkdown(note);assert.ok(body.includes('> '+level.symbol+' **'+level.label+'** · review severity'));assert.ok(body.includes('| Severity | '+level.label+' |'));assert.deepEqual(comments.fromMarkdown(body),[comments.validateComment(note)]);assert.ok(!body.includes('shields.io'));assert.equal(comments.severityInfo(note.severity),level);}
+ for(const [i,note]of notes.entries()){const level=comments.severityOptions[i],body=comments.toMarkdown(note);assert.ok(body.includes('<summary>Design context · '+level.label+' · '));assert.ok(body.includes('| Severity | '+level.label+' |'));assert.deepEqual(comments.fromMarkdown(body),[comments.validateComment(note)]);assert.ok(!body.includes('shields.io'));assert.equal(comments.severityInfo(note.severity),level);}
  assert.deepEqual(comments.sortAndFilter(notes).map(x=>x.severity),['critical','major','minor','level-1','info']);assert.equal(comments.sortAndFilter(notes,{severity:'level-1'})[0].id,'note-level-1');
  assert.deepEqual(comments.parseComments(comments.exportComments(notes)),notes.map(comments.validateComment));for(const value of ['level1','Level 1','__proto__',0])assert.equal(comments.isSeverity(value),false);
  assert.equal(comments.validateComment(sample()).severity,'info');
@@ -211,7 +211,7 @@ test('five review levels preserve old notes, sort consistently and publish self-
 
 
 test('review states round-trip closed and skipped, infer provider state and retain legacy resolution filters',()=>{
- const states=['open','closed','skipped','resolved','wont-fix'];for(const state of states){const note={...sample(),state},body=comments.toMarkdown(note);assert.equal(comments.fromMarkdown(body)[0].state,state);assert.ok(body.includes(comments.stateInfo(state).symbol+' **'+comments.stateInfo(state).label+'** · review state'));}
+ const states=['open','closed','skipped','resolved','wont-fix'];for(const state of states){const note={...sample(),state},body=comments.toMarkdown(note);assert.equal(comments.fromMarkdown(body)[0].state,state);assert.ok(body.includes(' · '+comments.stateInfo(state).label+'</summary>'));}
  const note={...sample(),state:'open',github:{state:'closed'}};assert.equal(comments.effectiveState(note),'closed');assert.equal(comments.sortAndFilter([note],{state:'closed'}).length,1);assert.equal(comments.sortAndFilter([note],{state:'open'}).length,0);assert.equal(note.state,'open');assert.equal(comments.effectiveState({...note,state:'skipped'}),'skipped');assert.equal(comments.effectiveState({...note,state:'resolved',github:{state:'open'}}),'open');
  assert.equal(comments.effectiveState(note,['closed',null]),'open');assert.equal(comments.effectiveState(note,['closed','open']),'open');assert.equal(comments.effectiveState(note,['closed','closed']),'closed');assert.equal(comments.effectiveState({...sample(),state:'open',github:{state:'opened'}}),'open');
  assert.equal(comments.sortAndFilter(states.map(state=>({...sample(),id:state,state})),{state:'closed'}).length,3);assert.equal(comments.sortAndFilter([{...sample(),state:'resolved'}],{state:'resolved'}).length,1);assert.throws(()=>comments.validateComment({...sample(),state:'done'}),/state/);

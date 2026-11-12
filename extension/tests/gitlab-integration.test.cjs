@@ -165,7 +165,7 @@ test('issue publishing routes through GitLab policy and removing a host purges r
  const comment={id:'private-note',text:'Review U1 clearance',createdAt:'2026-10-04T01:00:00Z',threadType:'issue',anchor:{provider:'gitlab',host:HOST,repository:'group/private',ref:SHA,file:'board.kicad_pcb'}};
  const result=await h.send({type:'comment-publish',provider:'gitlab',host:HOST,comment,destination:'new-issue',title:'Clearance review'});
  assert.equal(result.ok,true,result.error);assert.equal(result.result.remoteRef.url,HOST+'/group/private/-/issues/9');
- const post=h.calls.find(c=>c.init.method==='POST');assert.ok(JSON.parse(post.init.body).description.includes('## KiCad visual review'));
+ const post=h.calls.find(c=>c.init.method==='POST');assert.ok(JSON.parse(post.init.body).description.startsWith(comment.text));assert.ok(JSON.parse(post.init.body).description.includes('<details><summary>Design context'));
  assert.equal((await h.send({type:'gitlab-host-remove',provider:'gitlab',host:HOST},h.options)).ok,true);
  assert.equal(h.scripts.size,0);assert.equal(h.granted.size,0);
  const vault=h.session.get('gitlab-review-vault-v1')||{};assert.equal(vault[HOST],undefined);

@@ -69,9 +69,16 @@ export function probeViewportPlan(width,height,deviceRatio=1){
 
 // Resolve overlapping manufactured copper in depth-buffer space without
 // moving saved pads, tracks, drill walls or component model interfaces.
-// Keep slope bias zero: extruded side walls can otherwise jump through caps.
-export function copperDepthPolicy(role) {
+// Extruded walls must not inherit cap slope bias: vertical walls can otherwise
+// jump through caps. Pad/via cap materials use the separate cap policy below.
+export function copperDepthPolicy(role,surface='all') {
   const rank = {zone:1,track:-1,pad:-2,via:-3}[role];
   if (typeof rank !== 'number') throw Error('Unknown copper surface role.');
-  return {polygonOffset:true,polygonOffsetFactor:0,polygonOffsetUnits:rank*2};
+  if(!['all','cap','wall'].includes(surface))throw Error('Unknown copper surface kind.');
+  return {polygonOffset:surface!=='wall',polygonOffsetFactor:surface==='cap'?rank/2:0,polygonOffsetUnits:surface==='wall'?0:rank*2};
+}
+
+/** Three.js ExtrudeGeometry assigns material 0 to lids and 1 to side walls. */
+export function copperCapMaterials(THREE,role,parameters){
+  return ['cap','wall'].map(surface=>new THREE.MeshStandardMaterial({...parameters,...copperDepthPolicy(role,surface)}));
 }

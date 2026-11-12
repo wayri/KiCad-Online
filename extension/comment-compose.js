@@ -49,6 +49,38 @@ const KiCadCommentCompose = (() => {
     return result;
   }
 
+  function tagAt(text,cursor) {
+    if(typeof text!=='string'||!Number.isInteger(cursor)||cursor<0||cursor>text.length)return null;
+    const clean=withoutCode(text),match=clean.slice(0,cursor).match(/(?:^|\s)#([A-Za-z][A-Za-z0-9_-]{0,39}|)$/);
+    if(!match)return null;
+    const start=cursor-match[1].length-1;let end=cursor;
+    while(end<clean.length&&/[A-Za-z0-9_-]/.test(clean[end]))end++;
+    if(end-start>41||/[/.@]/.test(clean[end]||''))return null;
+    return {start,end,query:match[1]};
+  }
+  function autocompleteAt(text,cursor) {
+    const mention=mentionAt(text,cursor);if(mention)return {...mention,kind:'mention'};
+    const tag=tagAt(text,cursor);return tag?{...tag,kind:'tag'}:null;
+  }
+  function insertTag(text,cursor,tag) {
+    if(typeof tag!=='string'||!/^[A-Za-z][A-Za-z0-9_-]{0,39}$/.test(tag))throw Error('Invalid tag.');
+    const token=tagAt(text,cursor);if(!token)return {text,cursor};
+    const replacement='#'+tag+' ',rest=text.slice(token.end);
+    return {text:text.slice(0,token.start)+replacement+(rest.startsWith(' ')?rest.slice(1):rest),cursor:token.start+replacement.length};
+  }
+  function rankSuggestions(items,query,kind='mention') {
+    const term=String(query||'').toLowerCase().slice(0,255),seen=new Set();
+    return (Array.isArray(items)?items:[]).slice(0,500).flatMap((item,index)=>{
+      const row=typeof item==='string'?(kind==='tag'?{name:item}:{login:item}):item;
+      if(!row||typeof row!=='object')return [];
+      const key=kind==='tag'?row.name:row.login;
+      if(typeof key!=='string'||!(kind==='tag'?/^[A-Za-z][A-Za-z0-9_-]{0,39}$/:gitlabLogin).test(key)||seen.has(key.toLowerCase()))return [];
+      seen.add(key.toLowerCase());const value=key.toLowerCase(),name=String(row.name||'').toLowerCase();
+      const score=!term?0:value===term?0:value.startsWith(term)?1:name.split(/\s+/).some(word=>word.startsWith(term))?2:value.includes(term)?3:name.includes(term)?4:99;
+      return score===99?[]:[{row,index,score}];
+    }).sort((a,b)=>a.score-b.score||a.index-b.index).slice(0,12).map(entry=>entry.row);
+  }
+
   async function normalizeCapture(blob, {decode = value => globalThis.createImageBitmap(value), createCanvas = (width,height) => {
     const canvas = globalThis.document.createElement('canvas'); canvas.width=width; canvas.height=height; return canvas;
   }} = {}) {
@@ -89,7 +121,7 @@ const KiCadCommentCompose = (() => {
     const current=()=>({...routes[index]});
     return {current,push(route){const value=clean(route);if(JSON.stringify(value)===JSON.stringify(routes[index]))return current();routes=routes.slice(0,index+1);routes.push(value);if(routes.length>limit)routes.shift();index=routes.length-1;return current();},back(){if(index>0)index--;return current();},forward(){if(index<routes.length-1)index++;return current();},canBack:()=>index>0,canForward:()=>index<routes.length-1,reset(){routes=[clean({page:'catalog'})];index=0;return current();}};
   }
-  return {titleFromText,mentionAt,insertMention,extractMentions,normalizeCapture,createNavigation};
+  return {titleFromText,mentionAt,insertMention,extractMentions,tagAt,autocompleteAt,insertTag,rankSuggestions,normalizeCapture,createNavigation};
 })();
 if (typeof globalThis === 'object') globalThis.KiCadCommentCompose=KiCadCommentCompose;
 if (typeof module === 'object' && module.exports) module.exports=KiCadCommentCompose;

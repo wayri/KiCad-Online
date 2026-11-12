@@ -7,7 +7,14 @@
     const dialog=document.createElement('dialog'),heading=document.createElement('header'),title=document.createElement('h2'),close=document.createElement('button'),trigger=document.createElement('button');
     dialog.id='navigationHelpDialog';dialog.className='navigation-help-dialog';dialog.setAttribute('aria-labelledby','navigationHelpTitle');title.id='navigationHelpTitle';title.textContent='Keyboard & navigation';
     close.type=trigger.type='button';close.textContent='Close';close.setAttribute('aria-label','Close navigation help');close.setAttribute('data-icon','close');trigger.id='navigationHelpButton';trigger.className='icon-only';trigger.textContent='Help';trigger.title='Keyboard & navigation (?)';trigger.setAttribute('aria-label','Keyboard and navigation help');trigger.setAttribute('data-icon','help');trigger.setAttribute('aria-haspopup','dialog');trigger.setAttribute('aria-controls',dialog.id);trigger.setAttribute('aria-expanded','false');
-    content.querySelector('summary')?.remove();content.hidden=false;content.open=true;heading.append(title,close);dialog.append(heading,content);document.body.append(dialog);toolbar.append(trigger);
+    close.className='icon-only';content.className='shortcut-help';const summary=document.createElement('summary');summary.hidden=true;
+    content.replaceChildren(summary);content.hidden=false;content.open=true;
+    for(const [name,rows]of [
+      ['Select & inspect',[['Click','Select a part or highlight its net'],['Shift + click','Select an individual pin, pad, via or object'],['Alt + click','Choose an overlapping object'],['Ctrl / ⌘ + click','Add or remove group items'],['E','Inspect properties'],['H / ` / ~','Highlight a net'],['D','Open the selected datasheet']]],
+      ['Navigate',[['Double-click / Enter','Open a subsheet'],['Alt + ← / →','Previous / next sheet'],['Alt + ↑ / Home','Parent / root sheet'],['Wheel / + / −','Zoom'],['Shift + F','Fit drawing or focused layer'],['Ctrl + Shift + F','Focus the drawing'],['Home','Fit page'],['Space','Center at the pointer']]],
+      ['View & review',[['R / Shift + R','Rotate 15° clockwise / counterclockwise'],['F','Flip or mirror'],['X / Y / Z','3D axis view; Shift reverses direction'],['P','Open a cross-probe'],['C','New comment'],['M','Measure'],['/','Search the project'],['T','Drawing theme'],['Esc','Clear highlights or exit a tool'],['?','Open or close this guide']]]
+    ]){const section=document.createElement('section'),caption=document.createElement('h3'),list=document.createElement('dl');caption.textContent=name;for(const [keys,description]of rows){const key=document.createElement('dt'),value=document.createElement('dd'),kbd=document.createElement('kbd');kbd.textContent=keys;key.append(kbd);value.textContent=description;list.append(key,value);}section.append(caption,list);content.append(section);}
+    const note=document.createElement('p');note.className='help-note';note.textContent='Read-only design review. Comments and view preferences remain available.';content.append(note);heading.append(title,close);dialog.append(heading,content);document.body.append(dialog);toolbar.append(trigger);
     const hide=()=>{if(!dialog.open)return;dialog.close();};
     const show=()=>{if(dialog.open)return;dialog.showModal();trigger.setAttribute('aria-expanded','true');close.focus();};
     const toggle=()=>dialog.open?hide():show();trigger.onclick=toggle;close.onclick=hide;
@@ -33,7 +40,7 @@
   function touchNetIndex(nets, path) {
     const index=new Map();
     for(const net of nets)if(net.path===path)for(const primitive of net.primitives||[]){
-      if(!['wire','junction','pin','label','global_label','hierarchical_label','track','arc','pad','via','zone','zone-outline'].includes(primitive.kind))continue;
+      if(!['wire','junction','pin','label','global_label','hierarchical_label','sheet-pin','symbol','symbol-property','track','arc','pad','via','zone','zone-outline'].includes(primitive.kind))continue;
       const linked=index.get(primitive)||[];if(!linked.some(n=>n.id===net.id))linked.push(net);index.set(primitive,linked);
     }
     return index;
@@ -325,8 +332,8 @@
     const contextColorsKey='kicad:keep-context-colors:v1';
     let keepContextColors=true;
     try{const saved=JSON.parse(root.localStorage?.getItem(contextColorsKey)||'null');if(typeof saved==='boolean')keepContextColors=saved;}catch{}
-    const netHighlightColorKey='kicad:net-highlight-color:v1';let netHighlightColor='accent';
-    try{if(root.localStorage?.getItem(netHighlightColorKey)==='layer')netHighlightColor='layer';}catch{}
+    const netHighlightColorKey='kicad:net-highlight-color:v1';let netHighlightColor='layer';
+    try{const saved=root.localStorage?.getItem(netHighlightColorKey);if(saved==='layer'||saved==='accent')netHighlightColor=saved;}catch{}
     const highlightMode=()=>keepContextColors?'bright':($('highlightStyle').value==='bright'?'dim':$('highlightStyle').value||'dim');
     let simulationReport=null,simulationSource=null,simulationTicket=0,simulationNet=null;
     const simulationView=root.KiCadSimulationResults?.mount({container:document.body,onOpen:()=>{if(simulationSource)root.KiCadEngineeringLauncher.open('analysis-viewer.html',{repository,ref:simulationSource.ref,file:simulationSource.path,...providerContext});}});
@@ -418,7 +425,7 @@
     const sidebarWidths={properties:300,comments:340,navigator:260};let activeSidebar="properties",commentTab="view",commentCategory="all";
     const sectionState=new Map(),resizeCleanups=[],pinnedSidebars=new Set(),dockButtons=new Map(),hideTimers=new Map(),hoveredSidebars=new Set(),hoverPreview=new Set(),draggingSidebars=new Set();let dockDisposed=false;
     function collapsible(title,nodes,open=true,key=title){
-      const details=make("details");details.className="sidebar-section";details.open=sectionState.has(key)?sectionState.get(key):open;
+      const details=make("details");details.className="sidebar-section";details.setAttribute("data-section-key",key);details.open=sectionState.has(key)?sectionState.get(key):open;
       details.append(make("summary",title),...nodes.filter(Boolean));details.addEventListener("toggle",()=>{if(!key.startsWith("property:")||!propertySearch.value.trim())sectionState.set(key,details.open);});return details;
     }
     const commentsSidebar=make("aside");commentsSidebar.id="commentsSidebar";commentsSidebar.className="review-sidebar";commentsSidebar.hidden=true;commentsSidebar.setAttribute("aria-label","Drawing comments");
@@ -444,6 +451,7 @@
     const addPane=make("section"),viewPane=make("section");addPane.id="addCommentPane";viewPane.id="viewCommentsPane";
     for(const [tab,id,pane]of [[addTab,"addCommentTab",addPane],[viewTab,"viewCommentsTab",viewPane]]){tab.id=id;tab.setAttribute("role","tab");tab.setAttribute("aria-controls",pane.id);pane.setAttribute("role","tabpanel");pane.setAttribute("aria-labelledby",id);commentTabs.append(tab);}
     const commentTools=make("div");commentTools.className="comment-tools";commentTools.append($("newComment"),$("pointComment"),$("areaComment"));
+    $('areaComment').textContent='Draw comment area';$('areaComment').setAttribute('aria-label','Draw comment area');
     const addHelp=make("p","Choose the selected object, a point or an area to add a comment. Your draft stays here when you switch tabs or collapse this sidebar.");addHelp.className="hint";
     addPane.append(addHelp,commentTools,$("commentEditor"));
     const control=id=>$(id).closest?.("label")||$(id);
@@ -465,6 +473,7 @@
     const commentHeading=heading('Comments',closeComments),commentNavigationBar=make('nav');commentNavigationBar.className='comment-navigation';commentNavigationBar.setAttribute('aria-label','Comment navigation');
     const commentBack=button('‹',()=>navigateComments(commentNavigation.back(),false)),commentForward=button('›',()=>navigateComments(commentNavigation.forward(),false)),commentHome=button('Home',()=>navigateComments({page:'catalog',category:commentCategory}));
     commentBack.id='commentBack';commentForward.id='commentForward';commentHome.id='commentHome';for(const [node,label]of [[commentBack,'Back in comments'],[commentForward,'Forward in comments'],[commentHome,'Issues and discussions home']]){node.title=label;node.setAttribute('aria-label',label);}commentNavigationBar.append(commentBack,commentForward,commentHome);
+    const drawCommentAreaButton=button('Draw comment area',()=>setCommentMode('area'));drawCommentAreaButton.id='drawCommentArea';drawCommentAreaButton.className='icon-only';drawCommentAreaButton.setAttribute('data-icon','area');drawCommentAreaButton.setAttribute('aria-label','Draw comment area');drawCommentAreaButton.title='Draw comment area on the drawing';drawCommentAreaButton.setAttribute('aria-pressed','false');commentNavigationBar.append(drawCommentAreaButton);
     let commentsFloating=false,commentFloatPosition={x:80,y:100};const commentFloat=button('Float',()=>setCommentsFloating(!commentsFloating));commentFloat.id='floatComments';commentFloat.setAttribute('aria-label','Float comments panel');commentHeading.insertBefore(commentFloat,closeComments);
     commentsSidebar.append(commentHeading,commentNavigationBar,$("commentsPane"),legacyControls);workspaceElement.append(commentsSidebar);
     propertiesSidebar.replaceChildren(heading("Properties",$("closeInspector")),$("propertiesPane"));
@@ -507,12 +516,12 @@
     mentionSource.id='mentionSource';mentionSource.setAttribute('aria-label','Mention account source');
     for(const [value,label]of [['repository',provider==='gitlab'?'Project members':'Contributors and assignees'],['users','Search other users']]){const option=make('option',label);option.value=value;mentionSource.append(option);}mentionSource.value='repository';
     mentionList.id='mentionSuggestions';mentionList.className='mention-suggestions';mentionStatus.id='mentionLookupStatus';mentionStatus.className='hint';mentionStatus.setAttribute('role','status');
-    const mentionsInput=$('commentMentions'),mentionsLabel=mentionsInput.closest?.('label')||mentionsInput;let mentionTimer=null,mentionGeneration=0,mentionDisposed=false;
+    const mentionsInput=$('commentMentions'),mentionsLabel=mentionsInput.closest?.('label')||mentionsInput;let mentionTimer=null,mentionGeneration=0,mentionDisposed=false;const knownCommentPeople=new Map();
     async function lookupMentions(){const run=++mentionGeneration;mentionList.replaceChildren();if(!remoteAvailable){mentionStatus.textContent=root.KiCadAndroidRuntime?'Enter @usernames manually. Account lookup requires a project opened through GitHub or GitLab.':'Enter @usernames manually. Account lookup is available in the browser extension.';return;}
       if(mentionSource.value==='users'&&mentionQuery.value.trim().replace(/^@/,'').length<2){mentionStatus.textContent='Type at least two username characters.';return;}
       mentionStatus.textContent='Finding people…';
       try{const result=await request('comment-mention-users',{repository:options.pullRepository||repository,query:mentionQuery.value,source:mentionSource.value});if(mentionDisposed||run!==mentionGeneration)return;
-        showInlineMentions(result.users||[]);for(const person of result.users||[]){const row=button(`@${person.login}${person.name?' · '+person.name:''} · ${(person.roles||[]).join(', ')}`,()=>{const values=mentionsInput.value.split(/[,\s]+/).map(v=>v.replace(/^@/,'')).filter(Boolean);if(!values.some(v=>v.toLowerCase()===person.login.toLowerCase())){if(values.length>=20){mentionStatus.textContent='At most 20 mentions per comment.';return;}values.push(person.login);}mentionsInput.value=values.map(v=>'@'+v).join(', ');mentionStatus.textContent=`Added @${person.login}. Notifications are sent only when posted.`;});row.className='mention-suggestion';mentionList.append(row);}
+        for(const person of result.users||[])if(person?.login)knownCommentPeople.set(person.login.toLowerCase(),person);while(knownCommentPeople.size>500)knownCommentPeople.delete(knownCommentPeople.keys().next().value);showInlineMentions(result.users||[]);for(const person of result.users||[]){const row=button(`@${person.login}${person.name?' · '+person.name:''} · ${(person.roles||[]).join(', ')}`,()=>{const values=mentionsInput.value.split(/[,\s]+/).map(v=>v.replace(/^@/,'')).filter(Boolean);if(!values.some(v=>v.toLowerCase()===person.login.toLowerCase())){if(values.length>=20){mentionStatus.textContent='At most 20 mentions per comment.';return;}values.push(person.login);}mentionsInput.value=values.map(v=>'@'+v).join(', ');mentionStatus.textContent=`Added @${person.login}. Notifications are sent only when posted.`;});row.className='mention-suggestion';mentionList.append(row);}
         mentionStatus.textContent=[result.users?.length?`${result.users.length} people found.`:'No matches. You can enter a username manually.',...(result.warnings||[])].join(' ');
       }catch(error){if(!mentionDisposed&&run===mentionGeneration)mentionStatus.textContent=error.message;}
     }
@@ -646,7 +655,8 @@
       locatedComment={...a,position,side};commentFocus?.show(locatedComment,label);draw();return true;
     }
     function confirmThreadState({thread,state}){return new Promise(resolve=>{const dialog=make('dialog'),header=make('header'),body=make('section'),footer=make('footer'),verb=state==='closed'?'Close':'Reopen';dialog.className='comment-post-review chat-send-review';dialog.setAttribute('aria-label','Review thread state change');let done=false;const finish=value=>{if(done)return;done=true;dialog.close?.();dialog.remove();resolve(value);};header.append(make('strong',verb+' '+thread.kind+' #'+thread.number),button('Close',()=>finish(false)));body.append(make('p',providerName+' · '+(collaboration?.repository||options.pullRepository||repository)),make('strong',thread.title||''),make('p','This changes the provider thread for everyone with access.'));footer.append(button('Cancel',()=>finish(false)),button(verb+' '+thread.kind,()=>finish(true)));dialog.append(header,body,footer);dialog.addEventListener('cancel',event=>{event.preventDefault();finish(false);});dialog.addEventListener('click',event=>{if(event.target===dialog)finish(false);});document.body.append(dialog);dialog.showModal();});}
-    if(remoteAvailable&&root.KiCadChatPanel){chatPanel=root.KiCadChatPanel.mount({document,host:root,container:threadMessages,provider,repository:options.pullRepository||repository,comments:KiCadReviewComments,request,getScope:chatScope,
+    function commentTagSuggestions({query='' }={}){return root.KiCadCommentCompose.rankSuggestions([...new Set([...notes,...remoteNotes].flatMap(note=>note.tags||[]))],query,'tag');}
+    if(remoteAvailable&&root.KiCadChatPanel){chatPanel=root.KiCadChatPanel.mount({document,host:root,container:threadMessages,provider,repository:options.pullRepository||repository,comments:KiCadReviewComments,request,getScope:chatScope,enterToSend:true,onTags:commentTagSuggestions,
       createAnnotation:(text,{id,severity,state,capture})=>{if(repository!=='local/workspace'&&options.pullRepository&&options.pullRepository!==repository)throw Error('This conversation is in the base repository while the drawing is from a fork. Send text here, or attach context in the source repository.');return KiCadReviewComments.validateComment({id,createdAt:new Date().toISOString(),text,severity,state,threadType:loadedThread?.kind||'issue',anchor:anchor(),...(capture?{capture}:{})});},
       onLocate:locateChatAnchor,onRead:(kind,number,{refresh=false}={})=>readThread(kind,number,{refresh,history:!refresh}),onSaveDraft:saveChatDraft,
       confirmThreadState,
@@ -667,10 +677,11 @@
     let inlineToken=null,inlineIndex=-1,pasteGeneration=0,pasteBusy=false,pastePreviewUrl=null;
     function releasePastePreview(){if(pastePreviewUrl){root.URL?.revokeObjectURL?.(pastePreviewUrl);pastePreviewUrl=null;}}
     function closeInlineMentions(){inlineMentions.hidden=true;inlineToken=null;inlineIndex=-1;$('commentText').setAttribute('aria-expanded','false');$('commentText').removeAttribute?.('aria-activedescendant');}
-    function chooseInlineMention(login){const box=$('commentText'),edit=root.KiCadCommentCompose?.insertMention(box.value,box.selectionStart??box.value.length,login);if(!edit)return;box.value=edit.text;box.setSelectionRange?.(edit.cursor,edit.cursor);closeInlineMentions();box.focus();$('editorTitle').value=root.KiCadCommentCompose.titleFromText(box.value);}
-    function showInlineMentions(users){inlineMentions.replaceChildren();inlineIndex=-1;if(!inlineToken)return;for(const [i,person]of users.slice(0,12).entries()){const row=button(`@${person.login}${person.name?' · '+person.name:''}`,()=>chooseInlineMention(person.login));row.id='inlineMentionOption'+i;row.setAttribute('role','option');row.setAttribute('aria-selected','false');inlineMentions.append(row);}inlineMentions.hidden=!inlineMentions.children.length;$('commentText').setAttribute('aria-expanded',String(!inlineMentions.hidden));}
-    $('commentText').addEventListener('input',()=>{const box=$('commentText');$('editorTitle').value=root.KiCadCommentCompose?.titleFromText(box.value)||'';inlineToken=root.KiCadCommentCompose?.mentionAt(box.value,box.selectionStart??box.value.length);mentionGeneration++;clearTimeout(mentionTimer);if(!inlineToken){closeInlineMentions();return;}mentionQuery.value=inlineToken.query;mentionSource.value=inlineToken.query.length>=2?'users':'repository';mentionTimer=setTimeout(lookupMentions,200);});
-    $('commentText').addEventListener('keydown',event=>{if(inlineMentions.hidden)return;if(['ArrowDown','ArrowUp'].includes(event.key)){event.preventDefault();event.stopPropagation();const size=inlineMentions.children.length;inlineIndex=inlineIndex<0?(event.key==='ArrowDown'?0:size-1):(inlineIndex+(event.key==='ArrowDown'?1:-1)+size)%size;for(const [i,row]of [...inlineMentions.children].entries())row.setAttribute('aria-selected',String(i===inlineIndex));$('commentText').setAttribute('aria-activedescendant',inlineMentions.children[inlineIndex].id);}else if(event.key==='Enter'&&inlineIndex>=0){event.preventDefault();event.stopPropagation();inlineMentions.children[inlineIndex].click();}else if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeInlineMentions();}});
+    function chooseInlineMention(login){const box=$('commentText'),active=root.KiCadCommentCompose.autocompleteAt(box.value,box.selectionStart??box.value.length);if(!active||JSON.stringify(active)!==JSON.stringify(inlineToken)){closeInlineMentions();return;}const edit=inlineToken?.kind==='tag'?root.KiCadCommentCompose.insertTag(box.value,box.selectionStart??box.value.length,login):root.KiCadCommentCompose?.insertMention(box.value,box.selectionStart??box.value.length,login);if(!edit)return;box.value=edit.text;box.setSelectionRange?.(edit.cursor,edit.cursor);closeInlineMentions();box.focus();$('editorTitle').value=root.KiCadCommentCompose.titleFromText(box.value);}
+    function showInlineMentions(users){inlineMentions.replaceChildren();inlineIndex=-1;if(!inlineToken)return;const tag=inlineToken.kind==='tag',rows=tag?commentTagSuggestions(inlineToken):root.KiCadCommentCompose.rankSuggestions([...knownCommentPeople.values(),...users],inlineToken.query,'mention');inlineMentions.setAttribute('aria-label',tag?'Tag suggestions':'People suggestions');for(const [i,person]of rows.entries()){const value=tag?person.name:person.login,row=button(`${tag?'#':'@'}${value}${!tag&&person.name?' · '+person.name:''}`,()=>chooseInlineMention(value));row.id='inlineMentionOption'+i;row.setAttribute('role','option');row.setAttribute('aria-selected','false');row.onpointerdown=event=>event.preventDefault();inlineMentions.append(row);}inlineMentions.hidden=!inlineMentions.children.length;$('commentText').setAttribute('aria-expanded',String(!inlineMentions.hidden));}
+    function suggestInlineComment(){const box=$('commentText');$('editorTitle').value=root.KiCadCommentCompose?.titleFromText(box.value)||'';inlineToken=root.KiCadCommentCompose?.autocompleteAt(box.value,box.selectionStart??box.value.length);mentionGeneration++;clearTimeout(mentionTimer);if(!inlineToken){closeInlineMentions();return;}showInlineMentions([]);if(inlineToken.kind==='tag')return;mentionQuery.value=inlineToken.query;mentionSource.value='repository';const text=box.value,cursor=box.selectionStart;mentionTimer=setTimeout(()=>{if(box.value===text&&box.selectionStart===cursor)void lookupMentions();},200);}
+    $('commentText').addEventListener('input',suggestInlineComment);$('commentText').addEventListener('click',suggestInlineComment);$('commentText').addEventListener('keyup',event=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(event.key))suggestInlineComment();});
+    $('commentText').addEventListener('keydown',event=>{if(event.isComposing||event.keyCode===229||inlineMentions.hidden)return;if(['ArrowDown','ArrowUp'].includes(event.key)){event.preventDefault();event.stopPropagation();const size=inlineMentions.children.length;inlineIndex=inlineIndex<0?(event.key==='ArrowDown'?0:size-1):(inlineIndex+(event.key==='ArrowDown'?1:-1)+size)%size;for(const [i,row]of [...inlineMentions.children].entries())row.setAttribute('aria-selected',String(i===inlineIndex));$('commentText').setAttribute('aria-activedescendant',inlineMentions.children[inlineIndex].id);}else if(['Enter','Tab'].includes(event.key)&&inlineIndex>=0){event.preventDefault();event.stopPropagation();inlineMentions.children[inlineIndex].click();}else if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeInlineMentions();}});
     $('commentText').addEventListener('paste',async event=>{const image=[...(event.clipboardData?.items||[])].find(item=>item.kind==='file'&&item.type?.startsWith('image/'))?.getAsFile?.()||[...(event.clipboardData?.files||[])].find(file=>file.type?.startsWith('image/'));if(!image||!editor)return;event.preventDefault();const ticket=++pasteGeneration,draft=editor;pasteBusy=true;releasePastePreview();try{pastePreviewUrl=root.URL?.createObjectURL?.(image)||null;}catch{}capturePreview();$('captureStatus').textContent='Preparing pasted screenshot…';try{const capture=await root.KiCadCommentCompose.normalizeCapture(image);if(ticket!==pasteGeneration||editor!==draft)return;editor.capture=capture;delete editor.attachments;releasePastePreview();capturePreview();}catch(error){if(ticket===pasteGeneration&&editor===draft){releasePastePreview();capturePreview();commentStatus(error.message,true);}}finally{if(ticket===pasteGeneration)pasteBusy=false;}});
     function colorCommentControls(){for(const [id,prefix]of [['editorThreadType','type'],['commentSeverity','severity'],['commentState','state']])$(id).className='comment-choice '+prefix+'-'+$(id).value;}
     $('commentSeverity').onchange=$('commentState').onchange=colorCommentControls;
@@ -700,7 +711,7 @@
         panel.hidden=!visible;panel.classList.toggle('pinned-sidebar',pinned);panel.classList.toggle('auto-hide-sidebar',!pinned);
         $(buttonId).setAttribute('aria-pressed',String(visible));$(buttonId).setAttribute('aria-expanded',String(visible));
         const dock=dockButtons.get(name);if(dock){dock.setAttribute('aria-expanded',String(visible));dock.setAttribute('aria-pressed',String(visible));dock.title='Open '+paneNames[name]+(pinned?' (pinned)':' (auto-hide)');}
-        const pin=$('pin'+name[0].toUpperCase()+name.slice(1));if(pin){pin.setAttribute('aria-pressed',String(pinned));pin.textContent=pinned?'Unpin':'Pin';pin.title=pinned?'Unpin to auto-hide this pane':'Pin this pane open';}
+        const pin=$('pin'+name[0].toUpperCase()+name.slice(1));if(pin){pin.setAttribute('aria-pressed',String(pinned));const label=pin.querySelector('.button-label');if(label)label.textContent=pinned?'Unpin':'Pin';else pin.textContent=pinned?'Unpin':'Pin';pin.setAttribute('aria-label',(pinned?'Unpin ':'Pin ')+paneNames[name]+' pane');pin.title=pinned?'Unpin to auto-hide this pane':'Pin this pane open';root.KiCadUIIcons?.decorate?.(pin);}
         if(!visible)continue;if(name==='comments'&&commentsFloating)continue;
         let panelWidth=Math.min(sidebarWidths[name],Math.max(120,width-88)),top=0,panelHeight=height;
         if(pinned){panelWidth=name==='navigator'?leftWidth:rightWidth;if(name!=='navigator'){const index=rightPinned.indexOf(name);panelHeight=height/rightPinned.length;top=index*panelHeight;}}
@@ -713,7 +724,9 @@
     function showNavigator(open=true){if(open)activatePane('navigator');cancelAutoHide('navigator');sidebarState.navigator=open;if(open)activeSidebar='navigator';layoutSidebars();}
     function hideSidebar(name){cancelAutoHide(name);sidebarState[name]=false;if(activeSidebar===name)activeSidebar=Object.keys(sidebarState).find(key=>sidebarState[key])||'properties';layoutSidebars();}
     function hideInspector(){hideSidebar('properties');hideSidebar('comments');}
-    function inspector(pane,tab){restoreFocusView();const name=pane==='properties'?'properties':'comments';activatePane(name);cancelAutoHide(name);sidebarState[name]=true;activeSidebar=name;if(tab)showCommentTab(tab);if(pane==='github'){showCommentTab('view');commentSettings.hidden=false;collaborationGroup.open=true;}layoutSidebars();if(name==='comments')annotationSync?.visibilityChanged();if(name==='comments'&&commentTab==='view'&&remoteAvailable&&!loadedThread&&!conversationLoaded&&!browseConversations.disabled){void loadConversations(false);}}
+    let crossSelectionDepth=0;
+    function withCrossSelection(update){crossSelectionDepth++;try{return update();}finally{crossSelectionDepth--;}}
+    function inspector(pane,tab){if(pane==='properties'&&crossSelectionDepth&&!pinnedSidebars.has('properties'))return;restoreFocusView();const name=pane==='properties'?'properties':'comments';activatePane(name);cancelAutoHide(name);sidebarState[name]=true;activeSidebar=name;if(tab)showCommentTab(tab);if(pane==='github'){showCommentTab('view');commentSettings.hidden=false;collaborationGroup.open=true;}layoutSidebars();if(name==='comments')annotationSync?.visibilityChanged();if(name==='comments'&&commentTab==='view'&&remoteAvailable&&!loadedThread&&!conversationLoaded&&!browseConversations.disabled){void loadConversations(false);}}
     function autoHide(name){
       if(dockDisposed)return;cancelAutoHide(name);if(pinnedSidebars.has(name)||name==='comments'&&commentsFloating)return;
       hideTimers.set(name,setTimeout(()=>{hideTimers.delete(name);const panel=$(paneIds[name]);if(!pinnedSidebars.has(name)&&!hoveredSidebars.has(name)&&!draggingSidebars.has(name)&&!panel.contains(document.activeElement))hideSidebar(name);},350));
@@ -728,7 +741,7 @@
         const tab=button(paneNames[name],()=>{if(hoverPreview.delete(name)){revealDock(name);return;}if(sidebarState[name])hideSidebar(name);else revealDock(name);});tab.id='dock'+name[0].toUpperCase()+name.slice(1);tab.className='dock-tab';tab.setAttribute('aria-controls',paneIds[name]);tab.setAttribute('aria-expanded','false');dockButtons.set(name,tab);rail.append(tab);
         tab.addEventListener('pointerenter',event=>{if(event.pointerType&&event.pointerType!=='mouse')return;if(!sidebarState[name])hoverPreview.add(name);hoveredSidebars.add(name);revealDock(name);});tab.addEventListener('pointerleave',event=>{if(event.pointerType&&event.pointerType!=='mouse')return;hoverPreview.delete(name);hoveredSidebars.delete(name);autoHide(name);});tab.addEventListener('focus',()=>cancelAutoHide(name));tab.addEventListener('blur',()=>autoHide(name));
         const panel=$(paneIds[name]),header=panel.querySelector(name==='navigator'?'.panel-heading':'.sidebar-heading');
-        const pin=button('Pin',()=>{if(pinnedSidebars.has(name))pinnedSidebars.delete(name);else pinnedSidebars.add(name);cancelAutoHide(name);layoutSidebars();});pin.id='pin'+name[0].toUpperCase()+name.slice(1);pin.setAttribute('aria-label','Pin '+paneNames[name]+' pane');pin.setAttribute('aria-pressed','false');header?.insertBefore(pin,header.children[header.children.length-1]);
+        const pin=button('Pin',()=>{if(pinnedSidebars.has(name))pinnedSidebars.delete(name);else pinnedSidebars.add(name);cancelAutoHide(name);layoutSidebars();});pin.id='pin'+name[0].toUpperCase()+name.slice(1);pin.className='icon-only';pin.setAttribute('data-icon','pin');pin.setAttribute('aria-label','Pin '+paneNames[name]+' pane');pin.setAttribute('aria-pressed','false');header?.insertBefore(pin,header.children[header.children.length-1]);
         const close=name==='navigator'?$('closeNavigator'):name==='properties'?$('closeInspector'):closeComments;close.textContent=edge==='left'?'‹':'›';close.setAttribute('data-icon',edge==='left'?'back':'forward');close.title='Collapse '+paneNames[name]+' to the side';close.setAttribute('aria-label','Collapse '+paneNames[name]+' pane to the side');
         panel.addEventListener('pointerenter',event=>{if(event.pointerType&&event.pointerType!=='mouse')return;hoveredSidebars.add(name);cancelAutoHide(name);});panel.addEventListener('pointerleave',event=>{if(event.pointerType&&event.pointerType!=='mouse')return;hoverPreview.delete(name);hoveredSidebars.delete(name);autoHide(name);});panel.addEventListener('pointerdown',()=>cancelAutoHide(name));panel.addEventListener('wheel',()=>cancelAutoHide(name),{passive:true});panel.addEventListener('scroll',()=>cancelAutoHide(name),true);panel.addEventListener('focusin',()=>cancelAutoHide(name));panel.addEventListener('focusout',()=>autoHide(name));
       }
@@ -799,7 +812,7 @@
       try{const at=KiCadReviewComments.normalizeAnchor({...anchor(object?.position,object),reviewTarget:{surface,field,value:String(value),...(references?{references}:{})}});editComment(null,at);}catch(error){commentStatus(error.message,true);inspector('comments');}
     }
     function fieldCommentButton(surface,field,value,object,references){
-      const action=button('',()=>commentOnField(surface,field,value,object,references));action.className='icon-only field-comment-action';action.setAttribute('data-icon','comment');action.title='Comment on '+field;action.setAttribute('aria-label','Comment on '+field);if(root.KiCadUIIcons)action.append(root.KiCadUIIcons.icon('comment'));else action.textContent='◇';return action;
+      const action=button('',()=>commentOnField(surface,field,value,object,references));action.className='icon-only field-comment-action';action.setAttribute('data-icon','comment-add');action.title='Comment on '+field;action.setAttribute('aria-label','Comment on '+field);if(root.KiCadUIIcons)action.append(root.KiCadUIIcons.icon('comment-add'));else action.textContent='+';return action;
     }
     function nativePropertyTable(entries,provenance={}){
       const table=make('table');table.className='kicad-field-table';table.setAttribute('aria-label','KiCad fields and values');
@@ -809,11 +822,32 @@
       fields.sort(([a],[b])=>{const rank=key=>{const index=priority.indexOf(key);return index<0?priority.length:index;};return rank(a)-rank(b);});
       const body=make('tbody');for(const [key,value]of fields.slice(0,256)){const row=make('tr');const cell=make('td'),comment=fieldCommentButton('property',key,String(value),selected);cell.append(make('span',String(value)),comment);const detail=provenance[key];if(detail){const badge=make('small',(detail.status==='unresolved'?'Unresolved variable':'Variable')+' · '+detail.variables.map(item=>item.name).join(', '));badge.className='property-variable-source';badge.title='Saved expression: '+detail.raw+'\n'+detail.variables.map(item=>item.name+' — '+item.source).join('\n');cell.append(badge);}row.append(make('th',key),cell);body.append(row);}table.append(body);$('propertyList').append(table);
     }
-    function properties() {
+    // A sheet switch can render an empty selection before selecting its target net.
+    // Preserve the inspector once around that transaction, including nested redraws.
+    let propertyUpdateDepth=0;
+    function keepPropertiesView(update){
+      const outer=propertyUpdateDepth++===0,pane=$('propertiesPane'),active=document.activeElement;
+      const snapshot=outer?{top:pane.scrollTop,left:pane.scrollLeft,focusPath:active&&propertiesSidebar.contains(active)?active.getAttribute?.("data-sheet-path"):null}:null;
+      if(outer&&!propertySearch.value.trim())for(const section of [...$('propertyList').children,...$('netMembers').children])if(section.tagName==='DETAILS'&&section.getAttribute('data-section-key'))sectionState.set(section.getAttribute('data-section-key'),section.open);
+      try{return update();}finally{
+        propertyUpdateDepth--;
+        if(snapshot){
+          if(snapshot.focusPath&&!propertiesSidebar.contains(active)){
+            for(const section of $('propertyList').children){const target=[...section.children].find(row=>row.getAttribute?.('data-sheet-path')===snapshot.focusPath);if(target){target.focus({preventScroll:true});break;}}
+          }
+          if(Number.isFinite(snapshot.top))pane.scrollTop=snapshot.top;
+          if(Number.isFinite(snapshot.left))pane.scrollLeft=snapshot.left;
+        }
+      }
+    }
+    function properties(){return keepPropertiesView(renderProperties);}
+    function renderProperties() {
+      const terminal=selectedPin||(selected?.kind==='pad'?{reference:selected.reference,pinNumber:selected.properties.Number,primitives:(getCanvas()?.primitives||[]).filter(p=>p.uuid===selected.uuid)}:null);
+      const terminalReference=terminal?.reference||selected?.reference||selected?.label||'',terminalName=terminal&&terminal.pinNumber!=null?terminalReference+'.'+terminal.pinNumber:null;
       try {
       $("propertyList").replaceChildren();$("selectionSummary").replaceChildren();$("netMemberList").replaceChildren();$("netMembers").hidden=true;$("selectObjectNet").hidden=true;
-      $("selectedName").textContent=selectedNet?netDisplayName(selectedNet):selected?.label||"Select an object";
-      $("selectedKind").textContent=selectedNet?`${selectedNet.kind==="pcb"?"PCB net":"Sheet network"} · ${selectedNet.path}`:selected?`${selected.kind} · ${selected.path}`:"Click a component, copper item or net to inspect it.";
+      $("selectedName").textContent=selectedNet?netDisplayName(selectedNet):terminalName||selected?.label||"Select an object";
+      $("selectedKind").textContent=selectedNet?`${selectedNet.kind==="pcb"?"PCB net":"Sheet network"} · ${selectedNet.path}`:terminalName?`${pcb?"Pad":"Pin"} ${terminal.pinNumber} of ${terminalReference} · ${selected.path}`:selected?`${selected.kind} · ${selected.path}`:"Click a component, copper item or net to inspect it.";
       $("focusSelected").disabled=!selectedNet&&!selected?.position;$("openSelectedSheet").hidden=selected?.kind!=="sheet"||Boolean(selectedNet);$("commentSelected").disabled=false;
       setSelectionIcon(selectedNet?"net":iconFor(selected?.kind));
       const chip=(text,className="")=>{const span=make("span",text);span.className="summary-chip "+className;$("selectionSummary").append(span);};
@@ -829,11 +863,14 @@
         for(const member of members.slice(0,300)){const node=button("",()=>{activeConnection=member;if(member.position)focus(member.position);$("selectionStatus").textContent=`${netDisplayName(selectedNet)} · ${member.reference||"Component"} · ${member.pin||member.pad||""}`;});node.append(make("span",`${member.reference||"Component"} · ${member.kind==="pin"?"pin "+member.pin:"pad "+member.pad}`));$("netMemberList").append(node);}
         if(!members.length)$("netMemberList").append(make("p","No saved pads or pins on this network."));
         if(members.length>300)$("netMemberList").append(make("p",`First 300 of ${members.length} connections shown.`));
-        if(matchingSheets){const section=make('section');section.className='property-section';section.append(make('h3','Matching sheets'));for(const [path,matches]of matchingSheets){const row=button(model.sheets.find(s=>s.path===path)?.label||path,()=>followSheet(path,matches[0]?.id));row.title=path+' · '+matches.map(netDisplayName).join(', ');row.className='net-sheet-link';section.append(row);}$("propertyList").append(section);}if(selectedNet.kind!=="pcb")propertySection("Connectivity limits",{"Analysis":"Saved global labels and instance-scoped sheet pins identify matching sheets. Cyclic hierarchy, implicit hidden power pins and buses are not resolved; this is not a KiCad netlist."});
+        if(matchingSheets){const section=make('section');section.className='property-section';section.append(make('h3','Matching sheets'));for(const [path,matches]of matchingSheets){const row=button(model.sheets.find(s=>s.path===path)?.label||path,()=>followSheet(path,matches[0]?.id));row.title=path+' · '+matches.map(netDisplayName).join(', ');row.className='net-sheet-link';row.setAttribute('data-sheet-path',path);section.append(row);}$("propertyList").append(section);}if(selectedNet.kind!=="pcb")propertySection("Connectivity limits",{"Analysis":"Saved global labels and instance-scoped sheet pins identify matching sheets. Cyclic hierarchy, implicit hidden power pins and buses are not resolved; this is not a KiCad netlist."});
         return;
       }
       if(!selected)return;
       const resolved=variableResolver(selected.path).resolver?.properties(selected.properties),fields={...(resolved?.values||selected.properties)};delete fields['Source fingerprint'];nativePropertyTable(fields,resolved?.provenance);
+      if(terminalName){const primitive=terminal.primitives.find(p=>['pad','pin'].includes(p.kind))||terminal.primitives[0],position=primitive?.padCenter||primitive?.start,net=netModel.nets.find(n=>n.path===selected.path&&terminal.primitives.some(p=>n.primitives.includes(p)));
+        propertySection(pcb?'Selected pad':'Selected pin',{'Selection':terminalName,'Component':terminalReference,'Number':String(terminal.pinNumber),'Name':primitive?.pinName||'','Net':primitive?.netName||net&&netDisplayName(net)||'','Layer':primitive?.layer||'',...(position?{'X position':position.x.toFixed(3)+' mm','Y position':position.y.toFixed(3)+' mm'}:{})});}
+
       if(selected.kind==='zone'){const stats=boardAnalytics();const zone=stats?.zones?.find(z=>z.uuid&&z.uuid===selected.uuid);if(zone)propertySection('Saved zone analytics',{'Outline polygon area sum':zone.outlineAreaMm2.toFixed(3)+' mm²','Saved fill polygon area sum':zone.fillAreaMm2.toFixed(3)+' mm²','Saved fill layers':zone.layers.join(', ')||'None','Method':stats.limits});}
       const entries={...fields};delete entries["Source fingerprint"];
       const linked=netsForObject(selected);if(linked.length){entries.Net=linked.length===1?netDisplayName(linked[0]):`${linked.length} connected nets`;$("selectObjectNet").hidden=false;root.KiCadUIIcons?.label($("selectObjectNet"),linked.length===1?"Highlight net":`${linked.length} nets`);}
@@ -900,7 +937,8 @@
       const canvas=getCanvas(),path=currentFile(),nets=highlightedNets();
       const dnp=dnpHighlight?objects.filter(o=>o.path===path&&['symbol','footprint'].includes(o.kind)&&o.populated===false):[];
       const testpoints=testpointHighlight?testpointsForPath(path).slice(0,200):[];
-      const currentPart=!selectedPin&&selected?.path===path&&['symbol','footprint','pad'].includes(selected.kind)?[selected.kind==='pad'?objects.find(o=>o.path===path&&o.id===selected.parentId)||selected:selected]:[];const parts=[...new Map([...highlightObjects.filter(o=>o.path===path),...currentPart,...dnp,...testpoints].map(o=>[o.id,o])).values()],ids=new Set(parts.map(o=>o.uuid).filter(Boolean)),primitives=(canvas?.primitives||[]).filter(p=>ids.has(p.uuid)||ids.has(p.ownerUuid));
+      const currentPart=!selectedPin&&selected?.path===path&&['symbol','footprint','pad'].includes(selected.kind)?[selected.kind==='pad'?objects.find(o=>o.path===path&&o.id===selected.parentId)||selected:selected]:[];const parts=[...new Map([...highlightObjects.filter(o=>o.path===path),...currentPart,...dnp,...testpoints].map(o=>[o.id,o])).values()],ids=new Set(parts.map(o=>o.uuid).filter(Boolean)),primitives=(canvas?.primitives||[]).filter(p=>ids.has(p.uuid)||ids.has(p.ownerUuid)||ids.has(p.pinUuid));
+      if(selected?.path===path&&!['symbol','footprint','pad'].includes(selected.kind)&&selected.uuid)primitives.push(...(canvas?.primitives||[]).filter(p=>(p.pinUuid||p.uuid)===selected.uuid));
       const terminals=selectedPin?.path===path?selectedPin.primitives:[];
       const groups=[...nets,...(primitives.length?[{primitives}]:[]),...(terminals.length?[{primitives:terminals}]:[])],mode=highlightMode();
       if(scene?.setSelection){scene.setNetHighlightColor?.(netHighlightColor);scene.setSelectionDim?.(mode!=='bright');const picked=[...parts,...(!selectedPin&&selected?.path===path?[selected]:[])];scene.setSelection({references:[...new Set(picked.map(o=>o.reference).filter(Boolean))],uuids:[...new Set([...picked.map(o=>o.uuid),...terminals.map(p=>p.uuid)].filter(Boolean))],netCodes:nets.map(n=>n.code).filter(n=>Number.isSafeInteger(n)||typeof n==='string'&&/^[0-9]+$/.test(n)),netNames:nets.map(n=>n.name)});}
@@ -971,7 +1009,7 @@
       const message={kind:'pin',path:object.path,reference:object.reference,pinNumber:String(pinNumber),ownerUuid:object.uuid,...(tstampPath?{tstampPath}:{}),...(identity?.rootUuid?{rootUuid:identity.rootUuid}:{}),...(primitives[0].uuid?{uuid:primitives[0].uuid}:{}),...(object.kind==='footprint'&&root.KiCadPairedReview?.symbolUuid(object)?{symbolUuid:root.KiCadPairedReview.symbolUuid(object)}:{})};
       if(!root.KiCadPairedReview?.validSelection(message))return false;
       selectedPin={...message,primitives};selected=object;selectedNet=null;highlightObjects=[];pinnedNets.clear();pinnedClasses.clear();nativePick=null;
-      const canvas=getCanvas();if(canvas)canvas.selected=null;updateHighlights();properties();propertySection(pcb?'Selected pad':'Selected pin',{'Number':pinNumber,'Name':primitives[0].pinName||'', 'Net':primitives[0].netName||''});
+      const canvas=getCanvas();if(canvas)canvas.selected=null;updateHighlights();properties();
       showSimulation(netModel.nets.find(net=>net.path===object.path&&primitives.some(p=>net.primitives.includes(p)))||null);$('selectionStatus').textContent=object.reference+' · '+(pcb?'pad ':'pin ')+pinNumber;if(!root.KiCadAndroidRuntime)inspector('properties');
       const position=primitives[0].padCenter||primitives[0].start||object.position;if(move){if(scene)focusSceneGeometry(primitives,position);else if(position)focus(position);}if(emit)options.onSelection?.(message);getCanvas()?.draw();return true;
     }
@@ -1005,15 +1043,17 @@
     function refreshNets(){const source=getCanvas()?.design;if(!source||source===netSource)return;dismissTouchPicker();netSource=source;const designs=options.getDesigns?.()||new Map([[currentFile(),source]]);if(options.initialNetModel&&source===options.initialDesign){netModel=options.initialNetModel;options.initialNetModel=null;}else netModel=netBuilder?netBuilder.build(files,designs):root.KiCadNetModel?root.KiCadNetModel.build(files,designs):{nets:[],warnings:[]};getCanvas()?.setNetNames?.(netModel.nets.filter(net=>net.path===currentFile()).map(net=>({...net,name:netDisplayName(net)})));selectedNet=null;activeConnection=null;getCanvas()?.setNetHighlight(null);renderNets();renderNetClasses();applyNetColors();updateHighlights();}
     function navigate(tab){if(tab==='rules'){showRuleWindow();return;}navigatorTab=tab;for(const name of ["files","parts","sheets","nets","layers","search","bom"]){$(name+"Pane").hidden=name!==tab;$("nav"+name[0].toUpperCase()+name.slice(1)).setAttribute("aria-selected",String(name===tab));}if(tab==="files")loadProjectFiles();if(tab==="bom")renderBom();if(tab==="search")navigation?.renderSearch();if(tab==="rules")navigation?.renderRules();if(tab==="sheets")renderSheets();if(tab==="nets"){renderNets();$("netHelp").textContent=pcb?"Select a net to highlight its copper and inspect connections.":"Select a net to highlight it and mark matching sheets. Saved global labels and instance-scoped sheet pins link loaded sheets. Hidden power pins and buses are not resolved.";}showNavigator(true);}
     function selectObject(object, native = false, move = false, fromScene = false, retainHighlights = false, silent = false, inspect = true) {
+      const sheetNets=object?.kind==='sheet'?highlightedNets():[];
       selectedPin=null;
       selectedNet=null;activeConnection=null;if(!retainHighlights&&!$("multiHighlight").checked){pinnedNets.clear();pinnedClasses.clear();highlightObjects=[];}getCanvas()?.setNetHighlight(null);renderNets();
+      for(const net of sheetNets)pinnedNets.set(net.id,net);
       selected = object; nativePick = native ? null : nativePick;
       if (!object) { $("selectionStatus").textContent = "Select a part to inspect its properties."; properties(); renderObjects();updateHighlights();if(!silent&&!retainHighlights&&!$("multiHighlight").checked)options.onSelection?.({kind:"group",items:[]}); draw(); return; }
-      const part=partSelection(object);if(part&&!silent)options.onSelection?.(part);
+      const part=partSelection(object)||(!object.parentId&&object.uuid?{kind:'object',path:object.path,uuid:object.uuid}:null);if(part&&!silent&&root.KiCadPairedReview?.validSelection(part))options.onSelection?.(part);
       $("selectionStatus").textContent = `${object.label} · ${object.kind}${object.populated === false ? " · DNP" : ""}`;
       properties(); if(inspect&&!root.KiCadAndroidRuntime)inspector("properties"); renderObjects();
       if (object.path !== currentFile()) {
-        openSheet(object.path, object.position);if(object.kind==='sheet'&&!silent)highlightSheet(sheetTarget(object),object); return;
+        openSheet(object.path, object.position);return;
       }
       if (scene) {if (!fromScene&&!scene.setSelection&&object.reference)scene.selectReference?.(object.reference);if(move){const geometry=(getCanvas()?.primitives||getCanvas()?.design?.primitives||[]).filter(p=>object.uuid&&(p.uuid===object.uuid||p.ownerUuid===object.uuid));focusSceneGeometry(geometry,object.position);}}
       else {
@@ -1027,11 +1067,18 @@
           if(box&&box.w&&box.h){canvas.resize();const margin=Math.max(3,Math.max(box.w,box.h)*.15);canvas.viewport.camera.bbox={x:box.x-margin,y:box.y-margin,w:box.w+margin*2,h:box.h+margin*2};canvas.draw();}else focus(object.position);
         }
       }
-      if(object.kind==='sheet'&&!silent)highlightSheet(sheetTarget(object),object);else updateHighlights();draw();
+      updateHighlights();draw();
     }
-    function applyWindowSelection(selection){
+    function applyWindowSelection(selection){return withCrossSelection(()=>applyWindowSelectionState(selection));}
+    function applyWindowSelectionState(selection){
       if(selection===null){clearHighlights();return true;}
       if(!root.KiCadPairedReview?.validSelection(selection))return false;
+      if(selection.kind==='object'){
+        if(selection.path!==currentFile())return false;
+        const geometry=(getCanvas()?.primitives||[]).filter(p=>(p.pinUuid||p.uuid)===selection.uuid&&!p.hidden&&!p.hole&&!p.frame);if(!geometry.length)return false;
+        const primitive=geometry[0],object=(primitive.kind==='sheet-pin'?null:resolveObject(objects,selection.path,{uuid:selection.uuid}))||{id:'geometry:'+selection.uuid,path:selection.path,uuid:selection.uuid,kind:primitive.kind||primitive.type,label:primitive.kind||primitive.type,properties:{Layer:primitive.layer||''},position:primitive.padCenter||primitive.start||primitive.points?.[0]||null};
+        selectObject(object,true,false,Boolean(scene),false,true);return true;
+      }
       const same=item=>/\.kicad_pcb$/i.test(item.path)===pcb;
       const part=item=>{const uuid=item.kind==='pin'?item.ownerUuid:item.uuid;const matches=objects.filter(o=>o.path===item.path&&!o.parentId&&o.kind===(pcb?'footprint':'symbol')&&(uuid?o.uuid===uuid:o.reference===item.reference));return matches.length===1?matches[0]:null;};
       const net=item=>{const matches=netModel.nets.filter(n=>n.path===item.path&&(n.name===item.netName||n.names?.includes(item.netName)));return matches.length===1?matches[0]:null;};
@@ -1052,7 +1099,9 @@
       if(selection.kind==='pin'){const primitives=(getCanvas()?.primitives||[]).filter(p=>!p.hidden&&!p.hole&&(p.ownerUuid||p.uuid)===object.uuid&&['pad','pin'].includes(p.kind)&&String(p.pinNumber??p.name??'')===String(selection.pinNumber));return selectTerminal(object,selection.pinNumber,primitives,true,false);}
       pinnedNets.clear();pinnedClasses.clear();highlightObjects=[];selectObject(object,true,true);highlightObjects=[object];updateHighlights();draw();return true;
     }
-    function highlightRelated(selection) {
+    function highlightRelated(selection){return withCrossSelection(()=>highlightRelatedState(selection));}
+    function highlightRelatedState(selection) {
+      if(selection?.kind==='object')return applyWindowSelection(selection);
       if(selection?.kind==='pin'){
         if(!root.KiCadPairedReview?.validSelection(selection))return false;
         const fromSchematic=/\.(?:kicad_sch|sch)$/i.test(selection.path),part={kind:'part',path:selection.path,reference:selection.reference,...(fromSchematic?{uuid:selection.ownerUuid||selection.uuid}:selection.symbolUuid?{symbolUuid:selection.symbolUuid}:{})};
@@ -1111,10 +1160,17 @@
     }
     function historySheet(delta){
       const path=sheetVisits.move(delta);if(!path)return;
-      try{openSheet(path);pointerWorld=null;}catch(error){sheetVisits.move(-delta);notice(error.message);}updateSheetNavigation();
+      try{followSheet(path);pointerWorld=null;}catch(error){sheetVisits.move(-delta);notice(error.message);}updateSheetNavigation();
     }
-    function homeSheet(){const home=rootSheetPath(rootFile,objects,files);if(home){openSheet(home);pointerWorld=null;}else{navigate('sheets');notice('The loaded hierarchy has no unambiguous root sheet. Choose a sheet in the navigator.');}}
-    function followSheet(path,netId){if(!files.some(f=>f.path===path&&/\.(?:kicad_sch|sch)$/i.test(path)))return false;const matches=netSheetMatches().get(path),id=netId??matches?.[0]?.id;openSheet(path);const net=id?netModel.nets.find(n=>n.id===id&&n.path===path):null;if(net)selectNet(net,true,false);else highlightSheet(path);return true;}
+    function homeSheet(){const home=rootSheetPath(rootFile,objects,files);if(home){followSheet(home);pointerWorld=null;}else{navigate('sheets');notice('The loaded hierarchy has no unambiguous root sheet. Choose a sheet in the navigator.');}}
+    function followSheet(path,netId){return keepPropertiesView(()=>navigateToSheet(path,netId));}
+    function navigateToSheet(path,netId){
+      if(!files.some(f=>f.path===path&&/\.(?:kicad_sch|sch)$/i.test(path)))return false;
+      const matches=netSheetMatches(selectedNet?[selectedNet]:undefined).get(path),id=netId??matches?.[0]?.id;
+      selected=selectedPin=nativePick=selectedNet=null;highlightObjects=[];pinnedNets.clear();pinnedClasses.clear();const canvas=getCanvas();if(canvas){canvas.selected=null;canvas.hover=null;}
+      openSheet(path);refreshNets();const net=id?netModel.nets.find(n=>n.id===id&&n.path===path):null;
+      if(net)selectNet(net,Boolean(netId),false,false,false);else{updateHighlights();properties();renderObjects();renderNets();options.onSelection?.({kind:'group',items:[]});}return true;
+    }
     function renderSheets(){updateSheetNavigation();
       const list=$("sheetList");list.replaceChildren();
       const query=$("sheetSearch").value.trim(),sheets=model.sheets.filter(s=>s.kind==='schematic'),links=objects.filter(o=>o.kind==='sheet');
@@ -1195,6 +1251,8 @@
       for(const zone of board.zones.slice(0,300)){const row=button(`${zone.name} · ${zone.fillAreaMm2.toFixed(3)} mm² fill sum`,()=>{const object=objects.find(o=>o.path===currentFile()&&o.kind==='zone'&&o.uuid===zone.uuid);if(object){selectObject(object,true,true);highlightObjects=[object];updateHighlights();}else notice('Zone has no selectable saved UUID.');});row.title=`Outline sum ${zone.outlineAreaMm2.toFixed(3)} mm² · ${zone.layers.join(', ')||'no saved fill'}`;zones.append(row);}
       if(board.warnings.length)$("analyticsLimits").textContent+=' '+board.warnings.slice(0,20).join(' ');
     }
+    let assemblyVariantApplying=false;
+    function applyAssemblyVariant(value){const raw=JSON.stringify(value?.config??{schemaVersion:1,variants:[]});if(raw.length>1024*1024)throw Error('Variant metadata exceeds 1 MiB.');const next=KiCadDesignModel.parseVariantConfig(raw,'variants.json'),candidate=KiCadDesignModel.buildProject(files,next),id=value?.variant;if(!candidate.variants.some(item=>item.id===id))throw Error('Unknown assembly variant.');config=next;model=candidate;variant=id;objects=KiCadDesignModel.applyVariant(model,variant);if(selected)selected=objects.find(item=>item.id===selected.id)||null;assemblyVariantApplying=true;try{variants();}finally{assemblyVariantApplying=false;}return true;}
     function variants() {
       $("variantSelect").replaceChildren();
       for (const item of model.variants) { const option = make("option", item.name); option.value = item.id; $("variantSelect").append(option); }
@@ -1204,6 +1262,7 @@
       notice([...model.warnings,...files.map(f=>f.discoveryWarning).filter(Boolean)].join(" "));
       if (scene) scene.setPopulation(parts.filter((item) => item.kind === "footprint").map((item) => ({reference:item.reference,populated:item.populated})));
       renderObjects(); properties(); renderBom(); if(attach)updateHighlights(); draw();if(dnpHighlight)populationNotice();
+      if(!assemblyVariantApplying)options.onAssemblyVariant?.({variant,config});
     }
     function installConfig(next) {
       const candidate = KiCadDesignModel.buildProject(files, next);
@@ -1234,7 +1293,7 @@
       capturePreview();draw();
     }
     function capturePreview(){const image=$("capturePreview"),source=pastePreviewUrl||editor?.capture?.dataUrl||editor?.attachments?.[0]?.url;image.hidden=!source;if(source){image.src=source;image.referrerPolicy='no-referrer';}else image.removeAttribute?.('src');$("removeCapture").hidden=!source;$("captureComment").disabled=!editor?.anchor.area;$("captureStatus").textContent=source?`Screenshot saved with this note.${remoteAvailable?provider==='github'?' Post includes this image in the GitHub thread; upload requires repository write access.':' Post includes this image in the GitLab thread. Private/internal projects must require authentication to view media files.':` Download it to attach in a ${providerName} composer.`}`:editor?.anchor.area?'Capture the visible drawing inside this area.':'Paste a screenshot into the comment box, or draw an area to capture it.';}
-    function setCommentMode(mode){commentMode=commentMode===mode?null:mode;areaStart=areaEnd=null;measureMode=false;measurePoints=[];getCanvas()?.canvas.classList?.toggle("ruler-mode",false);measurePreview=rulerSnap=boardMeasure=null;$("rulerControls").hidden=true;$("measureButton").setAttribute('aria-pressed','false');for(const [id,value] of [['pointComment','point'],['areaComment','area']])$(id).setAttribute('aria-pressed',String(commentMode===value));getCanvas()?.canvas.classList?.toggle('area-mode',Boolean(commentMode));commentStatus(commentMode==='area'?'Drag a rectangle on the drawing to comment.':commentMode==='point'?'Click the drawing to place a comment.':'');draw();}
+    function setCommentMode(mode){commentMode=commentMode===mode?null:mode;areaStart=areaEnd=null;measureMode=false;measurePoints=[];getCanvas()?.canvas.classList?.toggle("ruler-mode",false);measurePreview=rulerSnap=boardMeasure=null;$("rulerControls").hidden=true;$("measureButton").setAttribute('aria-pressed','false');for(const [id,value] of [['pointComment','point'],['areaComment','area'],['drawCommentArea','area']])$(id).setAttribute('aria-pressed',String(commentMode===value));getCanvas()?.canvas.classList?.toggle('area-mode',Boolean(commentMode));commentStatus(commentMode==='area'?'Drag a rectangle on the drawing to comment.':commentMode==='point'?'Click the drawing to place a comment.':'');draw();}
     async function refreshComments() {
       const run = ++loadId, target = scope();
       try { const list = await request("comment-list",target); if (run !== loadId) return; notes = list; renderComments(); draw(); }
@@ -1457,13 +1516,20 @@
     function menu(event) {
       event.preventDefault(); if (scene || rightDown?.moved) return;
       const at = point(event), canvas = getCanvas(); if (!at) return;
-      const hits = canvas.layers?.query_point(at) || [];
-      const picked = hits.map((entry) => resolveObject(objects,currentFile(),entry.bbox?.context)).find(Boolean);
-      const pickedNet=netModel.nets.find(net=>net.path===currentFile()&&hits.some(hit=>net.primitives.includes(hit.bbox?.primitive)));
+      const precise=typeof canvas.query==='function',hits=precise?canvas.query(at,5):canvas.layers?.query_point(at)||[];
+      const primitives=precise?hits:hits.map(hit=>hit.bbox?.primitive).filter(Boolean),nearest=primitives[0];
+      const picked=precise?resolveObject(objects,currentFile(),nearest?{uuid:nearest.uuid,reference:nearest.reference,parent:nearest.ownerUuid?{uuid:nearest.ownerUuid}:null}:null):hits.map(entry=>resolveObject(objects,currentFile(),entry.bbox?.context)).find(Boolean);
+      const netChoices=touchNetCandidates(nearest?[nearest]:primitives,touchNetIndex(netModel.nets,currentFile()));
+      const pickedNet=netChoices.length===1?netChoices[0].net:null;
+      const terminal=nearest&&selectionCandidates([nearest],new Map(),objects,currentFile(),'pin')[0];
+      const targetAnchor=terminal?anchor(at,{...terminal.object,reference:terminal.object.reference+'.'+terminal.pinNumber,kind:nearest.kind==='pad'?'pad':'pin',uuid:nearest.uuid||terminal.object.uuid}):pickedNet&&!event.shiftKey?KiCadReviewComments.normalizeAnchor({...anchor(at,{kind:'drawing'}),kind:'net',netName:pickedNet.name,...(pickedNet.id?.length<=200?{objectId:pickedNet.id}:{})}):anchor(at,picked||{kind:nearest?.kind||'drawing',...(nearest?.uuid?{uuid:nearest.uuid}:{})});
+      const targetName=terminal?terminal.object.reference+'.'+terminal.pinNumber:pickedNet&&!event.shiftKey?'net '+netDisplayName(pickedNet):picked?.reference||picked?.label||nearest?.kind||'this point';
       const holder = $("objectMenu"); holder.replaceChildren();
       if (picked) {holder.append(button("Inspect properties",()=>{selectObject(picked);inspector("properties");holder.hidden=true;}),button("Focus object",()=>{focus(picked.position || at);holder.hidden=true;}));}
       if(pickedNet)holder.append(button("Inspect net properties",()=>{selectNet(pickedNet,false,false,false,false);inspector('properties');holder.hidden=true;}),button("Highlight "+pickedNet.name,()=>{selectNet(pickedNet,false,true,undefined,false);holder.hidden=true;}));
-      holder.append(button(picked ? "Comment on object" : "Comment here",()=>{editComment(null,anchor(at,picked || null));holder.hidden=true;}));
+      holder.append(button('Comment on '+targetName,()=>{editComment(null,targetAnchor);holder.hidden=true;}));
+      if(pickedNet&&terminal)holder.append(button('Comment on net '+netDisplayName(pickedNet),()=>{editComment(null,KiCadReviewComments.normalizeAnchor({...anchor(at,{kind:'drawing'}),kind:'net',netName:pickedNet.name}));holder.hidden=true;}));
+      holder.append(button('Draw comment area',()=>{holder.hidden=true;setCommentMode('area');canvas.canvas.focus?.();}));
       holder.append(button('Unselect',()=>{clearSelection();holder.hidden=true;}),button('Clear highlights',()=>{clearHighlights();holder.hidden=true;}));
       if (picked?.kind === "sheet") holder.append(button("Open subsheet",()=>{openSubsheet(picked);holder.hidden=true;}));
       holder.hidden=false;const menuBounds=holder.getBoundingClientRect();holder.style.left=Math.max(8,Math.min(event.clientX,innerWidth-menuBounds.width-8))+"px";holder.style.top=Math.max(8,Math.min(event.clientY,innerHeight-menuBounds.height-8))+"px";
@@ -1471,12 +1537,12 @@
     function openSubsheet(item = selected) {
       if(pcb||item?.kind!=='sheet')return;
       const path = sheetTarget(item);
-      if (path && files.some(file=>file.path===path)) {openSheet(path);pointerWorld=null;}
+      if (path && files.some(file=>file.path===path)) {followSheet(path);pointerWorld=null;}
       else notice("The referenced subsheet is missing from this revision.");
     }
     function parentSheet(){
       const parents=[...new Set(objects.filter(o=>o.kind==='sheet'&&sheetTarget(o)===currentFile()).map(o=>o.path))];
-      if(parents.length===1){openSheet(parents[0]);pointerWorld=null;}
+      if(parents.length===1){followSheet(parents[0]);pointerWorld=null;}
       else {navigate('sheets');notice(parents.length?'This sheet has multiple parents; choose one in the sheet browser.':'No loaded parent sheet. Choose a sheet in the sheet browser.');}
     }
     function hitsAt(at){return at?(getCanvas()?.layers?.query_point(at)||[]):[];}
@@ -1508,11 +1574,22 @@
       const path=currentFile(),model=netModel;if(touchModel!==netModel||touchPath!==path){touchIndex=touchNetIndex(netModel.nets,path);touchModel=netModel;touchPath=path;}
       const at=point(event);if(!at)return false;
       const touch=event.pointerType!=='mouse'&&!event.ctrlKey&&!event.metaKey&&!event.shiftKey;
-      const choices=selectionCandidates(canvas.query(at,touch?14:5),touchIndex,objects,path,selectionMode.value);
-      const multi=Boolean($('multiHighlight').checked||event.ctrlKey||event.metaKey||event.shiftKey);
+      const hits=canvas.query(at,touch?14:5),terminalPick=event.shiftKey&&!event.ctrlKey&&!event.metaKey;
+      const flag=hits[0],isFlag=flag&&(flag.powerSymbol||['label','global_label','hierarchical_label','sheet-pin'].includes(flag.kind)),flagOnly=terminalPick&&isFlag;
+      if(isFlag&&!terminalPick&&!event.altKey&&['all','net'].includes(selectionMode.value)){const candidates=touchNetCandidates([flag],touchIndex);if(candidates.length===1){selectNet(candidates[0].net,false,true,Boolean($('multiHighlight').checked||event.ctrlKey||event.metaKey),false);return true;}}
+      if(flagOnly){const uuid=flag.kind==='sheet-pin'?flag.pinUuid:flag.ownerUuid||flag.uuid;const canonical=uuid?{kind:'object',path,uuid}:null;if(canonical&&applyWindowSelection(canonical))options.onSelection?.(canonical);return true;}
+      const choices=selectionCandidates(hits,touchIndex,objects,path,terminalPick?'pin':selectionMode.value);
+      const multi=Boolean(!terminalPick&&($('multiHighlight').checked||event.ctrlKey||event.metaKey));
       const choose=choice=>{if(currentFile()!==path||model!==netModel)return;if(choice.kind==='net')selectNet(choice.net,false,true,multi,false);else if(choice.kind==='pin')chooseTerminal(choice);else if(multi)selectSearchObject(choice.object,true,undefined,false);else selectObject(choice.object);};
+      if(terminalPick&&!choices.length){const primitive=hits[0],canonical=primitive?.uuid?{kind:'object',path,uuid:primitive.uuid}:null;if(canonical&&applyWindowSelection(canonical))options.onSelection?.(canonical);return true;}
       if(!choices.length)return selectionMode.value!=='all';
-      if(choices.length===1){choose(choices[0]);return true;}
+      if(!touch&&!multi&&!terminalPick&&!event.altKey&&selectionMode.value==='all'){
+        const nearest=selectionCandidates(hits.slice(0,1),touchIndex,objects,path,'all'),nets=nearest.filter(choice=>choice.kind==='net'),parts=nearest.filter(choice=>choice.kind==='part');
+        if(!nearest.length)return false;
+        const touching=canvas.pickDistance?hits.filter(p=>canvas.pickDistance(p,at)<=.65):hits.slice(0,1),overlaps=touchNetCandidates(touching,touchIndex);
+        if(nets.length===1&&overlaps.length<=1){choose(nets[0]);return true;}if(!nets.length&&parts.length===1){choose(parts[0]);return true;}
+      }
+      if(choices.length===1||terminalPick){choose(choices[0]);return true;}
       const picker=make('div');touchPicker=picker;picker.className='touch-net-picker';picker.setAttribute('role','dialog');picker.setAttribute('aria-label','Choose part or net');
       Object.assign(picker.style,{position:'fixed',zIndex:'2000',width:'min(260px,calc(100vw - 16px))',maxHeight:'min(340px,60vh)',overflowY:'auto',padding:'6px',border:'1px solid #718394',borderRadius:'12px',background:'light-dark(#ffffff,#182630)',color:'light-dark(#152536,#edf3f8)',boxShadow:'0 6px 24px #0005'});
       const heading=make('div','Choose '+(selectionMode.value==='part'?'part':selectionMode.value==='net'?'net':selectionMode.value==='pin'?'pin or pad':'part or net'));heading.style.padding='6px 8px';picker.append(heading);
@@ -1537,7 +1614,7 @@
         if(Date.now()<suppressTouchClickUntil){event.preventDefault();event.stopImmediatePropagation();return;}
         if(ignoreClick){ignoreClick=false;event.preventDefault();event.stopImmediatePropagation();return;}
         if(commentMode==='point'){event.preventDefault();event.stopImmediatePropagation();const at=point(event);if(at){setCommentMode(null);editComment(null,anchor(at,null));}return;}
-        if (!measureMode) {if(!commentMode&&!scene&&touchNetPick(canvas,{clientX:event.clientX,clientY:event.clientY,pointerType:'mouse',ctrlKey:event.ctrlKey,metaKey:event.metaKey,shiftKey:event.shiftKey})){event.preventDefault();event.stopImmediatePropagation();}return;} event.preventDefault();event.stopImmediatePropagation();const at=rulerPoint(event);if(!at)return;
+        if (!measureMode) {if(!commentMode&&!scene&&touchNetPick(canvas,{clientX:event.clientX,clientY:event.clientY,pointerType:'mouse',ctrlKey:event.ctrlKey,metaKey:event.metaKey,shiftKey:event.shiftKey,altKey:event.altKey})){event.preventDefault();event.stopImmediatePropagation();}return;} event.preventDefault();event.stopImmediatePropagation();const at=rulerPoint(event);if(!at)return;
         const angleMode=$('rulerKind').value==='angle',required=angleMode?3:2;
         if(measurePoints.length>=required)measurePoints=[];measurePoints.push(at);measurePreview=null;boardMeasure=null;
         if(measurePoints.length===required)rememberMeasurement(angleMode?'angle':'distance');
@@ -1561,7 +1638,7 @@
     $("navSheets").hidden=pcb;$("sheetSearch").oninput=renderSheets;$("sheetLabel").hidden=pcb;$("allSheets").parentElement.hidden=pcb;
     $("variantBar").hidden=false;
     for(const sheet of model.sheets){const option=make("option",sheet.label||sheet.path);option.value=sheet.path;$("sheetSelect").append(option);}
-    $("sheetSelect").onchange=()=>openSheet($("sheetSelect").value);
+    $("sheetSelect").onchange=()=>followSheet($("sheetSelect").value);
     const selectionMode=make('select');selectionMode.id='selectionMode';selectionMode.setAttribute('aria-label','Selection mode');selectionMode.title='Select parts, nets, or smart selection of both';
     for(const [value,label]of [['all','All (smart)'],['part','Part'],['net','Net'],['pin','Pin / pad']]){const option=make('option',label);option.value=value;selectionMode.append(option);}
     selectionMode.value='all';selectionMode.onchange=()=>{dismissTouchPicker();getCanvas()?.setSelectionMode?.(selectionMode.value);scene?.setSelectionMode?.(selectionMode.value);};$('frameControls').append(selectionMode);
@@ -1569,7 +1646,7 @@
     function renderProjectFiles(){
       const query=projectFileSearch.value.trim().toLowerCase(),paths=[...new Set(projectFilePaths)].filter(path=>typeof path==='string'&&path.length<=2048&&path[0]!=='/'&&![...path].some(c=>c.charCodeAt(0)<32||c.charCodeAt(0)===92||c.charCodeAt(0)===127)&&path.split('/').every(p=>p&&p!=='.'&&p!=='..')&&(!query||path.toLowerCase().includes(query))).sort(),tree={folders:new Map(),files:[]};
       for(const path of paths.slice(0,1000)){const parts=path.split('/'),name=parts.pop();let cursor=tree;for(const part of parts){if(!cursor.folders.has(part))cursor.folders.set(part,{folders:new Map(),files:[]});cursor=cursor.folders.get(part);}cursor.files.push({path,name});}
-      projectFileTree.replaceChildren();const render=(node,parent,prefix='')=>{for(const [name,child]of node.folders){const key=prefix+name+'/',details=make('details'),summary=make('summary',name);details.open=Boolean(query)||projectFolders.get(key)!==false;details.ontoggle=()=>{if(!query)projectFolders.set(key,details.open);};details.append(summary);render(child,details,key);parent.append(details);}for(const item of node.files){const current=item.path===currentFile(),supported=/\.(kicad_(sch|pcb|pro)|sch|pro|csv|tsv|wbk|raw|json|pdf|gbr|gerber|drl)$/i.test(item.path),action=button(item.name,async()=>{try{if(files.some(f=>f.path===item.path)&&/\.(?:kicad_sch|sch)$/i.test(item.path)){openSheet(item.path);renderProjectFiles();return;}await request(root.KiCadVSCodeContext&&!root.KiCadAndroidRuntime?(/\.(?:kicad_(?:sch|pcb)|sch)$/i.test(item.path)?'open-project-drawing':'open-project-file'):'open-viewer-window',{repository,ref,file:item.path});}catch(error){projectFileStatus.textContent=error.message;}});action.className='project-file-tree-row';action.setAttribute('data-path',item.path);action.classList.toggle('net-occurrence',netSheetMatches().has(item.path));action.title=item.path+(supported?'':' · source asset');action.disabled=!supported;action.setAttribute('aria-current',current?'page':'false');parent.append(action);}};render(tree,projectFileTree);projectFileStatus.textContent=paths.length+' project files'+(paths.length>1000?' · first 1,000 shown':'');
+      projectFileTree.replaceChildren();const render=(node,parent,prefix='')=>{for(const [name,child]of node.folders){const key=prefix+name+'/',details=make('details'),summary=make('summary',name);details.open=Boolean(query)||projectFolders.get(key)!==false;details.ontoggle=()=>{if(!query)projectFolders.set(key,details.open);};details.append(summary);render(child,details,key);parent.append(details);}for(const item of node.files){const current=item.path===currentFile(),supported=/\.(kicad_(sch|pcb|pro)|sch|pro|csv|tsv|wbk|raw|json|pdf|gbr|gerber|drl)$/i.test(item.path),action=button(item.name,async()=>{try{if(files.some(f=>f.path===item.path)&&/\.(?:kicad_sch|sch)$/i.test(item.path)){followSheet(item.path);renderProjectFiles();return;}await request(root.KiCadVSCodeContext&&!root.KiCadAndroidRuntime?(/\.(?:kicad_(?:sch|pcb)|sch)$/i.test(item.path)?'open-project-drawing':'open-project-file'):'open-viewer-window',{repository,ref,file:item.path});}catch(error){projectFileStatus.textContent=error.message;}});action.className='project-file-tree-row';action.setAttribute('data-path',item.path);action.classList.toggle('net-occurrence',netSheetMatches().has(item.path));action.title=item.path+(supported?'':' · source asset');action.disabled=!supported;action.setAttribute('aria-current',current?'page':'false');parent.append(action);}};render(tree,projectFileTree);projectFileStatus.textContent=paths.length+' project files'+(paths.length>1000?' · first 1,000 shown':'');
     }
     async function loadProjectFiles(){renderProjectFiles();if(projectFilesLoaded)return;projectFilesLoaded=true;try{const inventory=await request('project-inventory',{repository,ref,file:rootFile});if(projectFilesDisposed)return;projectFilePaths=[...projectFilePaths,...(inventory.files||[]).map(f=>f.path)];renderProjectFiles();}catch(error){if(!projectFilesDisposed)projectFileStatus.textContent=error.message;}}
     projectFileSearch.oninput=renderProjectFiles;
@@ -1612,12 +1689,13 @@
       searchInput.value=query;if(searchPopup.hidden&&document.activeElement!==searchInput)return;searchList.replaceChildren();searchRows=[];searchActive=-1;searchInput.removeAttribute?.('aria-activedescendant');
       const add=(label,detail,action)=>{const row=button('',event=>{action(event);closeSearch();});row.id=`universalResult${searchRows.length}`;row.setAttribute('role','option');row.setAttribute('aria-selected','false');row.append(make('strong',label),make('small',detail));row.onpointerdown=event=>event.preventDefault();searchRows.push(row);searchList.append(row);};
       const term=query.trim().toLowerCase();
+      if(!pcb)for(const command of root.KiCadWorkspaceSearch?.toolResults?.(query)||[])add(command.label,command.detail,()=>$('showSheetTree')?.click());
       if(term){for(const file of files.filter(file=>file.path.toLowerCase().includes(term)).slice(0,4))add(file.path.split('/').pop(),file.path,event=>openSheet(file.path));
         for(const match of result.results.slice(0,20-searchRows.length)){const object=match.object;add(object.label||object.reference||object.kind,`${object.kind} · ${object.path}`,event=>selectSearchObject(object,Boolean($('multiHighlight').checked),event));}}
       searchStatus.textContent=result.error||(!term?'Search references, values, nets or sheet names.':`${result.total} object matches · ${searchRows.length} results shown`);
       positionSearch();searchPopup.hidden=false;searchInput.setAttribute('aria-expanded','true');
     }
-    function runSearch(){clearTimeout(searchTimer);searchTimer=null;searchPopup.hidden=false;if(navigation)navigation.query(searchInput.value);else{searchStatus.textContent='Project search is unavailable in this viewer.';positionSearch();searchPopup.hidden=false;searchInput.setAttribute('aria-expanded','true');}}
+    function runSearch(){clearTimeout(searchTimer);searchTimer=null;searchPopup.hidden=false;if(!pcb&&root.KiCadWorkspaceSearch?.toolResults?.(searchInput.value).length){renderUniversalSearch({results:[],total:0},searchInput.value);return;}if(navigation)navigation.query(searchInput.value);else{searchStatus.textContent='Project search is unavailable in this viewer.';positionSearch();searchPopup.hidden=false;searchInput.setAttribute('aria-expanded','true');}}
     const searchAll=button('Search entire project',async()=>{searchAll.disabled=true;searchStatus.textContent='Loading project drawings…';try{await navigation?.loadProject();searchStatus.textContent=$('projectSearchStatus').textContent;}finally{searchAll.disabled=false;}});searchAll.id='universalSearchAll';
     searchInput.oninput=()=>{clearTimeout(searchTimer);searchTimer=setTimeout(runSearch,120);};searchInput.onfocus=runSearch;
     searchInput.onkeydown=event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();clearTimeout(searchTimer);closeSearch();}else if(event.key==='ArrowDown'||event.key==='ArrowUp'){event.preventDefault();if(searchPopup.hidden||searchTimer)runSearch();if(searchRows.length)activeSearch((searchActive+(event.key==='ArrowDown'?1:-1)+searchRows.length)%searchRows.length);}else if(event.key==='Enter'){event.preventDefault();if(searchTimer){clearTimeout(searchTimer);searchTimer=null;runSearch();}searchRows[Math.max(0,searchActive)]?.onclick(event);}};
@@ -1951,7 +2029,7 @@
     fastPISession=pcb?root.KiCadFastPIWorkspace?.mount({files,currentFile,getCanvas,getNets:()=>netModel.nets,getSelectedNet:()=>selectedNet}):null;
     const fastPIButton=button('Fast PI',()=>{try{if(!fastPISession){notice('Fast PI needs a PCB layout. Open Layout, then Simulation → Fast PI.');return;}if(scene){notice('Switch to the 2D layout to pick Fast PI contacts.');return;}fastPISession.open();}catch(error){notice(error.message);}});fastPIButton.id='openFastPI';fastPIButton.title='Experimental DC copper screening with two picked contacts';fastPIButton.setAttribute('data-icon','fast-pi');fastPIButton.disabled=!root.KiCadFastPIWorkspace;$('drawingTools').append(fastPIButton);
     let draftsmanSession=null;
-    async function openWorkspaceSearchResult(result){
+    async function openWorkspaceSearchResult(result){if(result?.kind==='command'&&result.action==='sheet-tree'){if(pcb)throw Error('Open the schematic to use its sheet browser.');$('showSheetTree')?.click();return;}
       if(!result||!root.KiCadWorkspaceSearch.safePath(result.path))throw Error('Invalid search location.');
       if(result.kind==='draft'){
         const source={provider:repository==='local/workspace'?'local':provider,host,repository,ref},document=root.KiCadDraftsmanModel.validate(result.document,source),paths=Object.keys(document.source.hashes||{});
@@ -2070,6 +2148,12 @@
     }
     function resolveProbeSelection(entry,primitive,filter='all'){
       if(!entry?.design?.primitives?.includes(primitive))return null;
+      if(filter==='object'){
+        if(['pin','pad','pin-marker','pin-number','pin-name'].includes(primitive.kind))return resolveProbeSelection(entry,primitive,'pin');
+        if(!primitive.uuid||primitive.hidden||primitive.hole||primitive.frame)return null;
+        const canonical={kind:'object',path:entry.path,uuid:primitive.uuid};if(!root.KiCadPairedReview?.validSelection(canonical))return null;
+        return {kind:'object',canonical,primitive,primitives:entry.design.primitives.filter(p=>p.uuid===primitive.uuid&&!p.hidden&&!p.hole&&!p.frame),uuid:primitive.uuid};
+      }
       const sourceObjects=entry.objects||objects,nets=probeNets(entry),index=touchNetIndex(nets,entry.path),modes=filter==='all'?(['pad','pin','pin-marker','pin-number','pin-name'].includes(primitive.kind)?['pin','part','net']:['part','net']):[filter];
       for(const mode of modes){const choices=selectionCandidates([primitive],index,sourceObjects,entry.path,mode);if(choices.length>1)return {error:'This saved geometry has ambiguous '+mode+' identity.'};if(!choices.length)continue;
         const choice={...choices[0],objects:sourceObjects},canonical=probeCanonical(choice,entry.path,entry.instanceId);if(!root.KiCadPairedReview?.validSelection(canonical))return {error:'This selection has no unambiguous saved identity.'};
@@ -2093,7 +2177,8 @@
       const api=root.KiCadPairedReview,combined=[...new Map([...objects,...(selection.objects||entry.objects||[])].map(o=>[JSON.stringify([o.kind,o.path,o.uuid||o.id]),o])).values()],named=api?.relatedNet?.(local,combined,canonical,currentFile());
       return named?.net||api?.relatedNetByTerminals?.(local,combined,canonical,source,{instancePath:entry.instanceId})?.net||null;
     }
-    function applyProbeSelection(entry,selection){
+    function applyProbeSelection(entry,selection){return withCrossSelection(()=>applyProbeSelectionState(entry,selection));}
+    function applyProbeSelectionState(entry,selection){
       const canonical=selection?.canonical;if(!root.KiCadPairedReview?.validSelection(canonical))return;
       if(selection.kind==='net'){const mapped=probeParentNet(entry,selection);if(mapped){selectNet(mapped,false,false,false,false,entry.instanceId||null);return;}}
       if(entry.path===currentFile()&&entry.design===getCanvas()?.design){
@@ -2107,9 +2192,9 @@
     }
     netQuickView=root.KiCadNetQuickView?.mount({holder:document.body,getEntries:probeEntries,getHighlightMode:highlightMode,getNetHighlightColor:()=>netHighlightColor,getLabelVisibility:()=>({showNumbers:getCanvas()?.showTerminalNumbers!==false,showNetNames:getCanvas()?.showNetNames===true}),resolveSelection:resolveProbeSelection,onSelect:applyProbeSelection,getSchematicRows:options.getSchematicProbeRows,
       resolveViews:async(row,selection,mode)=>{const current=selection||{kind:row.group.canonical?.kind,canonical:row.group.canonical,primitives:row.group.primitives};const resolved=await options.resolveProbeViews?.(row,current,mode);if(resolved)return resolved;const board=/\.kicad_pcb$/i.test(row.entry.path);return (mode==='schematic'?!board:board)?row:[];},
-      mount3D:async(holder,config)=>{const factory=options.mountProbe3D||(scene?.createProbeViewport?((host,value)=>{if(value.entry.path!==currentFile())throw Error('This board is not loaded in the active 3D scene.');return scene.createProbeViewport(host,{...value,selection:value.group});}):null);if(!factory)throw Error('3D probes are unavailable in this drawing host.');let filter='all';const viewport=await factory(holder,{...config,onSelect:record=>{if(!record)return;const entry=config.entry,nets=probeNets(entry),reference=record.reference||record.ref,pinNumber=record.pinNumber??(record.type==='Pad'?record.name:undefined),kind=record.kind||record.probeKind||(record.type==='Component'?'part':record.type==='Pad'?'pin':null);let selection;
-        if(filter==='net'||kind==='net'||!record.uuid&&!reference&&(record.net!==undefined||record.netName)){const matches=nets.filter(n=>(record.net!==undefined||record.netCode!==undefined)&&(String(n.code)===String(record.net??record.netCode)||n.name===String(record.net??record.netCode))||record.netName&&n.name===record.netName);if(matches.length===1){const net=matches[0];selection={kind:'net',net,group:net,netName:net.name,objects:entry.objects,primitives:net.primitives,canonical:probeCanonical({kind:'net',net,objects:entry.objects},entry.path)};}}
-        else {const candidates=entry.design.primitives.filter(p=>pinNumber!==undefined?String(p.pinNumber??p.name??'')===String(pinNumber)&&(record.ownerUuid?p.ownerUuid===record.ownerUuid:record.uuid?p.uuid===record.uuid||p.ownerUuid===record.uuid:reference&&p.reference===reference):record.uuid?p.uuid===record.uuid||p.ownerUuid===record.uuid:reference&&p.reference===reference);if(candidates.length)selection=resolveProbeSelection(entry,candidates[0],filter!=='all'?filter:kind==='part'?'part':pinNumber!==undefined?'pin':'all');}
+      mount3D:async(holder,config)=>{const factory=options.mountProbe3D||(scene?.createProbeViewport?((host,value)=>{if(value.entry.path!==currentFile())throw Error('This board is not loaded in the active 3D scene.');return scene.createProbeViewport(host,{...value,selection:value.group});}):null);if(!factory)throw Error('3D probes are unavailable in this drawing host.');let filter='all';const viewport=await factory(holder,{...config,onSelect:(record,gesture={})=>{if(!record)return;const pickFilter=gesture.individual?'object':filter,entry=config.entry,nets=probeNets(entry),reference=record.reference||record.ref,pinNumber=record.pinNumber??(record.type==='Pad'?record.name:undefined),kind=record.kind||record.probeKind||(record.type==='Component'?'part':record.type==='Pad'?'pin':null);let selection;
+        if(!gesture.individual&&(pickFilter==='net'||kind==='net'||!record.uuid&&!reference&&(record.net!==undefined||record.netName))){const matches=nets.filter(n=>(record.net!==undefined||record.netCode!==undefined)&&(String(n.code)===String(record.net??record.netCode)||n.name===String(record.net??record.netCode))||record.netName&&n.name===record.netName);if(matches.length===1){const net=matches[0];selection={kind:'net',net,group:net,netName:net.name,objects:entry.objects,primitives:net.primitives,canonical:probeCanonical({kind:'net',net,objects:entry.objects},entry.path)};}}
+        else {const candidates=entry.design.primitives.filter(p=>pinNumber!==undefined?String(p.pinNumber??p.name??'')===String(pinNumber)&&(record.ownerUuid?p.ownerUuid===record.ownerUuid:record.uuid?p.uuid===record.uuid||p.ownerUuid===record.uuid:reference&&p.reference===reference):record.uuid?p.uuid===record.uuid||p.ownerUuid===record.uuid:reference&&p.reference===reference);if(candidates.length)selection=resolveProbeSelection(entry,candidates[0],gesture.individual?'object':pickFilter!=='all'?pickFilter:kind==='part'?'part':pinNumber!==undefined?'pin':'all');}
         if(selection)config.onSelect(selection);
       }});const setFilter=viewport.setSelectionFilter||viewport.setSelectionMode;viewport.setSelectionFilter=value=>{filter=['part','pin','net'].includes(value)?value:'all';setFilter?.call(viewport,filter);};return viewport;},
       getAnchor:(row,selection)=>{
@@ -2178,15 +2263,15 @@
       const result=sources.length?root.KiCadOverviewConnectivity.resolve(netModel.nets,sources,entries.flatMap(e=>e.placements||[])):{matches:[],links:[],limits:[]};result.active=sources.length>0;
       overviewCache={model:netModel,objects,key,result};return result;
     }
-    return {highlightComparison(path,uuids,focusUuid){const ids=new Set(uuids);pinnedNets.clear();pinnedClasses.clear();selectedNet=null;selectedPin=null;highlightObjects=objects.filter(o=>o.path===path&&ids.has(o.uuid)&&!o.parentId);const focus=highlightObjects.find(o=>o.uuid===focusUuid);if(focus)selectObject(focus,true,false,false,true,true,false);else selected=null;updateHighlights();draw();},syncTerminalVisibility(){netQuickView?.setTerminalVisibility?.();},openWorkspaceSearchResult,selectOverviewObject(path,uuid){const matches=objects.filter(o=>o.path===path&&o.uuid===uuid);let object=matches.find(o=>!o.parentId)||matches[0];if(!object)return false;if(object.parentId)object=objects.find(o=>o.path===path&&o.id===object.parentId);if(!object)return false;selectObject(object,true,false);return true;},positionSimulation(point){simulationView?.move?.(point);},sceneViewChanged(){if(scene)draw();},focusSignalNet,focusSaved(path,uuid){const matches=objects.filter(o=>o.path===path&&o.uuid===uuid&&!o.parentId);if(matches.length===1)selectObject(matches[0],true,true);},restoreFocusView,attachCanvas,draw,refreshNets,refreshComments,highlightRelated,applyWindowSelection,followSheet,clearSelection,clearHighlights,
+    return {highlightComparison(path,uuids,focusUuid){const ids=new Set(uuids);pinnedNets.clear();pinnedClasses.clear();selectedNet=null;selectedPin=null;highlightObjects=objects.filter(o=>o.path===path&&ids.has(o.uuid)&&!o.parentId);const focus=highlightObjects.find(o=>o.uuid===focusUuid);if(focus)selectObject(focus,true,false,false,true,true,false);else selected=null;updateHighlights();draw();},syncTerminalVisibility(){netQuickView?.setTerminalVisibility?.();},openWorkspaceSearchResult,selectOverviewObject(path,uuid){const matches=objects.filter(o=>o.path===path&&o.uuid===uuid);let object=matches.find(o=>!o.parentId)||matches[0];if(!object)return false;if(object.parentId)object=objects.find(o=>o.path===path&&o.id===object.parentId);if(!object)return false;selectObject(object,true,false);return true;},positionSimulation(point){simulationView?.move?.(point);},sceneViewChanged(){if(scene)draw();},focusSignalNet,focusSaved(path,uuid){const matches=objects.filter(o=>o.path===path&&o.uuid===uuid&&!o.parentId);if(matches.length===1)selectObject(matches[0],true,true);},restoreFocusView,applyAssemblyVariant,attachCanvas,draw,refreshNets,refreshComments,highlightRelated,applyWindowSelection,followSheet,clearSelection,clearHighlights,
       overviewSheets(){return sheetOverviewEntries(model.sheets.filter(s=>s.kind==='schematic'),objects.filter(o=>o.kind==='sheet'));},
       overviewSelection(path,instanceId){const graph=overviewConnectivity();return {netIds:graph?[...new Set(graph.matches.filter(m=>m.net.path===path&&(!instanceId||m.instanceId===instanceId)).map(m=>m.net.id))]:(netSheetMatches().get(path)||[]).map(n=>n.id),instanceIds:graph?[...new Set(graph.matches.filter(m=>m.net.path===path).map(m=>m.instanceId))]:[],limits:graph?.limits||[],uuids:highlightObjects.filter(o=>o.path===path).map(o=>o.uuid).filter(Boolean),mode:highlightMode(),netActive:graph?graph.active:netSheetMatches().size>0};},
       selectOverviewNet(path,uuid,instanceId){const matches=netModel.nets.filter(n=>n.path===path&&n.uuids.includes(uuid));if(matches.length===1){selectNet(matches[0],false,false,false,false,instanceId);return true;}return false;},
       overviewNetLinks(){return overviewConnectivity()?.links||overviewNetLinks(netModel.nets,[...pinnedNets.values(),...(selectedNet?[selectedNet]:[])].filter(n=>n.kind==='schematic').map(n=>n.id),objects.filter(o=>o.kind==='sheet').map(o=>({path:o.path,target:sheetTarget(o),sheetId:o.uuid||o.id})));},
       inspect3D(record){nativePick=record;const object=resolveObject(objects,rootFile,record);if(object)selectObject(object,false,false,true);else if(record?.net!=null){const net=netModel.nets.find(n=>n.path===currentFile()&&(String(n.code)===String(record.net)||n.name===record.net));if(net)selectNet(net,false,false,false,false);}properties();inspector("properties");},
-      select3D(record){nativePick=record;let object=resolveObject(objects,rootFile,record);const mode=$('selectionMode').value||'all';if(mode==='pin'){if(!record?.pinNumber)return;if(object?.parentId)object=objects.find(o=>o.id===object.parentId&&o.path===currentFile());if(object)chooseTerminal({object,pinNumber:record.pinNumber,primitive:record});return;}if(mode==='part'&&record&&!object?.reference)return;const net=record&&netModel.nets.find(n=>n.path===currentFile()&&(String(n.code)===String(record.net)||n.name===record.net));if(net&&(mode==='net'||!object?.reference)){selectNet(net,false,false);return;}if(mode==='net'&&record)return;if(object&&$('multiHighlight').checked){const index=highlightObjects.findIndex(o=>o.id===object.id);if(index<0)highlightObjects.push(object);else highlightObjects.splice(index,1);}selectObject(object,false,false,true);},
-      comment3D(record){const object=resolveObject(objects,rootFile,record);if(object)editComment(null,anchor(object.position,object));else notice("This 3D object has no unambiguous saved part anchor; switch to 2D to place a comment.");},
-      setScene(next){attach?.hideMagnifier?.();if(next)fastPISession?.close?.();scene=next;applyObjectVisibility();if(simulationNet)showSimulation(simulationNet);scene?.setSelectionMode?.($('selectionMode').value||'all');$("measureButton").setAttribute("aria-pressed","false");$("highlightControls").hidden=Boolean(scene&&!scene.setSelection);$("highlightDnp").disabled=Boolean(scene);$("measureButton").disabled=Boolean(scene&&!scene.setMeasurementMode);for(const id of ["navLayers","pointComment","areaComment"])$(id).disabled=Boolean(scene);$("navNets").disabled=Boolean(scene&&!scene.setSelection);if(scene&&!["parts","files","bom"].includes(navigatorTab))navigate("parts");if(scene){setCommentMode(null);measureMode=false;measurePoints=[];getCanvas()?.canvas.classList?.toggle("ruler-mode",false);measurePreview=rulerSnap=boardMeasure=null;$("rulerControls").hidden=true;$("measureButton").setAttribute("aria-pressed","false");$("measurementStatus").textContent="";scene.setPopulation(objects.filter((item)=>item.kind==="footprint").map((item)=>({reference:item.reference,populated:item.populated})));}updateHighlights();draw();},
+      select3D(record,gesture={}){nativePick=record;let object=resolveObject(objects,rootFile,record);const pinNumber=record?.pinNumber??(record?.type==='Pad'?record.name:null),individual=gesture.individual===true,mode=individual&&pinNumber!=null?'pin':$('selectionMode').value||'all';if(mode==='pin'){if(pinNumber==null)return;if(object?.parentId)object=objects.find(o=>o.id===object.parentId&&o.path===currentFile());if(object)chooseTerminal({object,pinNumber,primitive:record});return;}if(individual){const canonical={kind:'object',path:currentFile(),uuid:record?.uuid||record?.id};if(applyWindowSelection(canonical))options.onSelection?.(canonical);return;}if(mode==='part'&&record&&!object?.reference)return;const net=record&&netModel.nets.find(n=>n.path===currentFile()&&(String(n.code)===String(record.net)||n.name===record.net));if(net&&(mode==='net'||!object?.reference||object?.kind==='pad'||record?.type==='Pad')){selectNet(net,false,false);return;}if(mode==='net'&&record)return;if(object&&$('multiHighlight').checked){const index=highlightObjects.findIndex(o=>o.id===object.id);if(index<0)highlightObjects.push(object);else highlightObjects.splice(index,1);}selectObject(object,false,false,true);},
+      comment3D(record){let object=resolveObject(objects,rootFile,record);const pinNumber=record?.pinNumber??(record?.type==='Pad'?record.name:null);if(object&&pinNumber!=null){const position=object.position;if(object.parentId)object=objects.find(o=>o.id===object.parentId&&o.path===rootFile);if(object)editComment(null,anchor(position,{...object,kind:'pad',reference:object.reference+'.'+pinNumber,uuid:record.uuid||object.uuid}));return;}if(object){editComment(null,anchor(object.position,object));return;}const nets=record?.net!=null?netModel.nets.filter(n=>n.path===rootFile&&(String(n.code)===String(record.net)||n.name===record.net)):[];if(nets.length===1){editComment(null,KiCadReviewComments.normalizeAnchor({...anchor(null,{path:rootFile,kind:'drawing'}),kind:'net',netName:nets[0].name}));return;}notice("This 3D object has no unambiguous saved anchor; switch to 2D to place a comment.");},
+      setScene(next){attach?.hideMagnifier?.();if(next)fastPISession?.close?.();scene=next;applyObjectVisibility();if(simulationNet)showSimulation(simulationNet);scene?.setSelectionMode?.($('selectionMode').value||'all');$("measureButton").setAttribute("aria-pressed","false");$("highlightControls").hidden=Boolean(scene&&!scene.setSelection);$("highlightDnp").disabled=Boolean(scene);$("measureButton").disabled=Boolean(scene&&!scene.setMeasurementMode);for(const id of ["navLayers","pointComment","areaComment","drawCommentArea"])$(id).disabled=Boolean(scene);$("navNets").disabled=Boolean(scene&&!scene.setSelection);if(scene&&!["parts","files","bom"].includes(navigatorTab))navigate("parts");if(scene){setCommentMode(null);measureMode=false;measurePoints=[];getCanvas()?.canvas.classList?.toggle("ruler-mode",false);measurePreview=rulerSnap=boardMeasure=null;$("rulerControls").hidden=true;$("measureButton").setAttribute("aria-pressed","false");$("measurementStatus").textContent="";scene.setPopulation(objects.filter((item)=>item.kind==="footprint").map((item)=>({reference:item.reference,populated:item.populated})));}updateHighlights();draw();},
       dispose(){variableDialog?.remove();variableButton?.remove();variableResolvers.clear();navigationHelp?.dispose();fastPISession?.dispose();draftsmanSession?.dispose();reviewStatesDisposed=true;reviewThreadStates.clear();commentFocus?.dispose();cancelNativeOpen();root.removeEventListener?.('pagehide',cancelNativeOpen);projectFilesDisposed=true;objectVisibilityDisposed=true;root.removeEventListener?.('kicad-review:analysis-net-focus',analysisNetFocus);simulationTicket++;simulationView?.dispose();chatPanel?.dispose();conversationTicket++;if(root.KiCadChatDraft===chatDraftFacade){if(previousChatDraft)root.KiCadChatDraft=previousChatDraft;else delete root.KiCadChatDraft;}root.removeEventListener?.('pointerdown',outsideTouchPicker,true);dismissTouchPicker();netColorDisposed=true;netColorTicket++;threadTicket++;releasePastePreview();pasteGeneration++;mentionDisposed=true;mentionGeneration++;clearTimeout(mentionTimer);loadId++;remoteLoad++;netBuilder?.clear();reviewToolsObserver?.disconnect();sidebarObserver?.disconnect();root.removeEventListener?.('resize',layoutSidebars);root.removeEventListener?.('resize',ruleResize);ruleWindowObserver?.disconnect();for(const cleanup of resizeCleanups)cleanup();root.removeEventListener?.('keydown',reviewKeydown);narrowPanels.removeEventListener?.("change",keepDrawingVisible);navigation?.dispose();attach?.dispose();}}
   }
   function measurementCandidates(canvas,at,pixels=8,constrain=false){

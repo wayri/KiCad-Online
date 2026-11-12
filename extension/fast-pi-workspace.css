@@ -31,3 +31,18 @@
 .fast-pi-contacts>.fast-pi-choose-pads{grid-column:1 / -1;text-align:center;white-space:normal;min-height:30px}
 
 .fast-pi-inputs>.fast-pi-contacts,.fast-pi-material-note{grid-column:1 / -1}.fast-pi-inputs .fast-pi-contacts{margin:0}.fast-pi-inputs details>.fast-pi-material{width:100%}
+
+/* The normal path is two board contacts and two electrical inputs. */
+.fast-pi-inputs label[hidden]{display:none!important}
+.fast-pi-panel .fast-pi-result-metric[hidden],.fast-pi-panel .fast-pi-display-control[hidden],.fast-pi-panel .fast-pi-isolate[hidden]{display:none!important}
+.fast-pi-result-metric{display:flex;align-items:center;justify-content:space-between;gap:6px;margin:6px 0}.fast-pi-result-metric select{max-width:180px}
+.fast-pi-result-layer{display:flex;align-items:center;justify-content:space-between;gap:6px;margin:6px 0}.fast-pi-result-layer select{max-width:180px}
+.fast-pi-panel .fast-pi-result-layer[hidden],.fast-pi-panel .fast-pi-back-results[hidden],.fast-pi-panel .fast-pi-solve[hidden],.fast-pi-panel .fast-pi-replace-b[hidden]{display:none!important}
+.fast-pi-panel header{flex-wrap:wrap}.fast-pi-panel header strong{min-width:100px}.fast-pi-panel .fast-pi-back-results{font-size:11px}
+.fast-pi-contact-filters{flex-wrap:wrap}.fast-pi-contact-filters [name=contactNet]{width:100%;max-width:none}
+.fast-pi-panel [aria-invalid=true]{border-color:#e78383;outline:1px solid #e78383}
+.fast-pi-quick-pick{font-weight:600}.fast-pi-contact-options>label{display:flex;justify-content:space-between;gap:8px;margin:7px 0}
+.fast-pi-contact-options select{max-width:180px}.fast-pi-contact-options .fast-pi-contacts{margin:8px 0}
+.fast-pi-panel.picking .fast-pi-inputs,.fast-pi-panel.picking>.fast-pi-intro,.fast-pi-panel.picking>.fast-pi-output,.fast-pi-panel.picking>.fast-pi-legend,.fast-pi-panel.picking>.fast-pi-display-control{display:none!important}
+.fast-pi-panel.picking{bottom:auto;max-height:180px}
+@media(max-width:700px){.fast-pi-panel.picking{bottom:0;top:auto}.fast-pi-panel:not(.picking) .fast-pi-inputs{grid-template-columns:1fr 1fr}.fast-pi-quick-pick,.fast-pi-solve{min-height:40px!important}}

@@ -51,7 +51,7 @@
         let sources=await data.loadProject(repository,sha,file,(_repo,_sha,path)=>get(path),listDirectory,'github');
         // A leaf may have its parent in a sibling folder. Only that unresolved
         // case needs wider discovery; opening a saved root follows its links first.
-        if(/(?:\.kicad_sch|\.sch)$/i.test(file)&&sources.length===1&&sources[0].path===file&&!sources[0].discoveryWarning){
+        if(/(?:\.kicad_sch|\.sch)$/i.test(file)&&sources.length===1&&sources[0].path===file){
           try{
             const listing=await buffer.inventory(repository,sha,signal);
             const incomplete=listing.warnings?.some(warning=>/incomplete|limited|limit reached/i.test(warning));
@@ -66,7 +66,17 @@
       if(type==='project-inventory')return {files,snapshotRef:sha,warnings};
       const incomplete=warnings.some(warning=>/incomplete|limited|limit reached/i.test(warning));
       if(type==='repo-model-index')return {paths:incomplete?[]:inventory.files.map(item=>item.path).filter(path=>/\.(step|stp|wrl|vrml|glb)$/i.test(path)),snapshotRef:sha,...(scopedModels?{scopeDirectory:inventory.scopeDirectory}:{}),warnings:incomplete?[...warnings,'Library model matching is disabled for an incomplete inventory; explicit saved paths remain available.']:warnings};
-      if(type==='drawing-files')return {files:files.map(item=>item.path).filter(path=>/(?:\.kicad_(?:sch|pcb)|\.(?:sch|brd))$/i.test(path)&&path.split('/').slice(0,-1).join('/')===file.split('/').slice(0,-1).join('/')).sort(),warnings};
+      if(type==='drawing-files'){
+        const drawing=path=>/(?:\.kicad_(?:sch|pcb)|\.(?:sch|brd))$/i.test(path),board=path=>/\.(?:kicad_pcb|brd)$/i.test(path),candidates=new Set(files.map(item=>item.path).filter(drawing));
+        // Projects commonly keep their PCB and schematic in sibling folders.
+        // Prefer the cheap local inventory; widen once only when it contains no
+        // opposite drawing type. These are candidates, never identity matches.
+        if(![...candidates].some(path=>board(path)!==board(file))){
+          try{const raw=await buffer.inventory(repository,sha,signal,{directory:file.split('/').slice(0,-1).join('/')}),wide=normalize?normalize(raw,sha):raw;for(const item of wide.files)if(paths.filePath(item.path)&&drawing(item.path))candidates.add(item.path);warnings.push(...(wide.warnings||[]));}
+          catch(error){if(signal?.aborted||/invalid|unsafe|different revision|mismatch/i.test(error.message))throw error;warnings.push('Companion drawing discovery is incomplete ('+error.message+'). Select the paired drawing explicitly.');}
+        }
+        return {files:[...candidates].sort(),snapshotRef:sha,warnings:[...new Set(warnings)]};
+      }
       if(type==='repository-tree'){
         const directory=message.directory;
         if(directory!==undefined&&!root.KiCadGitHubSessionReader.safePath(directory,true))throw Error('Invalid repository directory.');

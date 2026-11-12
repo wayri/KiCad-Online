@@ -93,7 +93,7 @@
 
       const phase=lastFile===file?'change':'ready';lastView=signature;lastFile=file;
 
-      parent.postMessage({type:'kicad-review:view',phase,file,view,ref},ownOrigin);
+      parent.postMessage({type:'kicad-review:view',phase,file,view,ref,uiTheme:preferences.uiTheme,drawingTheme:preferences.drawingTheme},ownOrigin);
 
     };
 
@@ -114,40 +114,50 @@
 
     const layerList=$('layerList');
     // An overlay keeps layer switching available without opening an explorer pane.
-    const floatingLayers=document.createElement('div'),floatingButtons=new Map();
+    const floatingLayers=document.createElement('div'),floatingButtons=new Map(),floatingEyes=new Map();
     floatingLayers.id='floatingLayerSelector';floatingLayers.className='floating-layer-selector';
     floatingLayers.setAttribute('role','group');floatingLayers.setAttribute('aria-label','PCB layer selector');
-    floatingLayers.title='Select a copper layer · scroll here to cycle layers · arrow keys also work';
+    floatingLayers.title='Highlight a layer or use its eye to show/hide it · scroll here to cycle copper layers';
     let layerWheel=0,lastLayerCycle=0;
     const stepCopper=step=>{if(scene)return;const copper=(canvas.design?.layers||[]).filter(layer=>layer.endsWith('.Cu'));if(!copper.length)return;const index=copper.indexOf(canvas.focusedLayer),next=index<0?(step>0?0:copper.length-1):(index+step+copper.length)%copper.length;canvas.focusLayer(copper[next],$('layerFocusMode').value==='isolate'?'isolate':'dim');layers();canvas.draw();};
     floatingLayers.addEventListener('wheel',event=>{if(scene||event.ctrlKey)return;event.preventDefault();event.stopPropagation();layerWheel+=(event.deltaY||event.deltaX||0)*(event.deltaMode===1?16:event.deltaMode===2?400:1);if(Math.abs(layerWheel)<30||Date.now()-lastLayerCycle<120)return;stepCopper(layerWheel>0?1:-1);layerWheel=0;lastLayerCycle=Date.now();},{passive:false});
     floatingLayers.addEventListener('keydown',event=>{if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key))return;event.preventDefault();event.stopPropagation();stepCopper(['ArrowRight','ArrowDown'].includes(event.key)?1:-1);});
     floatingLayers.hidden=true;if(pcb)host.append(floatingLayers);
-    let floatingSignature='',floatingToggle=null,floatingFocusMode=null;
+    let floatingSignature='',floatingToggle=null,floatingFocusMode=null,layerKeyboard=false;
     const compactLayerBar=!globalThis.KiCadAndroidUI;
-    if(compactLayerBar)addEventListener('pointerdown',event=>{if(!floatingLayers.contains(event.target)&&floatingToggle){floatingLayers.classList.remove('layers-expanded');floatingToggle.setAttribute('aria-expanded','false');}});
+    const closeFloatingLayers=()=>{floatingLayers.classList.remove('layers-expanded');floatingToggle?.setAttribute('aria-expanded','false');};
+    floatingLayers.addEventListener('pointerdown',()=>{layerKeyboard=false;});
+    floatingLayers.addEventListener('pointerleave',()=>{if(compactLayerBar&&!layerKeyboard)closeFloatingLayers();});
+    floatingLayers.addEventListener('focusout',event=>{if(!floatingLayers.contains(event.relatedTarget))closeFloatingLayers();});
+    floatingLayers.addEventListener('keydown',event=>{layerKeyboard=true;if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeFloatingLayers();floatingToggle?.focus?.();}});
     syncFloatingLayers=()=>{
-      const copper=(canvas.design?.layers||[]).filter(layer=>layer.endsWith('.Cu'));
-      const hidden=!pcb||Boolean(scene)||!copper.length;if(floatingLayers.hidden!==hidden)floatingLayers.hidden=hidden;if(hidden)return;
-      const signature=JSON.stringify(copper);
+      const savedLayers=canvas.design?.layers||[];
+      const hidden=!pcb||Boolean(scene)||!savedLayers.length;if(floatingLayers.hidden!==hidden)floatingLayers.hidden=hidden;if(hidden)return;
+      const signature=JSON.stringify(savedLayers);
       if(signature!==floatingSignature){
-        floatingSignature=signature;floatingLayers.replaceChildren();floatingButtons.clear();
+        floatingSignature=signature;floatingLayers.replaceChildren();floatingButtons.clear();floatingEyes.clear();
         const layerOptions=document.createElement('div');
         if(compactLayerBar){
           layerOptions.className='compact-layer-options';floatingToggle=document.createElement('button');floatingToggle.type='button';floatingToggle.className='compact-layer-toggle';floatingToggle.setAttribute('aria-label','Choose PCB layers');floatingToggle.setAttribute('aria-expanded','false');floatingToggle.textContent='Layers';
           floatingToggle.onclick=()=>{const expanded=floatingToggle.getAttribute('aria-expanded')!=='true';floatingToggle.setAttribute('aria-expanded',String(expanded));floatingLayers.classList.toggle('layers-expanded',expanded);};
           floatingLayers.classList.remove('layers-expanded');floatingLayers.append(floatingToggle,layerOptions);
         }
-        const add=(name,title,action,color)=>{
+        const add=(name,title,action,color,targetNode)=>{
           const button=document.createElement('button');button.type='button';button.title=title;
           button.setAttribute('aria-label',title);button.dataset.layer=name;
           if(color){const swatch=document.createElement('span');swatch.className='layer-swatch';swatch.style.background=color;button.append(swatch);}
           const label=document.createElement('span');label.textContent=name;button.append(label);
-          button.onclick=()=>{if(scene)return;action();layers();canvas.draw();if(floatingToggle){floatingLayers.classList.remove('layers-expanded');floatingToggle.setAttribute('aria-expanded','false');}};
-          floatingButtons.set(name,button);(compactLayerBar?layerOptions:floatingLayers).append(button);
+          button.onclick=()=>{if(scene)return;action();layers();canvas.draw();};
+          floatingButtons.set(name,button);(targetNode||(compactLayerBar?layerOptions:floatingLayers)).append(button);return button;
         };
         floatingFocusMode=document.createElement('select');floatingFocusMode.setAttribute('aria-label','Layer selection style');floatingFocusMode.title='Highlight keeps other visible layers as context; Isolate hides them';for(const [value,label]of [['dim','Highlight layer'],['isolate','Isolate layer']]){const option=document.createElement('option');option.value=value;option.textContent=label;floatingFocusMode.append(option);}floatingFocusMode.value=$('layerFocusMode').value==='isolate'?'isolate':'dim';floatingFocusMode.onchange=()=>{$('layerFocusMode').value=floatingFocusMode.value;if(canvas.focusedLayer)canvas.focusLayer(canvas.focusedLayer,floatingFocusMode.value);layers();canvas.draw();};(compactLayerBar?layerOptions:floatingLayers).append(floatingFocusMode);
-        for(const layer of copper)add(layer,'Focus layer '+layer,()=>{canvas.focusLayer(layer,$('layerFocusMode').value==='isolate'?'isolate':'dim');},KiCadPCBRenderer.colorFor?.(layer)||'#8c9cab');
+        for(const layer of savedLayers){
+          const item=document.createElement('div'),eye=document.createElement('button');
+          item.className='compact-layer-item';eye.type='button';eye.className='compact-layer-eye';eye.dataset.layerVisibility=layer;
+          add(layer,'Focus layer '+layer,()=>{canvas.focusLayer(layer,$('layerFocusMode').value==='isolate'?'isolate':'dim');},KiCadPCBRenderer.colorFor?.(layer)||'#8c9cab',item);
+          eye.onclick=()=>{if(scene)return;const visible=canvas.visibleLayers.has(layer);if(visible){canvas.visibleLayers.delete(layer);if(canvas.focusedLayer===layer)canvas.focusedLayer=null;}else canvas.visibleLayers.add(layer);layers();canvas.draw();};
+          item.append(eye);(compactLayerBar?layerOptions:floatingLayers).append(item);floatingEyes.set(layer,eye);
+        }
         add('All','Show all saved board layers',()=>canvas.layerPreset('all'));
         add('Overview','Restore layer view before focusing',()=>canvas.restoreLayers());
         add('Filled copper','Toggle saved filled copper zones',()=>canvas.setZoneVisibility({filled:canvas.showFilledCopper===false}));
@@ -160,6 +170,7 @@
         const selected=name==='Worksheet'?canvas.paperVisible:name==='Numbers'?canvas.showTerminalNumbers!==false:name==='Net names'?canvas.showNetNames===true:name==='Filled copper'?canvas.showFilledCopper!==false:name==='Zone outlines'?canvas.showZoneOutlines!==false:name==='All'?!canvas.focusedLayer&&(canvas.design.layers||[]).every(layer=>canvas.visibleLayers.has(layer)):name==='Overview'?!canvas.focusedLayer&&!canvas.layerSnapshot:canvas.focusedLayer===name;
         if(button.getAttribute('aria-pressed')!==String(selected))button.setAttribute('aria-pressed',String(selected));
       }
+      for(const [layer,eye]of floatingEyes){const visible=canvas.visibleLayers.has(layer),label=(visible?'Hide ':'Show ')+layer,icon=visible?'eye':'eye-off';if(eye.getAttribute('aria-label')===label)continue;eye.setAttribute('aria-pressed',String(visible));eye.setAttribute('aria-label',label);eye.title=label;eye.setAttribute('data-icon',icon);if(globalThis.KiCadUIIcons)KiCadUIIcons.decorate(eye);else eye.textContent=visible?'Visible':'Hidden';}
       if(floatingFocusMode)floatingFocusMode.value=$('layerFocusMode').value==='isolate'?'isolate':'dim';
       if(floatingToggle&&floatingToggle.textContent!==(canvas.focusedLayer||'Layers'))floatingToggle.textContent=canvas.focusedLayer||'Layers';
     };
@@ -340,18 +351,19 @@
         probeMasterHost=document.createElement('div');Object.assign(probeMasterHost.style,{position:'fixed',left:'-400px',top:'0',width:'320px',height:'320px',visibility:'hidden'});document.body.append(probeMasterHost);
         const assets=probeAssets=KiCadBrowserData.createModelAssetCache(async path=>{const reply=await send({type:'repo-asset',repository,ref,file:path});if(!reply?.ok)throw Error(reply?.error||'Saved model unavailable.');return reply.result;});
         const inventory=await send({type:'repo-model-index',repository,ref,file:entry.path});if(disposed){assets.clear();probeMasterHost.remove();throw Error('Workspace closed.');}
-        parentScene=probeMaster=engine.mountBoard3D(probeMasterHost,file.content,{dark,boardPath:entry.path,assetPaths:inventory?.ok?inventory.result?.paths||[]:[],loadAsset:assets.load,externalInspector:true,onSelect:record=>workspace?.select3D(record),onInspect:record=>workspace?.inspect3D(record),onComment:record=>workspace?.comment3D(record),onViewChange:()=>workspace?.sceneViewChanged()});probeMasterPath=entry.path;
+        parentScene=probeMaster=engine.mountBoard3D(probeMasterHost,file.content,{dark,boardPath:entry.path,assetPaths:inventory?.ok?inventory.result?.paths||[]:[],loadAsset:assets.load,externalInspector:true,onSelect:(record,gesture)=>workspace?.select3D(record,gesture),onInspect:record=>workspace?.inspect3D(record),onComment:record=>workspace?.comment3D(record),onViewChange:()=>workspace?.sceneViewChanged()});probeMasterPath=entry.path;
         }catch(error){if(!probeMaster){probeAssets?.clear();probeMasterHost?.remove();}throw error;}finally{probeMasterLoading=false;}
       }
       if(!parentScene.createProbeViewport)throw Error('Update the 3D renderer to enable interactive probes.');
       const appearance=value=>value?.kind==='net'?{netNames:[value.netName||value.group?.name]}:value?.kind==='part'?{references:[value.reference]}:{uuids:(value?.primitives||group.primitives||[]).map(p=>p.uuid).filter(Boolean)};
-      const viewport=parentScene.createProbeViewport(holder,{selection:group.kind==='net'||group.code!==undefined?{netNames:[group.name]}:group.kind==='part'?{references:[group.name]}:{uuids:(group.primitives||[]).map(p=>p.uuid).filter(Boolean)},onSelect:record=>onSelect({...record,probeRecord:true}),onViewChange,dark});
+      const viewport=parentScene.createProbeViewport(holder,{selection:group.kind==='net'||group.code!==undefined?{netNames:[group.name]}:group.kind==='part'?{references:[group.name]}:{uuids:(group.primitives||[]).map(p=>p.uuid).filter(Boolean)},onSelect:(record,gesture)=>onSelect({...record,probeRecord:true},gesture),onViewChange,dark});
       const setSelection=viewport.setSelection?.bind(viewport);if(setSelection)viewport.setSelection=value=>setSelection(appearance(value));return viewport;
     }
     workspace=KiCadReviewWorkspace.mount({initialModel:prepared.model,initialDesign:prepared.design,initialNetModel:prepared.nets,files,repository,provider,host:providerContext.host,ref,rootFile,pcb,pairedFile:params.get('pairedFile')||undefined,getCanvas:()=>canvas,currentFile,focus,openSheet,getRulerUnits:()=>preferences.rulerUnits,
 
       getDesigns:()=>designs,resolveProbeViews,getSchematicProbeRows,mountProbe3D,updateDiagnostics,onOverviewHighlights:()=>sheetOverview?.refresh(),
       onHierarchy(hierarchy){if(!disposed)parent.postMessage({type:'kicad-review:hierarchy',repository,ref,hierarchy},ownOrigin);},
+      onAssemblyVariant({variant,config}){if(!disposed)parent.postMessage({type:'kicad-review:assembly-variant',repository,ref,file:requestedFile,rootFile,variant,config},ownOrigin);},
       onSelection(selection){if(crossApplying||!globalThis.KiCadPairedReview?.validSelection(selection))return;windowLink?.publish(selection);if(globalThis.KiCadVSCodeBridge?.selection)globalThis.KiCadVSCodeBridge.selection(selection);else parent.postMessage({type:'kicad-review:selection',selection},ownOrigin);},
       onCommentsChanged(){if(globalThis.KiCadVSCodeBridge?.onCommentsChanged)globalThis.KiCadVSCodeBridge.onCommentsChanged();else parent.postMessage({type:'kicad-review:comments-changed'},ownOrigin);},pullNumber:Number(params.get('pullNumber'))||null,pullRepository:params.get('pullRepository')||repository});
 
@@ -370,23 +382,41 @@
       const fitOverview=()=>{if(!overviewView||!composition)return;overviewFitted=true;overviewView.resize();overviewView.viewport.camera.bbox={x:-12,y:-4,w:composition.design.page.width+12,h:composition.design.page.height+4};overviewView.draw();};
       const miniature=document.createElement('section'),miniHeading=document.createElement('header'),miniTitle=document.createElement('strong'),miniMinimize=document.createElement('button'),miniMaximize=document.createElement('button'),miniClose=document.createElement('button'),miniBody=document.createElement('div'),miniShow=document.createElement('button');
       miniature.className='sheet-tree-miniature';miniature.setAttribute('aria-label','Sheet tree navigator');miniTitle.textContent='Sheet tree';miniMinimize.type=miniMaximize.type=miniClose.type=miniShow.type='button';miniMinimize.textContent='−';miniMinimize.setAttribute('aria-label','Minimize sheet tree');miniMinimize.setAttribute('aria-expanded','true');miniClose.textContent='×';miniClose.setAttribute('aria-label','Close sheet tree');miniBody.className='sheet-tree-miniature-body';miniHeading.append(miniTitle,miniMinimize,miniMaximize,miniClose);miniature.append(miniHeading,miniBody);host.append(miniature);
-      let miniMaximized=false;
-      function syncMiniatureSize(){const expanded=!miniBody.hidden,maximized=miniMaximized&&expanded;miniature.classList.toggle('maximized',maximized);miniMinimize.textContent=expanded?'−':'+';miniMinimize.setAttribute('aria-expanded',String(expanded));miniMinimize.setAttribute('aria-label',expanded?'Minimize sheet tree':'Expand sheet tree');miniMaximize.textContent=maximized?'Restore':'Maximize';miniMaximize.setAttribute('aria-label',maximized?'Restore sheet tree size':'Maximize sheet tree');miniMaximize.title=maximized?'Restore small sheet tree':'Enlarge sheet tree to the drawing pane';miniMaximize.setAttribute('aria-pressed',String(maximized));miniMaximize.setAttribute('data-icon',maximized?'restore':'maximize');globalThis.KiCadUIIcons?.decorate?.(miniMaximize);}
+      const miniTools=document.createElement('footer'),miniZoomOut=document.createElement('button'),miniZoomIn=document.createElement('button'),miniFit=document.createElement('button'),miniScale=document.createElement('output');miniTools.className='sheet-tree-miniature-tools';
+      for(const [button,text,label]of [[miniZoomOut,'−','Zoom sheet tree out'],[miniZoomIn,'+','Zoom sheet tree in'],[miniFit,'Fit','Fit sheet tree']]){button.type='button';button.textContent=text;button.setAttribute('aria-label',label);button.title=label;miniTools.append(button);}miniScale.setAttribute('aria-label','Sheet tree zoom');miniTools.append(miniScale);miniature.append(miniTools);
+      let miniMaximized=false,miniPosition=null,miniFitBox=null,miniView=null,miniSVG=null,miniGeometry='',miniPan=null,miniMove=null,miniSuppressClick=false;
+      const miniClamp=(value,min,max)=>Math.max(min,Math.min(Math.max(min,max),value));
+      function positionMiniature(){if(miniMaximized&&!miniBody.hidden){miniature.style.left=miniature.style.top=miniature.style.bottom='';return;}if(!miniPosition)return;const area=host.getBoundingClientRect?.(),box=miniature.getBoundingClientRect?.();if(!area||!box)return;miniPosition.x=miniClamp(miniPosition.x,4,area.width-box.width-4);miniPosition.y=miniClamp(miniPosition.y,4,area.height-box.height-4);miniature.style.left=miniPosition.x+'px';miniature.style.top=miniPosition.y+'px';miniature.style.bottom='auto';}
+      function syncMiniatureSize(){const expanded=!miniBody.hidden,maximized=miniMaximized&&expanded;miniature.classList.toggle('maximized',maximized);miniTools.hidden=!expanded;miniMinimize.textContent=expanded?'−':'+';miniMinimize.setAttribute('aria-expanded',String(expanded));miniMinimize.setAttribute('aria-label',expanded?'Minimize sheet tree':'Expand sheet tree');miniMaximize.textContent=maximized?'Restore':'Maximize';miniMaximize.setAttribute('aria-label',maximized?'Restore sheet tree size':'Maximize sheet tree');miniMaximize.title=maximized?'Restore small sheet tree':'Enlarge sheet tree to the drawing pane';miniMaximize.setAttribute('aria-pressed',String(maximized));miniMaximize.setAttribute('data-icon',maximized?'restore':'maximize');globalThis.KiCadUIIcons?.decorate?.(miniMaximize);positionMiniature();}
+      function paintMiniView(){if(!miniSVG||!miniView)return;miniSVG.setAttribute('viewBox',`${miniView.x} ${miniView.y} ${miniView.w} ${miniView.h}`);miniScale.textContent=Math.round(miniFitBox.w/miniView.w*100)+'%';}
+      function zoomMini(factor,point){if(!miniView||!miniFitBox)return;const scale=miniClamp(miniFitBox.w/miniView.w*factor,.5,12),w=miniFitBox.w/scale,h=miniFitBox.h/scale,at=point||{x:miniView.x+miniView.w/2,y:miniView.y+miniView.h/2};miniView={x:at.x-(at.x-miniView.x)/miniView.w*w,y:at.y-(at.y-miniView.y)/miniView.h*h,w,h};paintMiniView();}
+      function miniPoint(event){const box=miniSVG?.getBoundingClientRect?.();if(!box||!miniView||!box.width||!box.height)return null;const scale=Math.min(box.width/miniView.w,box.height/miniView.h),left=box.left+(box.width-miniView.w*scale)/2,top=box.top+(box.height-miniView.h*scale)/2;return{x:miniView.x+(event.clientX-left)/scale,y:miniView.y+(event.clientY-top)/scale,scale};}
+      miniZoomOut.onclick=()=>zoomMini(1/1.25);miniZoomIn.onclick=()=>zoomMini(1.25);miniFit.onclick=()=>{if(miniFitBox){miniView={...miniFitBox};paintMiniView();}};
+      miniHeading.tabIndex=0;miniHeading.setAttribute('aria-label','Sheet tree position; drag or use arrow keys to move');miniHeading.title='Drag to move · focus this header and use arrow keys';
+      miniHeading.addEventListener('pointerdown',event=>{if(miniMaximized||event.button>0||event.target?.closest?.('button'))return;const area=host.getBoundingClientRect?.(),box=miniature.getBoundingClientRect?.();if(!area||!box)return;miniMove={id:event.pointerId,x:event.clientX,y:event.clientY,left:box.left-area.left,top:box.top-area.top};miniHeading.setPointerCapture?.(event.pointerId);event.preventDefault();event.stopPropagation();});
+      miniHeading.addEventListener('pointermove',event=>{if(!miniMove||event.pointerId!==miniMove.id)return;miniPosition={x:miniMove.left+event.clientX-miniMove.x,y:miniMove.top+event.clientY-miniMove.y};positionMiniature();event.preventDefault();event.stopPropagation();});
+      const endMiniMove=()=>{miniMove=null;};miniHeading.addEventListener('pointerup',endMiniMove);miniHeading.addEventListener('pointercancel',endMiniMove);
+      miniHeading.addEventListener('keydown',event=>{if(event.target!==miniHeading||!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key)||miniMaximized)return;const area=host.getBoundingClientRect?.(),box=miniature.getBoundingClientRect?.();if(!area||!box)return;const step=event.shiftKey?32:12;miniPosition={x:box.left-area.left+({'ArrowLeft':-step,'ArrowRight':step}[event.key]||0),y:box.top-area.top+({'ArrowUp':-step,'ArrowDown':step}[event.key]||0)};positionMiniature();event.preventDefault();event.stopPropagation();});
       miniMaximize.className='icon-only';miniMaximize.id='maximizeSheetTree';miniMaximize.onclick=()=>{miniMaximized=miniBody.hidden||!miniMaximized;miniBody.hidden=false;syncMiniatureSize();};
       miniMinimize.onclick=()=>{miniBody.hidden=!miniBody.hidden;syncMiniatureSize();};
       miniClose.onclick=()=>{miniature.hidden=true;};miniShow.id='showSheetTree';miniShow.textContent='Show sheet tree';miniShow.onclick=()=>{miniature.hidden=false;miniBody.hidden=false;syncMiniatureSize();$('viewerSettings').hidden=true;};$('viewerSettings')?.append(miniShow);syncMiniatureSize();
       const renderMiniature=()=>{
         const entries=(workspace.overviewSheets?.()||[]).filter(entry=>entry.sheet).map(entry=>({path:entry.sheet.path,label:entry.sheet.label||entry.sheet.path,placements:entry.placements||[],design:{page:{width:297,height:210},primitives:[]},groups:[]}));
         const mini=KiCadReviewWorkspace.composeSheetOverview(entries),svg=document.createElementNS('http://www.w3.org/2000/svg','svg'),width=mini.design.page.width,height=mini.design.page.height;
-        svg.setAttribute('viewBox',`-12 -4 ${width+24} ${height+8}`);svg.setAttribute('width','100%');svg.setAttribute('height',String(Math.max(100,Math.min(160,(height+8)/(width+24)*264))));svg.setAttribute('aria-label','All sheets, parents above children');
+        const geometry=JSON.stringify(mini.pages.map(page=>[page.path,page.x,page.y,page.w,page.h]));miniFitBox={x:-12,y:-4,w:width+24,h:height+8};if(!miniView||geometry!==miniGeometry)miniView={...miniFitBox};miniGeometry=geometry;miniSVG=svg;miniPan=null;paintMiniView();svg.setAttribute('width','100%');svg.setAttribute('height',String(Math.max(100,Math.min(160,(height+8)/(width+24)*264))));svg.setAttribute('aria-label','All sheets, parents above children; drag to pan, wheel or plus/minus to zoom, Home to fit');svg.setAttribute('tabindex','0');
+        svg.addEventListener('wheel',event=>{const point=miniPoint(event);event.preventDefault();event.stopPropagation();zoomMini(Math.exp(-Math.max(-200,Math.min(200,event.deltaY||0))*.003),point);},{passive:false});
+        svg.addEventListener('pointerdown',event=>{if(event.button>0)return;const at=miniPoint(event);miniSuppressClick=false;if(!at)return;miniPan={id:event.pointerId,x:event.clientX,y:event.clientY,view:{...miniView},scale:at.scale,moved:false};});
+        svg.addEventListener('pointermove',event=>{if(!miniPan||event.pointerId!==miniPan.id)return;const dx=event.clientX-miniPan.x,dy=event.clientY-miniPan.y;if(!miniPan.moved&&Math.hypot(dx,dy)<4)return;miniPan.moved=true;miniSuppressClick=true;svg.setPointerCapture?.(event.pointerId);miniView={...miniPan.view,x:miniPan.view.x-dx/miniPan.scale,y:miniPan.view.y-dy/miniPan.scale};paintMiniView();event.preventDefault();event.stopPropagation();});
+        const endPan=()=>{miniPan=null;};svg.addEventListener('pointerup',endPan);svg.addEventListener('pointercancel',endPan);
+        svg.addEventListener('keydown',event=>{if(!['+','=','-','0','Home','ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key))return;event.preventDefault();event.stopPropagation();if(event.key==='Home'||event.key==='0')miniFit.onclick();else if(event.key==='+'||event.key==='=')zoomMini(1.25);else if(event.key==='-')zoomMini(1/1.25);else{miniView={...miniView,x:miniView.x+({'ArrowLeft':-.1,'ArrowRight':.1}[event.key]||0)*miniView.w,y:miniView.y+({'ArrowUp':-.1,'ArrowDown':.1}[event.key]||0)*miniView.h};paintMiniView();}});
         const graph=globalThis.KiCadSheetHierarchyLinks?.build(mini.pages,{headingGap:0});
         const defs=document.createElementNS('http://www.w3.org/2000/svg','defs'),arrow=document.createElementNS('http://www.w3.org/2000/svg','marker'),tip=document.createElementNS('http://www.w3.org/2000/svg','path');arrow.setAttribute('id','sheetTreeArrow');arrow.setAttribute('viewBox','0 0 6 6');arrow.setAttribute('refX','5');arrow.setAttribute('refY','3');arrow.setAttribute('markerWidth','5');arrow.setAttribute('markerHeight','5');arrow.setAttribute('orient','auto');tip.setAttribute('d','M 0 0 L 6 3 L 0 6 Z');tip.setAttribute('fill','#58a89f');arrow.append(tip);defs.append(arrow);svg.append(defs);
-        for(const link of graph?.links||[]){const line=document.createElementNS('http://www.w3.org/2000/svg','path'),points=link.points||[link.from,{x:link.from.x,y:(link.from.y+link.to.y)/2},{x:link.to.x,y:(link.from.y+link.to.y)/2},link.to];line.setAttribute('d',points.map((point,index)=>`${index?'L':'M'} ${point.x} ${point.y}`).join(' '));line.setAttribute('class','sheet-tree-miniature-link');line.setAttribute('marker-end','url(#sheetTreeArrow)');svg.append(line);}
+        for(const link of graph?.links||[]){const line=document.createElementNS('http://www.w3.org/2000/svg','path'),points=link.points||[link.from,{x:link.from.x,y:(link.from.y+link.to.y)/2},{x:link.to.x,y:(link.from.y+link.to.y)/2},link.to];line.setAttribute('d',globalThis.KiCadSheetHierarchyLinks?.pathData?.(points)||points.map((point,index)=>`${index?'L':'M'} ${point.x} ${point.y}`).join(' '));line.setAttribute('class','sheet-tree-miniature-link');line.setAttribute('marker-end','url(#sheetTreeArrow)');svg.append(line);}
         for(const page of mini.pages){
           const node=document.createElementNS('http://www.w3.org/2000/svg','g'),rect=document.createElementNS('http://www.w3.org/2000/svg','rect'),label=document.createElementNS('http://www.w3.org/2000/svg','text'),tooltip=document.createElementNS('http://www.w3.org/2000/svg','title'),selection=workspace.overviewSelection?.(page.path);
           node.setAttribute('role','button');node.setAttribute('tabindex','0');node.setAttribute('aria-label',`Go to ${page.label}`);node.setAttribute('class','sheet-tree-miniature-node'+(selection?.netIds?.length?' highlighted':'')+(page.path===currentFile()?' current':''));rect.setAttribute('x',page.x);rect.setAttribute('y',page.y);rect.setAttribute('width',page.w);rect.setAttribute('height',page.h);rect.setAttribute('rx','15');label.setAttribute('x',page.x+page.w/2);label.setAttribute('y',page.y+page.h/2);label.textContent=page.label.length>12?page.label.slice(0,9)+'…':page.label;tooltip.textContent=page.path;
           const navigate=()=>{const target=opened&&composition?.pages.find(p=>p.path===page.path);if(target&&overviewView){overviewFitted=false;overviewView.viewport.camera.bbox={x:target.x-12,y:target.y-14,w:target.w+24,h:target.h+28};overviewView.draw();}else{if(opened)close();workspace.followSheet?.(page.path);}};
-          node.onclick=navigate;node.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();navigate();}});node.append(rect,label,tooltip);svg.append(node);
+          node.onclick=()=>{if(miniSuppressClick){miniSuppressClick=false;return;}navigate();};node.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();navigate();}});node.append(rect,label,tooltip);svg.append(node);
         }
         miniBody.replaceChildren();miniBody.append(svg);
       };
@@ -436,8 +466,9 @@
       const open=()=>{if(opened)return;opened=true;gallery.hidden=false;canvas.canvas.hidden=true;toggle.setAttribute('aria-pressed','true');return rebuild();};
       const toggle=document.createElement('button');toggle.id='allSheetPagesButton';toggle.type='button';toggle.textContent='All sheets';toggle.title='See every loaded schematic page on one canvas';toggle.setAttribute('aria-pressed','false');toggle.onclick=()=>opened?close():open();
       ($('sheetHome')?.parentElement||$('frameControls')).append(toggle);back.onclick=close;fitAll.onclick=fitOverview;
-      const resizeOverview=()=>{if(opened&&overviewFitted)requestAnimationFrame(()=>{if(opened&&overviewFitted)fitOverview();});};globalThis.addEventListener?.('resize',resizeOverview);
-      sheetOverview={setTerminalNumbers(visible){if(overviewView){overviewView.showTerminalNumbers=Boolean(visible);overviewView.draw();}},open,close,isOpen:()=>opened,toggle:()=>opened?close():open(),refreshTree:renderMiniature,refresh(){renderMiniature();if(opened)return rebuild();},dispose(){globalThis.removeEventListener?.('resize',resizeOverview);close();$('unselect').removeEventListener('click',clearOverviewSelection);$('clearHighlights').removeEventListener('click',clearOverviewSelection);gallery.remove();toggle.remove();miniature.remove();miniShow.remove();}};globalThis.KiCadSheetOverview=sheetOverview;
+      const resizeOverview=()=>{positionMiniature();if(opened&&overviewFitted)requestAnimationFrame(()=>{if(opened&&overviewFitted)fitOverview();});};globalThis.addEventListener?.('resize',resizeOverview);
+      const miniResize=typeof ResizeObserver==='function'?new ResizeObserver(()=>positionMiniature()):null;miniResize?.observe(host);
+      sheetOverview={setTheme(value){if(overviewView){overviewView.dark=Boolean(value);overviewView.draw();}},setTerminalNumbers(visible){if(overviewView){overviewView.showTerminalNumbers=Boolean(visible);overviewView.draw();}},open,close,isOpen:()=>opened,toggle:()=>opened?close():open(),refreshTree:renderMiniature,refresh(){renderMiniature();if(opened)return rebuild();},dispose(){miniResize?.disconnect();globalThis.removeEventListener?.('resize',resizeOverview);close();$('unselect').removeEventListener('click',clearOverviewSelection);$('clearHighlights').removeEventListener('click',clearOverviewSelection);gallery.remove();toggle.remove();miniature.remove();miniShow.remove();}};globalThis.KiCadSheetOverview=sheetOverview;
     addEventListener('keydown',event=>{if(event.key==='Escape'&&opened){event.preventDefault();close();}});
     }
 
@@ -449,7 +480,7 @@
 
     $('fitDrawing').onclick=()=>fit('drawing');$('fitPage').onclick=()=>fit('page');$('zoomIn').onclick=()=>zoom(1.25);$('zoomOut').onclick=()=>zoom(1/1.25);
 
-    $('themeButton').title=pcb?'Toggle board theme (T)':'Toggle paper theme (T)';$('themeButton').setAttribute('aria-pressed',String(dark));
+    $('themeButton').title='Toggle interface and drawing theme; T toggles the drawing only';$('themeButton').setAttribute('aria-pressed',String(dark));
 
     const savePreferences=()=>chrome.storage?.local?.set({[preferenceKey]:preferences}).catch(error=>{$('pageSetupStatus').textContent=error.message;});
 
@@ -457,9 +488,11 @@
     const toggleNumbers=()=>{preferences.showTerminalNumbers=canvas.showTerminalNumbers===false;applyTheme();savePreferences();};terminalNumberButton.onclick=toggleNumbers;
     $('showTerminalNumbers').onchange=()=>{preferences.showTerminalNumbers=$('showTerminalNumbers').checked;applyTheme();savePreferences();};
     $('netNamesSetting').hidden=!pcb;$('showNetNames').onchange=()=>{preferences.showNetNames=$('showNetNames').checked;applyTheme();savePreferences();};
-    const applyTheme=()=>{canvas.showTerminalNumbers=preferences.showTerminalNumbers!==false;$('showTerminalNumbers').checked=canvas.showTerminalNumbers;terminalNumberButton.setAttribute('aria-pressed',String(canvas.showTerminalNumbers));canvas.showNetNames=preferences.showNetNames===true;$('showNetNames').checked=canvas.showNetNames;dark=preferences.drawingTheme==='dark';canvas.dark=dark;canvas.acceleration=preferences.acceleration==='off'?'off':'auto';scene?.setTheme(dark);scene?.setTerminalLabels?.(canvas.showNetNames);scene?.setTerminalNumbers?.(canvas.showTerminalNumbers);sheetOverview?.setTerminalNumbers?.(canvas.showTerminalNumbers);workspace?.syncTerminalVisibility?.();document.body.dataset.uiTheme=preferences.uiTheme;$('uiTheme').value=preferences.uiTheme;$('drawingTheme').value=preferences.drawingTheme;$('rulerUnits').value=preferences.rulerUnits;if($('acceleration'))$('acceleration').value=canvas.acceleration;$('themeButton').setAttribute('aria-pressed',String(dark));if($('displayPreset'))$('displayPreset').value=preferences.uiTheme==='light'&&preferences.drawingTheme===(pcb?'dark':'light')?'kicad':preferences.uiTheme===preferences.drawingTheme?preferences.uiTheme:'custom';if(!scene)canvas.draw();};
+    let lastThemeNotice=null;
+    function publishThemeState(){const state={uiTheme:preferences.uiTheme,drawingTheme:preferences.drawingTheme},signature=JSON.stringify(state);if(signature===lastThemeNotice)return;lastThemeNotice=signature;if(parent!==globalThis)parent.postMessage({type:'kicad-review:theme',repository,ref,file:requestedFile,...state},ownOrigin);}
+    const applyTheme=()=>{canvas.showTerminalNumbers=preferences.showTerminalNumbers!==false;$('showTerminalNumbers').checked=canvas.showTerminalNumbers;terminalNumberButton.setAttribute('aria-pressed',String(canvas.showTerminalNumbers));canvas.showNetNames=preferences.showNetNames===true;$('showNetNames').checked=canvas.showNetNames;dark=preferences.drawingTheme==='dark';canvas.dark=dark;canvas.acceleration=preferences.acceleration==='off'?'off':'auto';scene?.setTheme(dark);if(probeMaster&&probeMaster!==scene)probeMaster.setTheme?.(dark);sheetOverview?.setTheme?.(dark);scene?.setTerminalLabels?.(canvas.showNetNames);scene?.setTerminalNumbers?.(canvas.showTerminalNumbers);sheetOverview?.setTerminalNumbers?.(canvas.showTerminalNumbers);workspace?.syncTerminalVisibility?.();document.body.dataset.uiTheme=preferences.uiTheme;document.body.dataset.drawingTheme=preferences.drawingTheme;$('uiTheme').value=preferences.uiTheme;$('drawingTheme').value=preferences.drawingTheme;$('rulerUnits').value=preferences.rulerUnits;if($('acceleration'))$('acceleration').value=canvas.acceleration;$('themeButton').setAttribute('aria-pressed',String(dark));if($('displayPreset'))$('displayPreset').value=preferences.uiTheme==='light'&&preferences.drawingTheme===(pcb?'dark':'light')?'kicad':preferences.uiTheme===preferences.drawingTheme?preferences.uiTheme:'custom';if(!scene)canvas.draw();publishThemeState();};
 
-    $('themeButton').onclick=()=>{preferences.drawingTheme=dark?'light':'dark';applyTheme();savePreferences();};
+    $('themeButton').onclick=()=>{preferences.uiTheme=preferences.drawingTheme=dark?'light':'dark';applyTheme();savePreferences();windowLink?.publishTheme?.(preferences.drawingTheme);};
 
     for(const [id,key] of [['uiTheme','uiTheme'],['drawingTheme','drawingTheme'],['rulerUnits','rulerUnits']])$(id).onchange=()=>{preferences[key]=$(id).value;applyTheme();savePreferences();};applyTheme();
     if($('acceleration'))$('acceleration').onchange=()=>{preferences.acceleration=$('acceleration').value;applyTheme();savePreferences();};
@@ -492,11 +525,11 @@
       let modelIndex=null,assetWarnings=[];
       const safeModelPath=path=>typeof path==='string'&&path.length<=500&&/\.(?:wrl|vrml|glb|step|stp)$/i.test(path)&&!/[\\:\x00-\x1f\x7f?#%]/.test(path)&&path.split('/').every(part=>part&&part!=='.'&&part!=='..');
       const assetPaths=()=>modelIndex||=send({type:'repo-model-index',repository,ref,file:rootFile}).then(result=>{
-        if(!result?.ok||!Array.isArray(result.result?.paths)){assetWarnings=['Project model inventory is unavailable; explicit relative model paths can still be loaded.'];return [];}
-        assetWarnings=Array.isArray(result.result.warnings)?result.result.warnings.filter(w=>typeof w==='string').slice(0,48).map(w=>w.slice(0,500)):[];
+        if(!result?.ok||!Array.isArray(result.result?.paths)){assetWarnings.splice(0,assetWarnings.length,'Project model inventory is unavailable; explicit relative model paths can still be loaded.');return [];}
+        assetWarnings.splice(0,assetWarnings.length,...(Array.isArray(result.result.warnings)?result.result.warnings.filter(w=>typeof w==='string').slice(0,48).map(w=>w.slice(0,500)):[]));
         if(result.result.paths.length>2000)assetWarnings.push('Model inventory was limited to 2000 paths.');
         return result.result.paths.slice(0,2000).filter(safeModelPath);
-      }).catch(()=>{assetWarnings=['Project model inventory could not be read; explicit relative model paths can still be loaded.'];return [];});
+      }).catch(()=>{assetWarnings.splice(0,assetWarnings.length,'Project model inventory could not be read; explicit relative model paths can still be loaded.');return [];});
 
       const load=()=>loading||=new Promise((resolve,reject)=>{if(globalThis.SpikeBoard3D?.mountBoard3D){resolve(SpikeBoard3D);return;}const script=document.createElement('script');script.src='vendor/spike-board3d.bundle.js';script.onload=()=>globalThis.SpikeBoard3D?.mountBoard3D?resolve(SpikeBoard3D):reject(new Error('SPIKE 3D did not initialize.'));script.onerror=()=>{loading=null;reject(new Error('SPIKE 3D could not be loaded.'));};document.head.append(script);});
 
@@ -504,15 +537,15 @@
 
       mode.onclick=async()=>{
 
-        if(busy)return;if(scene){if(scene.getProbeCount?.()>0){probeMaster=scene;probeMasterPath=rootFile;}else scene.dispose();scene=null;pane.hidden=true;canvas.canvas.hidden=false;workspace.setScene(null);$('drawingLegend').hidden=false;lock(false);mode.setAttribute('aria-pressed','false');if($('renderMode'))$('renderMode').textContent='2D';canvas.resize();canvas.draw();return;}
+        if(busy)return;if(scene){probeMaster=scene;probeMasterPath=rootFile;scene=null;pane.hidden=true;canvas.canvas.hidden=false;workspace.setScene(null);$('drawingLegend').hidden=false;lock(false);mode.setAttribute('aria-pressed','false');if($('renderMode'))$('renderMode').textContent='2D';canvas.resize();canvas.draw();return;}
 
         busy=true;mode.disabled=true;
 
-        try{const engine=await load(),modelPaths=await assetPaths();if(disposed)return;pane.hidden=false;canvas.canvas.hidden=true;
+        try{const engine=await load(),modelPaths=assetPaths();if(disposed)return;pane.hidden=false;canvas.canvas.hidden=true;
 
           if(probeMasterLoading)throw Error('Wait for the 3D probe to finish loading.');
           if(probeMaster&&probeMasterPath===rootFile){scene=probeMaster;probeMaster=null;if(probeMasterHost){Object.assign(probeMasterHost.style,{position:'absolute',left:'0',top:'0',width:'100%',height:'100%',visibility:'visible'});pane.append(probeMasterHost);}}
-          else scene=engine.mountBoard3D(pane,files.find(file=>file.path===rootFile).content,{dark,showNetNames:canvas.showNetNames,showTerminalNumbers:canvas.showTerminalNumbers,onTerminalNumbersChange:visible=>{preferences.showTerminalNumbers=visible;applyTheme();savePreferences();},onTerminalLabelsChange:visible=>{preferences.showNetNames=visible;applyTheme();savePreferences();},boardPath:rootFile,assetPaths:modelPaths,assetWarnings,loadAsset:modelAssetCache.load,externalInspector:true,onViewChange:()=>workspace?.sceneViewChanged(),onAnchor:({point})=>workspace?.positionSimulation(point),onMeasurementMode:active=>{$("measureButton").setAttribute("aria-pressed",String(active));$("measurementStatus").textContent=active?"3D measurement: select two model surface points.":"";},onSelect:record=>workspace?.select3D(record),onInspect:record=>workspace?.inspect3D(record),onComment:record=>workspace?.comment3D(record)});
+          else scene=engine.mountBoard3D(pane,files.find(file=>file.path===rootFile).content,{dark,showNetNames:canvas.showNetNames,showTerminalNumbers:canvas.showTerminalNumbers,onTerminalNumbersChange:visible=>{preferences.showTerminalNumbers=visible;applyTheme();savePreferences();},onTerminalLabelsChange:visible=>{preferences.showNetNames=visible;applyTheme();savePreferences();},boardPath:rootFile,assetPathsPromise:modelPaths,assetWarnings,loadAsset:modelAssetCache.load,externalInspector:true,onViewChange:()=>workspace?.sceneViewChanged(),onAnchor:({point})=>workspace?.positionSimulation(point),onMeasurementMode:active=>{$("measureButton").setAttribute("aria-pressed",String(active));$("measurementStatus").textContent=active?"3D measurement: select two model surface points.":"";},onSelect:(record,gesture)=>workspace?.select3D(record,gesture),onInspect:record=>workspace?.inspect3D(record),onComment:record=>workspace?.comment3D(record)});
 
           workspace.setScene(scene);syncFloatingLayers();$('drawingLegend').hidden=true;lock(true);mode.setAttribute('aria-pressed','true');if($('renderMode'))$('renderMode').textContent='3D';
 
@@ -537,10 +570,11 @@
 
       const msg=event.data;
       if(msg.command==='set-theme'){
-        if(!['light','dark'].includes(msg.theme))return;
-        preferences.uiTheme=preferences.drawingTheme=msg.theme;applyTheme();savePreferences();windowLink?.publishTheme?.(msg.theme);return;
+        const uiTheme=msg.uiTheme??msg.theme,drawingTheme=msg.drawingTheme??msg.theme;if(!['light','dark'].includes(uiTheme)||!['light','dark'].includes(drawingTheme))return;
+        preferences.uiTheme=uiTheme;preferences.drawingTheme=drawingTheme;applyTheme();savePreferences();if(uiTheme===drawingTheme)windowLink?.publishTheme?.(drawingTheme);return;
       }
-      if(msg.command==='search-result'){const value=msg.result;if(value&&globalThis.KiCadWorkspaceSearch?.safePath(value.path)&&['object','file','report','draft'].includes(value.kind))workspace.openWorkspaceSearchResult?.(value).catch(error=>{label('reviewNotice',error.message);$('reviewNotice').hidden=false;});return;}
+      if(msg.command==='assembly-variant'){if(msg.repository!==repository||msg.ref!==ref||msg.file!==requestedFile)return;try{workspace.applyAssemblyVariant?.({variant:msg.variant,config:msg.config});}catch(error){label('reviewNotice',error.message);$('reviewNotice').hidden=false;}return;}
+      if(msg.command==='search-result'){const value=msg.result;if(value&&(value.kind==='command'&&value.action==='sheet-tree'||globalThis.KiCadWorkspaceSearch?.safePath(value.path))&&(['object','file','report','draft'].includes(value.kind)||value.kind==='command'&&value.action==='sheet-tree'))workspace.openWorkspaceSearchResult?.(value).catch(error=>{label('reviewNotice',error.message);$('reviewNotice').hidden=false;});return;}
       if(msg.command==='detach-sync'&&typeof msg.enabled==='boolean'){windowLink?.setEnabled(msg.enabled);return;}
       if(msg.command==='workspace-view'){
         if(!['schematic','layout','3d','draftsman','simulation','bom'].includes(msg.mode))return;
@@ -571,7 +605,7 @@
       if(scene){if(event.key.toLowerCase()==='f'||event.key==='Home'){event.preventDefault();scene.fit?.(event.key==='Home');}else if(['+','='].includes(event.key)){event.preventDefault();scene.zoom?.(1.25);}else if(['-','_'].includes(event.key)){event.preventDefault();scene.zoom?.(.8);}return;}
 
       if(event.key==='Escape'&&!$('viewerSettings').hidden){event.preventDefault();closeSettings();return;}
-      if(event.key==='Escape'&&canvas.focusedLayer){canvas.restoreLayers();layers();canvas.draw();}else if(['[',']'].includes(event.key)&&pcb){const choices=canvas.design.layers||[],index=choices.indexOf(canvas.focusedLayer||canvas.activeLayer);if(choices.length){event.preventDefault();canvas.focusLayer(choices[(index+(event.key===']'?1:-1)+choices.length)%choices.length],$('layerFocusMode').value||'dim');layers();canvas.draw();}}else if(event.shiftKey&&event.key.toLowerCase()==='f'&&canvas.focusedLayer){event.preventDefault();$('fitLayer').click();}else if(['+','='].includes(event.key)){event.preventDefault();zoom(1.25);}else if(['-','_'].includes(event.key)){event.preventDefault();zoom(1/1.25);}else if(event.key.toLowerCase()==='f'){event.preventDefault();fit('drawing');}else if(event.key==='Home'){event.preventDefault();fit('page');}else if(event.key.toLowerCase()==='t'){event.preventDefault();$('themeButton').click();}
+      if(event.key==='Escape'&&canvas.focusedLayer){canvas.restoreLayers();layers();canvas.draw();}else if(['[',']'].includes(event.key)&&pcb){const choices=canvas.design.layers||[],index=choices.indexOf(canvas.focusedLayer||canvas.activeLayer);if(choices.length){event.preventDefault();canvas.focusLayer(choices[(index+(event.key===']'?1:-1)+choices.length)%choices.length],$('layerFocusMode').value||'dim');layers();canvas.draw();}}else if(event.shiftKey&&event.key.toLowerCase()==='f'&&canvas.focusedLayer){event.preventDefault();$('fitLayer').click();}else if(['+','='].includes(event.key)){event.preventDefault();zoom(1.25);}else if(['-','_'].includes(event.key)){event.preventDefault();zoom(1/1.25);}else if(event.key.toLowerCase()==='f'){event.preventDefault();fit('drawing');}else if(event.key==='Home'){event.preventDefault();fit('page');}else if(event.key.toLowerCase()==='t'){event.preventDefault();preferences.drawingTheme=dark?'light':'dark';applyTheme();savePreferences();}
 
     });
 

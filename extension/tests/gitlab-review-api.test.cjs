@@ -104,7 +104,7 @@ test('Issues, notes and threaded GitLab discussions publish formatted notes once
     const first = await h.api.publish(message), second = await h.api.publish(message);
     assert.equal(first.remoteRef.provider, 'gitlab'); assert.equal(second.duplicate, true);
     const mutations = h.calls.filter(call => call.init.method === 'POST'); assert.equal(mutations.length, 1); assert.equal(mutations[0].init.headers.Authorization, 'Bearer ' + TOKEN);
-    const payload = JSON.parse(mutations[0].init.body); assert.match(payload.description || payload.body, /## KiCad visual review/); assert.match(first.remoteRef.url, /\/group\/sub\/project\/-\/issues\/7/);
+    const payload = JSON.parse(mutations[0].init.body); assert.match(payload.description || payload.body, /<details><summary>Design context/);assert.ok((payload.description || payload.body).indexOf('<details>')>0); assert.match(first.remoteRef.url, /\/group\/sub\/project\/-\/issues\/7/);
   }
 });
 test('policy denial and ambiguous missing policy prevent GitLab mutations', async () => {

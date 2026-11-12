@@ -4,13 +4,13 @@ function runtime(fetchFile,inventoryFiles=null,inventoryError=null,options={}){
  class Element extends EventTarget{get ownerDocument(){return context.document;}get firstChild(){return this.children[0];}constructor(){super();this.children=[];this.value='';this.hidden=false;this.style={};this.dataset={};this.attributes={};this.text='';}append(...items){this.children.push(...items);}replaceChildren(...items){this.children=items;this.text='';}setAttribute(k,v){this.attributes[k]=String(v);}set textContent(v){this.text=String(v);this.children=[];}get textContent(){return this.text+this.children.map(n=>n.textContent).join(' ');}getBoundingClientRect(){return{left:0,top:0,width:800,height:600};}getContext(){return new Proxy({},{get:(o,k)=>o[k]||(()=>{}),set:(o,k,v)=>(o[k]=v,true)});}}
  const elements=new Map(),get=id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id);},requests=[],handlers={};let mounted=null;
  const bodyClasses=new Set();const classList={add:(...names)=>names.forEach(n=>bodyClasses.add(n)),remove:(...names)=>names.forEach(n=>bodyClasses.delete(n)),toggle:(n,force)=>{const enabled=typeof force==='boolean'?force:!bodyClasses.has(n);if(enabled)bodyClasses.add(n);else bodyClasses.delete(n);return enabled;},contains:n=>bodyClasses.has(n)};
- const parentMessages=[];const context={setTimeout:(fn,ms)=>{const timer=setTimeout(fn,ms);timer.unref();return timer;},clearTimeout,parent:{postMessage:(message,origin)=>parentMessages.push({message,origin})},AbortController,KiCadLoading:options.loading,URLSearchParams,TextEncoder,TextDecoder,Map,Set,console,location:{origin:'https://viewer.test',search:'?repository=wayri/review&ref='+encodeURIComponent(options.ref||'main')+'&file=board.kicad_pro'+(options.projectOnly?'&projectOnly=1':'')},document:{querySelector:()=>null,getElementById:get,createElement:()=>new Element(),createElementNS:()=>new Element(),body:{dataset:{},classList},documentElement:{style:{}}},addEventListener:(type,fn)=>handlers[type]=fn,
+ const parentMessages=[];const context={setTimeout:(fn,ms)=>{const timer=setTimeout(fn,ms);timer.unref();return timer;},clearTimeout,parent:{postMessage:(message,origin)=>parentMessages.push({message,origin})},AbortController,KiCadLoading:options.loading,URLSearchParams,TextEncoder,TextDecoder,Map,Set,console,location:{origin:'https://viewer.test',search:'?repository=wayri/review&ref='+encodeURIComponent(options.ref||'main')+'&file='+encodeURIComponent(options.file||'board.kicad_pro')+(options.projectOnly?'&projectOnly=1':'')},document:{querySelector:()=>null,getElementById:get,createElement:()=>new Element(),createElementNS:()=>new Element(),body:{dataset:{},classList},documentElement:{style:{}}},addEventListener:(type,fn)=>handlers[type]=fn,
  KiCadReviewWorkspace:require('../review-workspace.js'),KiCadGitHub:require('../parsing.js'),KiCadProjectSettings:require('../project-settings.js'),KiCadProjectSettingsUI:require('../project-settings-ui.js'),KiCadBoardSetupUI:require('../board-setup-ui.js'),KiCadGerberRenderer:require('../gerber-renderer.js'),KiCadUIIcons:{decorate(){}},
- KiCadOwnedCanvas:{mount(host){mounted=new EventTarget();Object.assign(mounted,{canvas:new Element(),viewport:{camera:new(require('../owned-canvas.js').Camera)(800,600)},resize(){},zoom_to_board(){},draw(){this.renderPrimitives?.(this.canvas.getContext(),this.viewport.camera,this);},dispose(){}});mounted.canvas.width=800;mounted.canvas.height=600;return mounted;}},
+ KiCadOwnedCanvas:{mount(host,options){mounted=new EventTarget();Object.assign(mounted,{...options,canvas:new Element(),viewport:{camera:new(require('../owned-canvas.js').Camera)(800,600)},resize(){},zoom_to_board(){},draw(){this.renderPrimitives?.(this.canvas.getContext(),this.viewport.camera,this);},dispose(){}});mounted.canvas.width=800;mounted.canvas.height=600;return mounted;}},
  chrome:{runtime:{getURL:name=>name,sendMessage:async request=>{requests.push(request);if(request.type==='project-inventory'&&inventoryError)return{ok:false,error:inventoryError};if(request.type==='project-inventory')return{ok:true,result:{snapshotRef:'a'.repeat(40),warnings:[],files:inventoryFiles||[{path:'board.kicad_pro'},{path:'top.gbr'},{path:'bottom.gbr'}]}};try{return{ok:true,result:{path:request.file,content:await fetchFile(request.file)}};}catch(e){return{ok:false,error:e.message};}}}}};
  if(options.vscode)context.KiCadVSCodeContext={search:context.location.search};
  if(options.engineeringLauncher)context.KiCadEngineeringLauncher=options.engineeringLauncher;
- vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../project-viewer.js'),'utf8'),context);return{get,requests,canvas:()=>mounted,handlers,bodyClasses,parentMessages};
+ vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../project-viewer.js'),'utf8'),context);return{get,requests,canvas:()=>mounted,handlers,bodyClasses,parentMessages,context};
 }
 const gerber='%FSLAX24Y24*%%MOMM*%%ADD10C,1*%D10*X010000Y020000D03*M02*';
 test('Board Setup is an independent page and Back restores settings without reloading source',async()=>{
@@ -134,8 +134,8 @@ test('project Stop cancels the scoped read and rejects late source activation',a
 });
 
 
-test('project starts at the file launch page and builds settings controls only on request',async()=>{
- const view=runtime(async file=>file.endsWith('.kicad_pcb')?'(kicad_pcb)':'{}',[{path:'board.kicad_pro'},{path:'board.kicad_sch'},{path:'board.kicad_pcb'},{path:'alternate.kicad_pcb'}]);await tick();assert.equal(view.get('overviewPanel').hidden,false);assert.equal(view.get('settingSections').children.length,0);assert.match(view.get('overviewContent').textContent,/Open Schematic.*Open Layout.*Calculator.*Gerber viewer/);
+test('embedded project settings retains the file launch page and builds settings controls only on request',async()=>{
+ const view=runtime(async file=>file.endsWith('.kicad_pcb')?'(kicad_pcb)':'{}',[{path:'board.kicad_pro'},{path:'board.kicad_sch'},{path:'board.kicad_pcb'},{path:'alternate.kicad_pcb'}],null,{projectOnly:true});await tick();assert.equal(view.get('overviewPanel').hidden,false);assert.equal(view.get('settingSections').children.length,0);assert.match(view.get('overviewContent').textContent,/Open Schematic.*Open Layout.*Calculator.*Gerber viewer/);
  const all=n=>[n,...n.children.flatMap(all)],open=all(view.get('overviewContent')).find(n=>n.textContent==='Open Layout'&&n.onclick);await open.onclick();assert.equal(view.requests.filter(m=>m.type==='project-file').at(-1).file,'board.kicad_pcb');
 });
 
@@ -151,4 +151,38 @@ test('failed repository files offer local folder rendering without connecting a 
  assert.equal(view.get('projectStatus').children.find(n=>n.href).href,'local-viewer.html');
  assert.ok(view.requests.every(r=>['project-inventory','project-file'].includes(r.type)));
  const native=runtime(async()=>{throw Error('Unavailable');},null,null,{vscode:true});await tick();assert.equal(native.get('projectStatus').children.some(n=>n.href),false);
+});
+
+
+test('embedded project theme accepts only its parent and uses drawing theme for Gerbers',async()=>{
+ const view=runtime(async file=>file.endsWith('.gbr')?gerber:'{}',null,null,{projectOnly:true});await tick();
+ const theme={type:'kicad-review:command',command:'set-theme',uiTheme:'light',drawingTheme:'dark'},message=extra=>view.handlers.message({source:view.context.parent,origin:'https://viewer.test',data:theme,...extra});
+ message({source:{}});assert.equal(view.context.document.body.dataset.uiTheme,undefined);message({origin:'https://github.com'});assert.equal(view.context.document.body.dataset.uiTheme,undefined);
+ message();assert.equal(view.context.document.body.dataset.uiTheme,'light');await view.get('fileTree').children.find(n=>n.textContent==='top.gbr').onclick();assert.equal(view.canvas().dark,true);
+ message({data:{...theme,drawingTheme:'light'}});assert.equal(view.canvas().dark,false);view.get('projectTheme').onclick();assert.equal(view.canvas().dark,true);assert.equal(view.parentMessages.at(-1).message.file,'board.kicad_pro');assert.equal(view.parentMessages.at(-1).message.ref,'main');
+});
+
+
+test('project launch opens its schematic immediately at the discovered immutable revision',async()=>{
+ const files=[{path:'board.kicad_pro'},{path:'board.kicad_pcb'},{path:'board.kicad_sch'},{path:'child.kicad_sch'}];
+ const view=runtime(async path=>path.endsWith('.kicad_sch')?'(kicad_sch)':'{}',files);await tick();const frame=view.get('drawingPreview').children.find(n=>n.src);
+ assert.ok(frame);const url=new URL(frame.src,'https://viewer.test');assert.equal(url.pathname,'/browser-viewer.html');assert.equal(url.searchParams.get('file'),'board.kicad_sch');assert.equal(url.searchParams.get('head'),'a'.repeat(40));assert.equal(view.bodyClasses.has('focus-drawing'),true);assert.ok(!view.requests.some(r=>r.type==='project-file'&&r.file==='board.kicad_pro'));
+});
+
+test('project startup uses its sole schematic or layout fallback but never guesses among schematics',async()=>{
+ const cases=[[['board.kicad_pro','root.kicad_sch','board.kicad_pcb'],'root.kicad_sch'],[['board.kicad_pro','board.kicad_pcb'],'board.kicad_pcb'],[['board.kicad_pro','a.kicad_sch','b.kicad_sch','board.kicad_pcb'],null]];
+ for(const [paths,expected]of cases){const view=runtime(async path=>path.endsWith('.kicad_pcb')?'(kicad_pcb (version 20240108))':path.endsWith('.kicad_sch')?'(kicad_sch)':'{}',paths.map(path=>({path})));await tick();const frame=view.get('drawingPreview').children.find(n=>n.src);assert.equal(frame?new URL(frame.src,'https://viewer.test').searchParams.get('file'):null,expected);}
+});
+
+test('embedded Project settings stays a settings page rather than recursively opening another viewer',async()=>{
+ const view=runtime(async()=> '{}',[{path:'board.kicad_pro'},{path:'board.kicad_sch'}],null,{projectOnly:true});await tick();assert.equal(view.get('drawingPreview').children.some(n=>n.src),false);assert.equal(view.get('projectFile').textContent,'board.kicad_pro');
+});
+
+
+test('explicit schematic, PCB and legacy board links remain on their requested drawing',async()=>{
+ for(const file of ['child.kicad_sch','board.kicad_pcb','legacy.brd']){const view=runtime(async path=>path.endsWith('.kicad_pcb')?'(kicad_pcb)':path.endsWith('.brd')?'PCBNEW-BOARD Version 1':'(kicad_sch)',[{path:'board.kicad_pro'},{path:'board.kicad_sch'},{path:file}],null,{file});await tick();const frame=view.get('drawingPreview').children.find(n=>n.src);assert.ok(frame,file);assert.equal(new URL(frame.src,'https://viewer.test').searchParams.get('file'),file);}
+});
+
+test('legacy project launch prefers its matching schematic before its legacy board',async()=>{
+ const view=runtime(async()=> 'EESchema Schematic File Version 4',[{path:'board.pro'},{path:'board.sch'},{path:'board.brd'}],null,{file:'board.pro'});await tick();const frame=view.get('drawingPreview').children.find(n=>n.src);assert.equal(new URL(frame.src,'https://viewer.test').searchParams.get('file'),'board.sch');
 });

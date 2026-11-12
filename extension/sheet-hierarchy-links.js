@@ -100,12 +100,23 @@
     result.links=routedLinks;return result;
   }
 
+  // Shared rounded path for the miniature and canvas guides. Curves stay in
+  // the already routed corner gutter rather than cutting across sheet boxes.
+  function pathData(points, radius = 12) {
+    if(!Array.isArray(points)||points.length<2||points.length>1024||points.some(p=>!p||![p.x,p.y].every(Number.isFinite)))return '';
+    const path=points.filter((p,i)=>!i||p.x!==points[i-1].x||p.y!==points[i-1].y);if(path.length<2)return '';
+    const commands=[`M ${path[0].x} ${path[0].y}`];
+    for(let i=1;i<path.length-1;i++){const prev=path[i-1],p=path[i],next=path[i+1],before=Math.hypot(p.x-prev.x,p.y-prev.y),after=Math.hypot(next.x-p.x,next.y-p.y),r=Math.min(Math.max(0,radius),before/3,after/3);commands.push(`L ${p.x-(p.x-prev.x)/before*r} ${p.y-(p.y-prev.y)/before*r}`,`Q ${p.x} ${p.y} ${p.x+(next.x-p.x)/after*r} ${p.y+(next.y-p.y)/after*r}`);}
+    commands.push(`L ${path.at(-1).x} ${path.at(-1).y}`);return commands.join(' ');
+  }
+
   function draw(view, graph, dark = false, style = {}) {
     const ctx = view?.ctx, camera = view?.viewport?.camera;
     if (!ctx || !camera || !graph?.links?.length) return;
     ctx.save();
     for (const link of graph.links) {
-      const path=(link.points||[link.from,link.to]).map(p=>camera.world_to_screen(p)),a=path[0],b=path.at(-1),tail=path.at(-2)||a;
+      const path=(link.exteriorPoints||link.points||[link.from,link.to]).map(p=>camera.world_to_screen(p)),a=path[0],b=path.at(-1),tail=path.at(-2)||a;
+      if(style.dashed&&link.anchorStubs?.length){ctx.save();ctx.globalAlpha=.32;ctx.strokeStyle=style.color||(dark?'#d4b565':'#9e7b29');ctx.lineWidth=1;ctx.setLineDash([2,5]);for(const stub of link.anchorStubs){const local=stub.map(p=>camera.world_to_screen(p));ctx.beginPath();ctx.moveTo(local[0].x,local[0].y);for(const p of local.slice(1))ctx.lineTo(p.x,p.y);ctx.stroke();}ctx.restore();}
       const length = Math.hypot(b.x - tail.x, b.y - tail.y);
       if (length < .1) continue;
       const ux = (b.x - tail.x) / length, uy = (b.y - tail.y) / length;
@@ -134,6 +145,6 @@
     ctx.restore();
   }
 
-  root.KiCadSheetHierarchyLinks = {build, draw};
+  root.KiCadSheetHierarchyLinks = {build, draw, pathData};
   if (typeof module === 'object' && module.exports) module.exports = root.KiCadSheetHierarchyLinks;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

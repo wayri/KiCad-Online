@@ -7,7 +7,7 @@ Record findings against a drawing, component, property, BoM field or rectangular
 ## Add a local note
 
 1. Select a part, pin or net, then open **Comments**. Use **C** from the drawing to start at the selection.
-2. Choose a point or draw an area if the finding refers to a location.
+2. Right-click the drawing for **Comment on…**. The menu identifies the nearby part, terminal (for example `U3.1`) or net. Choose **Draw comment area** in that menu or the Comments navigation bar to drag a rectangular anchor on a schematic/layout. Area drawing is unavailable in 3D; use a saved component, pad or net there.
 3. Enter the finding and choose its severity and review state.
 4. Choose **Save draft** or **Save comment** in local mode.
 
@@ -20,6 +20,10 @@ For a property, use the comment icon beside its field in **Properties**. In **As
 Choose the destination before sending: a new Issue, an existing Issue, or a supported Discussion. Browse existing threads in the panel or open one by number. GitHub requires a category for a new Discussion. GitLab Discussions are threads inside an existing Issue.
 
 Review the destination, message and optional screenshot, then explicitly select **Comment**, **Post** or **Publish**. The exact label depends on the host and composer. The first remote send asks for destination and Terms acceptance; it is requested again if the stored acceptance is removed or the Terms version changes. Use **Destination…** to change a selected destination.
+
+Conversation replies keep the message body prominent, with compact author/time information and actions in **More**. Use **Enter** to review a reply and **Shift+Enter** for a new line. Autocomplete takes priority while its suggestion list is open; use the arrow keys to choose and Enter to insert. Expanded message actions and your draft remain in place during unchanged refreshes.
+
+New drawing-linked GitHub/GitLab posts place the message and attached images first. Expand **Design context** underneath for the saved revision, sheet, coordinates, severity and other metadata. Earlier annotation posts remain readable and retain their location links.
 
 GitHub website-session Issue and Discussion workflows use the matching signed-in repository tab, without connecting broad repository OAuth access. Discussion replies use **Quote reply**, which posts a quoted reference in the conversation; it does not create a native nested reply. Poll discussions are not offered in this route. Optional [connected-account workflows](GITHUB-SIGNIN.md) are separate. GitLab requires access to the selected server and the relevant project permissions. Organization restrictions and repository comment policies still apply.
 
@@ -45,7 +49,9 @@ A linked note can display the provider thread's last fetched Open/Closed state. 
 
 ## Mentions and screenshots
 
-Type `@` for available account suggestions, or enter a username manually. Suggestions depend on provider access; notifications happen only when the message is posted.
+Type `@` for available account suggestions, or enter a username manually. Suggestions match usernames and available display names, preferring exact and prefix matches. Conversation participants are available immediately; additional suggestions depend on provider access. Notifications happen only when the message is posted. Type `#` followed by letters for suggestions from existing annotation tags; numeric issue references such as `#123` remain separate. Tag suggestions insert text and do not create provider labels.
+
+Small comment icons beside Properties and BoM values open a field-specific draft. Their tooltips identify the field; keyboard focus and touch access remain available without large permanent button boxes beside every value.
 
 Paste a PNG, JPEG or WebP into the composer for an immediate preview, then remove it with **Remove screenshot** or **Remove image** if needed. The preview remains visible while the image is prepared as a bounded PNG capture. Review the image before sending, especially for private designs. The connected attachment route needs the provider's upload permissions. A failed upload retains the draft rather than silently posting without the image. Deleting a local note or signing out does not delete a remote attachment.
 
