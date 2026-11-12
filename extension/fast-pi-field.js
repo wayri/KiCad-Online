@@ -45,13 +45,63 @@
   if(!copper.length)throw Error('Saved copper mask is unavailable for this net and layer.');return{copper,holes};
  }
  function texture(field,document){const canvas=document.createElement('canvas');canvas.width=field.width;canvas.height=field.height;const context=canvas.getContext?.('2d');if(!context||!canvas.toDataURL)throw Error('Field texture rendering is unavailable.');const pixels=context.createImageData(field.width,field.height);pixels.data.set(field.rgba);context.putImageData(pixels,0,0);return canvas.toDataURL('image/png');}
+ // A visible 3D cell must fit wholly within one saved copper primitive. Reject
+ // every cell touching a polygon boundary or a drill/void bounding box.
+ function surfaceGuard(primitives,net,layer,bounds){
+  if(!Array.isArray(primitives)||primitives.length>250000||!net||!Number.isFinite(bounds?.minX)||!Number.isFinite(bounds?.maxX))throw Error('Saved copper surface mask is unavailable or exceeds its primitive budget.');
+  const items=[];let points=0;
+  const intersects=(a,b)=>a[0]<=b[2]&&a[2]>=b[0]&&a[1]<=b[3]&&a[3]>=b[1];
+  const circle=p=>Number.isFinite(p.x)&&Number.isFinite(p.y)&&Number.isFinite(p.r)&&p.r>0;
+  for(const p of primitives){
+   if(p.layer!==layer)continue;
+   const selected=p.netId!==undefined?p.netId===net.id:p.netName===net.name;
+   if(!p.hole&&!selected)continue;
+   if(!p.hole&&p.kind==='arc')throw Error('Saved copper surface includes unsupported selected geometry.');
+   if(!p.hole&&!['pad','via','track','zone'].includes(p.kind))continue;
+   let box,shape;
+   if(circle(p)){box=[p.x-p.r,p.y-p.r,p.x+p.r,p.y+p.r];shape='circle';}
+   else if(Array.isArray(p.points)&&p.points.length>=2&&p.points.every(q=>Number.isFinite(q.x)&&Number.isFinite(q.y))){
+    points+=p.points.length;if(points>200000)throw Error('Saved copper surface exceeds its point budget.');
+    let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;for(const q of p.points){minX=Math.min(minX,q.x);minY=Math.min(minY,q.y);maxX=Math.max(maxX,q.x);maxY=Math.max(maxY,q.y);}const radius=p.type==='line'?Number(p.width)/2:0;
+    if(!Number.isFinite(radius)||radius<0||p.type==='line'&&!(radius>0))throw Error('Saved copper surface has an invalid track width.');
+    box=[minX-radius,minY-radius,maxX+radius,maxY+radius];
+    shape=p.type==='line'?(p.points.length===2?'line':null):p.points.length>=3?'polygon':null;
+   }
+   if(!shape||!box.every(Number.isFinite))throw Error('Saved copper surface includes unsupported or invalid geometry.');
+   if(intersects(box,[bounds.minX,bounds.minY,bounds.maxX,bounds.maxY]))items.push({p,box,shape,hole:Boolean(p.hole)});
+  }
+  if(!items.some(item=>!item.hole))throw Error('Saved copper surface mask is unavailable for this net and layer.');
+  const bins=Array.from({length:256},()=>[]),width=Math.max((bounds.maxX-bounds.minX)/256,1e-9);let references=0;
+  const bucket=x=>Math.max(0,Math.min(255,Math.floor((x-bounds.minX)/width)));
+  for(let i=0;i<items.length;i++){const [min,,max]=items[i].box;for(let b=bucket(min);b<=bucket(max);b++){if(++references>1000000)throw Error('Saved copper surface spatial index exceeds its budget.');bins[b].push(i);}}
+  const seen=new Int32Array(items.length);let stamp=0,checks=0;
+  const spend=()=>{if(++checks>4000000)throw Error('Saved copper surface cell checks exceed their work budget.');};
+  const distance=(p,a,b)=>{const dx=b.x-a.x,dy=b.y-a.y,t=Math.max(0,Math.min(1,((p.x-a.x)*dx+(p.y-a.y)*dy)/(dx*dx+dy*dy||1)));return Math.hypot(p.x-a.x-t*dx,p.y-a.y-t*dy);};
+  const contains=(item,q)=>{const p=item.p;if(item.shape==='circle')return Math.hypot(q.x-p.x,q.y-p.y)<=p.r;
+   if(item.shape==='line')return p.points.some((a,i)=>{if(!i)return false;spend();return distance(q,p.points[i-1],a)<=p.width/2;});
+   let inside=false;for(let i=0,j=p.points.length-1;i<p.points.length;j=i++){spend();const a=p.points[i],b=p.points[j];if((a.y>q.y)!==(b.y>q.y)&&q.x<(b.x-a.x)*(q.y-a.y)/(b.y-a.y)+a.x)inside=!inside;}return inside;};
+  const edgeTouches=(a,b,box)=>{let lo=0,hi=1,dx=b.x-a.x,dy=b.y-a.y;for(const [p,q]of [[-dx,a.x-box[0]],[dx,box[2]-a.x],[-dy,a.y-box[1]],[dy,box[3]-a.y]]){if(!p){if(q<0)return false;continue;}const t=q/p;if(p<0)lo=Math.max(lo,t);else hi=Math.min(hi,t);if(lo>hi)return false;}return true;};
+  return corners=>{
+   const xs=corners.map(p=>p.x),ys=corners.map(p=>p.y),cell=[Math.min(...xs),Math.min(...ys),Math.max(...xs),Math.max(...ys)];
+   let covering=false;stamp++;
+   for(let b=bucket(cell[0]);b<=bucket(cell[2]);b++)for(const index of bins[b]){if(seen[index]===stamp)continue;seen[index]=stamp;
+    spend();
+    const item=items[index];if(!intersects(item.box,cell))continue;
+    if(item.hole)return false;
+    if(item.shape==='polygon'){const pts=item.p.points;for(let i=0;i<pts.length;i++){spend();if(edgeTouches(pts[i],pts[(i+1)%pts.length],cell))return false;}}
+    if(!covering&&corners.every(q=>contains(item,q)))covering=true;
+   }
+   return covering;
+  };
+ }
  // Conservative display cells: all corners and edge midpoints must remain on
  // validated copper. Partial boundary cells are omitted, never painted over holes.
- function surface(result,layer,metric,contains){
+ function surface(result,layer,metric,contains,primitives,net){
   const field=prepare(result,layer,metric),points=[],triangles=[],values=[],half=result.cellSizeMm*.499;
+  const wholeCell=surfaceGuard(primitives,net,layer,field.bounds);
   for(const n of result.nodes){if(n.layer!==layer||!Number.isFinite(n.voltageV))continue;
    const corners=[[-half,-half],[half,-half],[half,half],[-half,half]].map(([x,y])=>({x:n.x+x,y:n.y+y,layer}));
-   if(!corners.every(contains)||!corners.every((p,i)=>contains({x:(p.x+corners[(i+1)%4].x)/2,y:(p.y+corners[(i+1)%4].y)/2,layer})))continue;
+   if(!corners.every(contains)||!corners.every((p,i)=>contains({x:(p.x+corners[(i+1)%4].x)/2,y:(p.y+corners[(i+1)%4].y)/2,layer}))||!wholeCell(corners))continue;
    const samples=corners.map(p=>field.sample(p.x,p.y));if(samples.some(v=>v===null||!Number.isFinite(v)))continue;
    const start=points.length;for(let i=0;i<4;i++){points.push([corners[i].x,corners[i].y,0]);values.push(samples[i]);}triangles.push([start,start+1,start+2],[start,start+2,start+3]);
    if(triangles.length>=200000)throw Error('3D field exceeds its display budget.');
@@ -59,5 +109,5 @@
   if(!triangles.length)throw Error('No complete solved copper cells on this layer. Use Layout for boundary-clipped results.');
   return{points,triangles,values,nodal:true,layer,zKnown:false,description:field.description,maximum:field.maximum};
  }
- const API={color,prepare,maskGeometry,texture,surface};root.KiCadFastPIField=API;if(typeof module==='object'&&module.exports)module.exports=API;
+ const API={color,prepare,maskGeometry,texture,surface,surfaceGuard};root.KiCadFastPIField=API;if(typeof module==='object'&&module.exports)module.exports=API;
 })(globalThis);

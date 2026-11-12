@@ -5,6 +5,7 @@ class Element {
  constructor(tag,doc){this.tagName=tag;this.ownerDocument=doc;this.children=[];this.attributes={};this.listeners={};this.open=false;this.hidden=true;}
  append(...nodes){for(const n of nodes){n.remove();n.parent=this;this.children.push(n);}}
  remove(){if(this.parent)this.parent.children=this.parent.children.filter(n=>n!==this);this.parent=null;}
+ replaceChildren(...nodes){for(const child of [...this.children])child.remove();this.append(...nodes);}
  setAttribute(k,v){this.attributes[k]=v;}
  querySelector(tag){return this.children.find(n=>n.tagName===tag);}
  addEventListener(k,fn){this.listeners[k]=fn;}
@@ -17,7 +18,7 @@ class Element {
 function fixture(){const doc={createElement(tag){return new Element(tag,this);}};doc.body=doc.createElement('body');const toolbar=doc.createElement('header'),content=doc.createElement('details'),summary=doc.createElement('summary');content.append(summary,doc.createElement('p'));doc.body.append(toolbar,content);return {doc,toolbar,content};}
 test('help lives in a modal from the top toolbar, with keyboard and close return focus',()=>{
  const {doc,toolbar,content}=fixture(),help=mountNavigationHelp(doc,toolbar,content),trigger=toolbar.children[0],dialog=doc.body.children.find(n=>n.tagName==='dialog'),close=dialog.children[0].children[1];
- assert.equal(content.parent,dialog);assert.equal(content.querySelector('summary'),undefined);assert.equal(content.hidden,false);assert.equal(trigger.attributes['aria-haspopup'],'dialog');assert.equal(dialog.open,false);
+ assert.equal(content.parent,dialog);assert.equal(content.querySelector('summary').hidden,true);assert.equal(content.hidden,false);assert.equal(trigger.attributes['aria-haspopup'],'dialog');assert.equal(dialog.open,false);
  trigger.onclick();assert.equal(help.isOpen(),true);assert.equal(dialog.modal,true);assert.equal(doc.activeElement,close);assert.equal(trigger.attributes['aria-expanded'],'true');
  let prevented=false;dialog.listeners.cancel({preventDefault(){prevented=true;}});assert.equal(prevented,true);assert.equal(help.isOpen(),false);assert.equal(doc.activeElement,trigger);
  help.toggle();close.onclick();assert.equal(help.isOpen(),false);assert.equal(trigger.attributes['aria-expanded'],'false');

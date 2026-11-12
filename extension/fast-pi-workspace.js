@@ -146,7 +146,7 @@
     overlay.replaceChildren();meshGroup=screenGroup=null;meshCache=null;
     if(result&&(!dcCache||dcCache.result!==result||dcCache.layer!==layer||dcCache.metric!==metric)){
      dcScene.setAnalysisOverlay?.(null);
-     try{const surface=root.KiCadFastPIField.surface(result,layer,metric,currentContacts().validator);surface.boardLayer=true;const placed=dcScene.setAnalysisOverlay(surface);if(!placed?.placed)throw Error(placed?.reason||'3D overlay unavailable.');dcCache={result,layer,metric};panel.querySelector('.fast-pi-legend').textContent='Blue 0 to red '+Number(surface.maximum).toPrecision(4)+' / '+surface.description+' / complete solved copper cells; boundary cells omitted';}
+     try{const surface=root.KiCadFastPIField.surface(result,layer,metric,currentContacts().validator,view.primitives,currentContacts().net);surface.boardLayer=true;const placed=dcScene.setAnalysisOverlay(surface);if(!placed?.placed)throw Error(placed?.reason||'3D overlay unavailable.');dcCache={result,layer,metric};panel.querySelector('.fast-pi-legend').textContent='Blue 0 to red '+Number(surface.maximum).toPrecision(4)+' / '+surface.description+' / complete solved copper cells; boundary cells omitted';}
      catch(error){dcCache={result,layer,metric};panel.querySelector('.fast-pi-legend').textContent=error.message;}
     }else if(!result&&dcCache){dcScene.setAnalysisOverlay?.(null);dcCache=null;}
     points.forEach((p,i)=>{const q=c.world_to_screen(p);if(!q)return;svg('circle',{cx:q.x,cy:q.y,r:7,fill:i?'#f6a83d':'#4de3ac',stroke:'#15222e','stroke-width':2});const label=svg('text',{x:q.x+10,y:q.y-10,fill:'#fff','font-size':12});label.textContent=i?'B / Load':'A / Source';});return;

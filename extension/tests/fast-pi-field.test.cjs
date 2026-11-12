@@ -40,5 +40,22 @@ test('field rasterization is bounded and uses an owned PNG texture without exter
 });
 
  test('3D field surface contains accepted solved cells and omits rejected copper boundaries',()=>{
- const {surface}=require('../fast-pi-field.js');const full=surface(result(),'F.Cu','voltage',()=>true);assert.equal(full.triangles.length,8);assert.equal(full.points.length,16);assert.equal(full.values.length,16);assert.ok(full.points.every(p=>p[2]===0));const clipped=surface(result(),'F.Cu','voltage',p=>p.x<1);assert.equal(clipped.triangles.length,4);assert.ok(clipped.points.every(p=>p[0]<1));assert.throws(()=>surface(result(),'F.Cu','voltage',()=>false),/No complete solved copper cells/);
+ const {surface}=require('../fast-pi-field.js'),net={id:1,name:'VCC'},zone={kind:'zone',type:'polygon',netId:1,layer:'F.Cu',points:[{x:0,y:0},{x:2,y:0},{x:2,y:2},{x:0,y:2}]};
+ const full=surface(result(),'F.Cu','voltage',()=>true,[zone],net);assert.equal(full.triangles.length,8);assert.equal(full.points.length,16);assert.equal(full.values.length,16);assert.ok(full.points.every(p=>p[2]===0));
+ const clipped=surface(result(),'F.Cu','voltage',p=>p.x<1,[zone],net);assert.equal(clipped.triangles.length,4);assert.ok(clipped.points.every(p=>p[0]<1));
+ assert.throws(()=>surface(result(),'F.Cu','voltage',()=>false,[zone],net),/No complete solved copper cells/);
+ assert.throws(()=>surface(result(),'F.Cu','voltage',()=>true),/mask is unavailable/);
+ });
+
+ test('3D whole-cell mask rejects interior drills, split copper, and polygon boundaries',()=>{
+ const {surface,surfaceGuard}=require('../fast-pi-field.js'),net={id:1,name:'VCC'},bounds={minX:0,minY:0,maxX:2,maxY:2};
+ const zone=(x0,x1,y0=0,y1=2)=>({kind:'zone',type:'polygon',netId:1,layer:'F.Cu',points:[{x:x0,y:y0},{x:x1,y:y0},{x:x1,y:y1},{x:x0,y:y1}]});
+ const base=zone(0,2),drill={kind:'drill',type:'circle',hole:true,netId:2,layer:'F.Cu',x:.25,y:.25,r:.1};
+ const guarded=surface(result(),'F.Cu','voltage',()=>true,[base,drill],net);assert.equal(guarded.triangles.length,6,'a hidden drill inside one cell must remove the whole quad');
+ const first=[{x:.001,y:.001},{x:.999,y:.001},{x:.999,y:.999},{x:.001,y:.999}];
+ assert.equal(surfaceGuard([zone(0,.45),zone(.55,2)],net,'F.Cu',bounds)(first),false,'two primitives cannot jointly cover a cell across a slit');
+ assert.equal(surfaceGuard([base,zone(.2,.3,.2,.3)],net,'F.Cu',bounds)(first),false,'an interior polygon boundary rejects a covered cell');
+ assert.equal(surfaceGuard([{kind:'track',type:'line',netId:1,layer:'F.Cu',width:2,points:[{x:0,y:.5},{x:1,y:.5}]}],net,'F.Cu',bounds)(first),true,'one saved stroke capsule covers the cell');
+ assert.throws(()=>surfaceGuard([{kind:'track',type:'line',netId:1,layer:'F.Cu',width:2,points:[{x:0,y:0},{x:1,y:0},{x:1,y:1}]}],net,'F.Cu',bounds),/unsupported/,'multi-segment stroke is not a convex cell cover');
+ assert.throws(()=>surfaceGuard([{kind:'arc',type:'line',netId:1,layer:'F.Cu',width:.2,points:[{x:0,y:0},{x:1,y:1}]}],net,'F.Cu',bounds),/unsupported/);
  });

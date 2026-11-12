@@ -1,3 +1,4 @@
+import {createExplodeView} from '../extension/spike/explodeView.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync,existsSync} from 'node:fs';
@@ -31,7 +32,7 @@ test('component visibility restores source matrices and composes population, sid
  const matrices=[1,2,3].map(x=>new THREE.Matrix4().makeTranslation(x,0,0));
  const models=new Map([[2,new THREE.Group()]]),loaded=new Set([2]);
  const code=source.slice(source.indexOf('  function updateComponentVisibility()'),source.indexOf('  const modelDiagnostics ='));
- const run=state=>Function('board','componentMesh','population','loadedModelIndexes','componentMatrices','hiddenMatrix','modelGroups','renderer','invalidate','objectVisibility',code+';updateComponentVisibility();')(board,mesh,[true,true,true],loaded,matrices,new THREE.Matrix4().makeScale(0,0,0),models,{shadowMap:{}},()=>{},state);
+ const run=state=>Function('THREE','explode','board','componentMesh','population','loadedModelIndexes','componentMatrices','hiddenMatrix','modelGroups','renderer','invalidate','objectVisibility',code+';updateComponentVisibility();')(THREE,createExplodeView(THREE,{layers:[{name:'F.Cu',z:.8},{name:'B.Cu',z:-.8}]}),board,mesh,[true,true,true],loaded,matrices,new THREE.Matrix4().makeScale(0,0,0),models,{shadowMap:{}},()=>{},state);
  const result=new THREE.Matrix4();run(policy({side:'top'}));mesh.getMatrixAt(0,result);assert.equal(result.elements[12],1);mesh.getMatrixAt(1,result);assert.equal(result.determinant(),0);assert.equal(models.get(2).visible,true);
  run(policy({hiddenTypes:['bodies']}));mesh.getMatrixAt(0,result);assert.equal(result.determinant(),0);assert.equal(models.get(2).visible,false);
  run(policy());mesh.getMatrixAt(1,result);assert.equal(result.elements[12],2);mesh.getMatrixAt(2,result);assert.equal(result.determinant(),0,'resolved model never restores its proxy');assert.equal(models.get(2).visible,true);
