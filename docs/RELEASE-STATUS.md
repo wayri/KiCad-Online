@@ -2,16 +2,16 @@
 
 KiCad Online releases are available from GitHub and the platform stores. Stores review updates independently, so their installable versions can differ from the GitHub preview.
 
-**Latest GitHub preview — 11 November 2026:** [KiCad Online 0.12.93 / Android 1.95](https://github.com/wayri/KiCad-Online/releases/tag/v0.12.93) is published with 23 assets. All remote sizes and SHA-256 digests match the audited packages from source `bffacf28b4fc3667f9cdb2045744e679e9071547`. This publication updates GitHub downloads only. Store states below were last checked during the 0.12.92 submissions; no review was cancelled or store package uploaded for 0.12.93. The new commenting hardening has automated and independent source-review evidence, with installed-browser acceptance incomplete.
+**Latest GitHub preview — 12 November 2026:** [KiCad Online 0.12.94 / Android 1.96](https://github.com/wayri/KiCad-Online/releases/tag/v0.12.94) is published with 23 assets. Remote sizes and SHA-256 digests match the audited packages from source `8a74e9b4565cec22b3f6b1651d10844bfe713ba0`. Fast PI is now Fast DC drop, with setup and result overlays in Layout and 3D. Verification: 2,671 JavaScript passes; 149 Python passes and one Windows symlink-privilege skip; offline Android assemble/lint/bundle and package audits passed. The browser fixture exercised inline 3D solving and Layout/3D result retention. Installed-extension, organization SSO and physical-device acceptance remain incomplete. This updates GitHub downloads only; store states below retain their dated snapshots.
 
 | Channel | Store/channel snapshot: 11 November 2026 | Download |
 | --- | --- | --- |
-| GitHub | **0.12.93 / Android 1.95** preview published | [Release files and checksums](https://github.com/wayri/KiCad-Online/releases/tag/v0.12.93) |
+| GitHub | **0.12.94 / Android 1.96** preview published | [Release files and checksums](https://github.com/wayri/KiCad-Online/releases/tag/v0.12.94) |
 | Chrome Web Store | **0.12.92 pending review**; published 0.12.91 | [Chrome listing](https://chromewebstore.google.com/detail/klfdjlbngpoopegjmbajaidgodpmjaoc) |
 | VS Code Marketplace | **0.12.92 uploaded; verifying** | [Marketplace listing](https://marketplace.visualstudio.com/items?itemName=wayri.kicad-visual-review) |
 | Mozilla Add-ons | **0.12.91 awaiting review**; matching readable source attached | [Firefox listing](https://addons.mozilla.org/en-US/firefox/addon/pocket-kiview-kicad-review/) |
-| Android app | **1.95 development-signed APK** on GitHub; manual updates | [APK](https://github.com/wayri/KiCad-Online/releases/download/v0.12.93/pocket-kivi-android-phone-tablet-1.95-development.apk) |
-| Safari | **0.12.93 development package**; requires Mac conversion and signing | [Safari instructions](SAFARI.md) |
+| Android app | **1.96 development-signed APK** on GitHub; manual updates | [APK](https://github.com/wayri/KiCad-Online/releases/download/v0.12.94/pocket-kivi-android-phone-tablet-1.96-development.apk) |
+| Safari | **0.12.94 development package**; requires Mac conversion and signing | [Safari instructions](SAFARI.md) |
 
 This is a dated snapshot, not a live status feed. Each store listing shows the version currently available to install. A successful upload or clean validator result does not mean an update has been approved.
 
