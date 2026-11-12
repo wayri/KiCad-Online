@@ -32,7 +32,7 @@
   function openSimulation(){
    if(simulationDialog){simulationDialog.showModal?.();return;}
    const dialog=create('dialog','workspace-simulation-menu');simulationDialog=dialog;dialog.setAttribute('aria-label','Simulation views');dialog.append(create('strong','','Simulation'));
-   for(const [id,label]of [['openSavedReports','Saved KiCad / wayriCAD results'],['openFastPI','Fast PI · experimental']]){const target=doc.getElementById(id),action=create('button','',label);action.type='button';action.disabled=!target||target.disabled;action.onclick=()=>{dialog.close();target?.click();};dialog.append(action);}
+   for(const [id,label]of [['openSavedReports','Saved KiCad / wayriCAD results'],['openFastPI','Fast DC drop · experimental']]){const target=doc.getElementById(id),action=create('button','',label);action.type='button';action.disabled=!target||target.disabled;action.onclick=()=>{dialog.close();target?.click();};dialog.append(action);}
    const dismiss=create('button','','Close');dismiss.type='button';dismiss.setAttribute('aria-label','Close simulation views');dismiss.onclick=()=>dialog.close();dialog.append(dismiss);
    dialog.addEventListener('click',event=>{if(event.target===dialog){const rect=dialog.getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)dialog.close();}});
    dialog.addEventListener('close',()=>{dialog.remove();simulationDialog=null;});doc.body.append(dialog);dialog.showModal();

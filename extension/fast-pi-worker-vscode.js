@@ -9,7 +9,7 @@ const kids=(n,t)=>Array.isArray(n)?n.filter(x=>tag(x)===t):[];
 const one=(n,t)=>kids(n,t)[0];
 const num=(n,i=1)=>Number(val(n?.[i]));
 const str=(n,i=1)=>String(val(n?.[i])??'');
-const fail=message=>{throw new Error('Fast PI: '+message);};
+const fail=message=>{throw new Error('Fast DC drop: '+message);};
 function positive(x,name){if(!Number.isFinite(x)||x<=0)fail(name+' must be explicitly supplied and positive');return x;}
 function polygonContains(p,points){let inside=false;for(let i=0,j=points.length-1;i<points.length;j=i++){const a=points[i],b=points[j];if((a.y>p.y)!==(b.y>p.y)&&p.x<(b.x-a.x)*(p.y-a.y)/(b.y-a.y)+a.x)inside=!inside;}return inside;}
 function distance(p,a,b){const dx=b.x-a.x,dy=b.y-a.y,t=Math.max(0,Math.min(1,((p.x-a.x)*dx+(p.y-a.y)*dy)/(dx*dx+dy*dy||1)));return Math.hypot(p.x-a.x-t*dx,p.y-a.y-t*dy);}

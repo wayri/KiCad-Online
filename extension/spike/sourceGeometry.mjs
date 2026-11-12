@@ -23,7 +23,7 @@ export function sourceZoneGeometry(ast,maxPolygons=1000,maxPoints=500000){
    if(pts.length<3)continue;
    const ownLayer=value(child(polygon,'layer')?.[1]);for(const layer of ownLayer?[ownLayer]:layers){if(typeof layer!=='string'||!/^(?:F|B|In[1-9]\d*)\.Cu$/.test(layer))continue;
     if(records.length>=maxPolygons||points+pts.length>maxPoints){truncated=true;continue;}points+=pts.length;
-    records.push({points:pts,layer,filled:Boolean(filled.length),id:String(value(child(zone,'uuid')?.[1])||value(child(zone,'tstamp')?.[1])||'saved-zone-'+records.length),net:String(value(child(zone,'net_name')?.[1])||nets.get(value(child(zone,'net')?.[1]))||'')});
+    records.push({points:pts,layer,filled:Boolean(filled.length),id:String(value(child(zone,'uuid')?.[1])||value(child(zone,'tstamp')?.[1])||'saved-zone-'+records.length),net:String(value(child(zone,'net_name')?.[1])||nets.get(value(child(zone,'net')?.[1]))||(typeof value(child(zone,'net')?.[1])==='string'?value(child(zone,'net')?.[1]):''))});
    }
   }
  }

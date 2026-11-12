@@ -1,7 +1,7 @@
-# Experimental Fast PI
+# Experimental Fast DC drop
 
-Fast PI is a browser-local, fixed-temperature 2.5D DC copper screening workflow.
-1. Open **Simulation → Fast PI** in the PCB layout.
+Fast DC drop is a browser-local, fixed-temperature 2.5D DC copper screening workflow.
+1. In **Layout** or **3D**, click **Fast DC drop** on the drawing toolbar (also available under Simulation). Setup and results stay on the active board canvas.
 2. Click **A** on source copper. The viewer detects the saved net and copper layer.
 3. Click **B** on the same net for the load. A different-net click is rejected while A stays selected. Overlapping copper asks which net/layer you intended.
 4. Enter the starting voltage and load **Current · A** or **Power · W**, then **Run**.
@@ -19,6 +19,8 @@ offers a source-net selector plus searchable saved pads. **Change A** and
 Escape pauses picking, and Close hides the panel while retaining its inputs,
 contacts and accepted result for the same unchanged board. **Clear contacts /
 result** is the explicit reset.
+
+Switch between Layout and 3D without losing the contacts or accepted result. In 3D, complete solved copper cells are displayed at their saved layer elevations and follow the explode slider; partial boundary cells are omitted. Use Layout for the boundary-clipped field.
 
 In results, switch the copper layer or overlay metric without rerunning.
 **Edit inputs** lets you inspect the setup; **Back to results** returns to the
@@ -74,6 +76,6 @@ checks, Kirchhoff current balance and power conservation. These are software and
 analytical checks, not measurement correlation on a manufactured board.
 
 Saved wayriCAD spatial results and KiCad simulation workbooks/waveforms remain
-separate import workflows. Fast PI does not run ngspice or pretend that workbook
+separate import workflows. Fast DC drop does not run ngspice or pretend that workbook
 settings alone contain solved samples. Hosts that prohibit dedicated workers show
 an unavailable diagnostic rather than blocking the UI with a synchronous solve.

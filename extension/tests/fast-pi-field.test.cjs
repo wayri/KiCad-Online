@@ -38,3 +38,7 @@ test('field rasterization is bounded and uses an owned PNG texture without exter
  assert.equal(texture(field,{createElement:tag=>{assert.equal(tag,'canvas');return canvas;}}),'data:image/png;base64,AA==');assert.equal(canvas.width,field.width);assert.deepEqual(captured.data,field.rgba);
  assert.throws(()=>prepare({...result(),cellSizeMm:0},'F.Cu','voltage'),/budget/);assert.throws(()=>prepare(result(),'B.Cu','voltage'),/No solved/);
 });
+
+ test('3D field surface contains accepted solved cells and omits rejected copper boundaries',()=>{
+ const {surface}=require('../fast-pi-field.js');const full=surface(result(),'F.Cu','voltage',()=>true);assert.equal(full.triangles.length,8);assert.equal(full.points.length,16);assert.equal(full.values.length,16);assert.ok(full.points.every(p=>p[2]===0));const clipped=surface(result(),'F.Cu','voltage',p=>p.x<1);assert.equal(clipped.triangles.length,4);assert.ok(clipped.points.every(p=>p[0]<1));assert.throws(()=>surface(result(),'F.Cu','voltage',()=>false),/No complete solved copper cells/);
+ });

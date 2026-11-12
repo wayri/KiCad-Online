@@ -50,7 +50,7 @@ Local notes and assembly progress are stored separately from the design. Ordinar
 | Review comments | Save point or area notes, attach source locations, browse supported provider threads, and explicitly post replies. Supported synchronized notes can restore drawing markers. |
 | Draftsman | Create drawing sheets with mechanical views, dimensions, notes and BoM tables; export PDF, SVG and editable documents, or save to an authorized repository branch. |
 | Fabrication files | Inspect supported Gerber, Excellon/drill and fabrication-job data, layers and geometry summaries. |
-| Reports and results | Display saved ERC/DRC findings and supported analysis exports; use circuit calculators and experimental Fast PI DC screening. |
+| Reports and results | Display saved ERC/DRC findings and supported analysis exports; use circuit calculators and experimental Fast DC drop DC screening. |
 | Revisions | Compare saved revisions and review highlighted changes. VS Code also offers explicit visual Git conflict resolution. |
 
 [Browse the illustrated guide](USER-GUIDE.md) for controls, shortcuts and platform differences.
@@ -73,12 +73,12 @@ These are browser captures; the comment example is a local note and the Draftsma
 
 Recognized KiCad 8–10 constructs use the shared renderer. KiCad 4–7 and legacy schematics have restricted coverage; newer formats can produce incomplete previews. See the [format matrix](docs/KICAD-COMPATIBILITY.md).
 
-3D realism depends on accessible, supported model assets. Missing geometry may use labelled stand-ins. Imported ERC/DRC reports and analysis files are saved results; the viewer does not run native KiCad rule checks or simulation engines. Experimental Fast PI provides fixed-temperature, single-net DC screening, not engineering sign-off. Verify important design and manufacturing decisions in the appropriate native tools.
+3D realism depends on accessible, supported model assets. Missing geometry may use labelled stand-ins. Imported ERC/DRC reports and analysis files are saved results; the viewer does not run native KiCad rule checks or simulation engines. Experimental Fast DC drop provides fixed-temperature, single-net DC screening, not engineering sign-off. Verify important design and manufacturing decisions in the appropriate native tools.
 
 ## Documentation and support
 
 - [Installation](docs/INSTALL.md) and [illustrated user guide](USER-GUIDE.md)
-- [Comments](docs/COMMENTS.md), [Draftsman](docs/DRAFTSMAN.md) and [Fast PI](docs/FAST-PI.md)
+- [Comments](docs/COMMENTS.md), [Draftsman](docs/DRAFTSMAN.md) and [Fast DC drop](docs/FAST-PI.md)
 - [Private and managed repositories](docs/GIT-HOSTS.md) and [troubleshooting](docs/VIEWER-RELIABILITY.md)
 - [VS Code guide](vscode-extension/GUIDE.md) and [offline local workspace](docs/LOCAL-VIEWER.md)
 - [Development](docs/DEVELOPMENT.md), [security](SECURITY.md) and [third-party notices](THIRD-PARTY-NOTICES.md)

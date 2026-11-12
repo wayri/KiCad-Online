@@ -43,6 +43,7 @@ import {createProbeRegistry,createSharedProbeViewport} from './probeViewport.mjs
 import {createTerminalAnnotations,createTerminalLabelController} from './terminalLabels.mjs';
 import { MeasurementSession,distanceLabel,snapProjectedEdges } from "./measurement3d.mjs";
 import {projectionCamera,resizeProjection,fitProjection} from "./cameraProjection.mjs";
+import {createDCCopperViewport,dcBoardLayerZ,dcBoardLayerOverlay} from "./dcCopperViewport.mjs";
 import { boardViewPresets,boardViewPreset } from "./viewPresets.mjs";
 export { mountResultScene } from "./result3d.js";
 
@@ -387,6 +388,17 @@ export function mountBoard3D(container, source, options = {}) {
   }
   }
   const netInspection=createNetInspection(THREE,{board:{...board,tracks:refinedTracks.tracks},plan:copperPlan,zones:mechanical?[]:savedZones.records,sourceLimited:savedZones.truncated,pads:mechanical?[]:nativePads,world,colorForLayer:layerThreeColor});scene.add(netInspection.group);
+  let dcProbeMode=false;
+  const dcViewport=createDCCopperViewport(THREE,{
+    canvas:renderer.domElement,getCamera:()=>camera,
+    getCopperMeshes:()=>[
+      ...pickables.filter(mesh=>copperGroups.get(mesh.parent?.name)===mesh.parent).map(mesh=>({mesh,layer:mesh.parent.name})),
+      ...netInspection.group.children.filter(mesh=>mesh.isMesh&&!mesh.userData.explodeSpan).map(mesh=>({mesh,layer:mesh.userData.layer||mesh.userData.record?.layer}))
+    ],
+    getLayerZ:layer=>dcBoardLayerZ(copperPlan.byLayer,explode,layer),
+    centerX,centerY,isActive:()=>active&&!contextLost&&!mechanical
+  });
+  dcViewport.setProbeMode=enabled=>{dcProbeMode=active&&!mechanical&&Boolean(enabled);return dcProbeMode;};
   let fullNet3D=true;
   const netInspectionHelp=document.createElement('p');netInspectionHelp.className='quality-help';netInspectionHelp.hidden=true;renderingOptions.append(netInspectionHelp);
   applyAppearance();
@@ -590,7 +602,7 @@ export function mountBoard3D(container, source, options = {}) {
   const displayButton=action('Display',()=>setDisplayOpen(visibilityOptions.hidden),'M3 6h18M3 12h18M3 18h18M7 3v6M17 9v6M10 15v6','3D display settings');displayButton.setAttribute('aria-expanded','false');displayButton.setAttribute('aria-controls',visibilityOptions.id);
   const explodeLabel=document.createElement('label');explodeLabel.className='explode-control';explodeLabel.title='Separate saved copper layers and their components; visual spacing only. The substrate stays at the center.';
   const explodeCaption=document.createElement('span');explodeCaption.textContent='Explode';const explodeSlider=document.createElement('input');explodeSlider.type='range';explodeSlider.min='0';explodeSlider.max='100';explodeSlider.step='1';explodeSlider.value='0';explodeSlider.setAttribute('aria-label','Explode board layers');const explodeValue=document.createElement('output');explodeValue.textContent='0%';explodeLabel.append(explodeCaption,explodeSlider,explodeValue);explodeLabel.hidden=mechanical;bar.append(explodeLabel);
-  function setExplode(value){const amount=explode.set(mechanical?0:value);explodeSlider.value=String(amount);explodeValue.textContent=amount+'%';explodeSlider.setAttribute('aria-valuetext',amount+' percent exploded');for(const [name,group]of copperGroups)explode.layer(group,name);for(const {mesh,span}of viaExplode)explode.barrels(mesh,span);updateComponentVisibility();setSelection(externalSelection);probeRegistry.forEach(probe=>probe.setExplode?.(amount));fittedRadius=new THREE.Box3().setFromObject(boardGroup).getBoundingSphere(new THREE.Sphere()).radius;updateClipping();renderer.shadowMap.needsUpdate=true;invalidate();return amount;}
+  function setExplode(value){const amount=explode.set(mechanical?0:value);explodeSlider.value=String(amount);explodeValue.textContent=amount+'%';for(const [name,group]of copperGroups)explode.layer(group,name);for(const {mesh,span}of viaExplode)explode.barrels(mesh,span);analysisOverlay?.boardLayerPlacement?.update(analysisOverlay.group);updateComponentVisibility();setSelection(externalSelection);probeRegistry.forEach(probe=>probe.setExplode?.(amount));fittedRadius=new THREE.Box3().setFromObject(boardGroup).getBoundingSphere(new THREE.Sphere()).radius;updateClipping();renderer.shadowMap.needsUpdate=true;invalidate();return amount;}
   let explodeFrame=0,pendingExplode=0;explodeSlider.addEventListener('input',()=>{pendingExplode=Number(explodeSlider.value);if(!explodeFrame)explodeFrame=requestAnimationFrame(()=>{explodeFrame=0;if(active)setExplode(pendingExplode);});});
   for(const name of explode.layers.filter(name=>!['F.Cu','B.Cu'].includes(name)))toggle(name,true,visible=>{groupFor(name).visible=!mechanical&&visible;});
   toggle("Front copper", true, (visible) => { groupFor("F.Cu").visible = !mechanical&&visible; });
@@ -794,10 +806,11 @@ export function mountBoard3D(container, source, options = {}) {
   });
   renderer.domElement.addEventListener("pointercancel", event => { gesture.cancel(event); hold.up(event);measurementPointers.delete(event.pointerId);measurementTouchDrag=null;controls.enabled=true;measurementTouch=null;measurementLens.hidden=true; });
   renderer.domElement.addEventListener("pointerup", (event) => {
-    hold.up(event);gesture.up(event,{select:!(measuring&&event.pointerType==='touch')});
+    hold.up(event);gesture.up(event,{select:!dcProbeMode&&!(measuring&&event.pointerType==='touch')});
     if(measuring&&event.pointerType==='touch'){if(measurementTouchDrag===event.pointerId&&measurementPointers.size===1)pick(event);measurementPointers.delete(event.pointerId);measurementTouchDrag=null;controls.enabled=true;}measurementTouch=null;measurementLens.hidden=true;
   });
   function contextMenu(event) {
+    if(dcProbeMode){event.preventDefault?.();return;}
     event.preventDefault?.();if(measuring)return;pick(event,false); if (!selected) return;
     menu.replaceChildren();
     const actions = [["Focus object", () => { controls.target.copy(selected.point); controls.update(); }],
@@ -879,7 +892,7 @@ export function mountBoard3D(container, source, options = {}) {
     if(!board.stackup?.some(layer=>Number.isFinite(layer.thickness)))warnings.push('Saved stackup thickness is unavailable; the 3D substrate uses a 1.6 mm display fallback.');
     return {image,warnings,projection:'orthographic',view,width:pixelWidth,height:pixelHeight,mmPerPixel:worldHeight/pixelHeight,planar:view==='top',bounds:captureFrame.bounds,viewBounds:{left:-worldWidth/2,right:worldWidth/2,top:worldHeight/2,bottom:-worldHeight/2},mechanical:true};
   }
-  return { host, board,ready:modelReady,captureMechanicalView,
+  return { host, board,ready:modelReady,captureMechanicalView,getDCViewport:()=>dcViewport,
     getProbeCount(){return probeRegistry.size();},
     createProbeViewport(probeHost,probeOptions={}){
       if(!active)throw Error('The parent 3D scene is closed.');
@@ -908,15 +921,18 @@ export function mountBoard3D(container, source, options = {}) {
       if (!surface) { analysisOverlay?.dispose(); analysisOverlay = null; invalidate();return { placed: false, reason: "Overlay cleared." }; }
       const basis = surface.zBasis;
       const savedLayer = surface.layer;
-      if ((surface.zKnown && !["front-depth", "board-center"].includes(basis)) || (!surface.zKnown && !["F.Cu", "B.Cu"].includes(savedLayer))) return { placed: false, reason: "Saved result elevation basis or board layer is unknown; use the standalone result scene." };
-      const transform = ([x, y, z]) => [x - centerX, centerY - y, surface.zKnown ? (basis === "front-depth" ? thickness / 2 - z : z) : (savedLayer === "F.Cu" ? thickness / 2 : -thickness / 2)];
+      const boardLayerPlacement = surface.boardLayer === true ? dcBoardLayerOverlay(surface,copperPlan.byLayer,explode,centerX,centerY) : null;
+      if (surface.boardLayer === true && !boardLayerPlacement) return { placed: false, reason: "Fast DC result requires a known saved copper layer and zero-height layer coordinates." };
+      if (!boardLayerPlacement && ((surface.zKnown && !["front-depth", "board-center"].includes(basis)) || (!surface.zKnown && !["F.Cu", "B.Cu"].includes(savedLayer)))) return { placed: false, reason: "Saved result elevation basis or board layer is unknown; use the standalone result scene." };
+      const transform = boardLayerPlacement?.transform || (([x, y, z]) => [x - centerX, centerY - y, surface.zKnown ? (basis === "front-depth" ? thickness / 2 - z : z) : (savedLayer === "F.Cu" ? thickness / 2 : -thickness / 2)]);
       const next = createResultOverlay(surface, transform);
+      if(boardLayerPlacement){next.boardLayerPlacement=boardLayerPlacement;boardLayerPlacement.update(next.group);}
       // Internal copper/thermal layers must remain inspectable on the opaque PCB.
       // The result UI identifies this as showing the selected field through the board.
       next.mesh.material.depthTest = false; next.mesh.renderOrder = 20;
       analysisOverlay?.dispose(); analysisOverlay = next; scene.add(next.group);
       invalidate();
-      return { placed: true, basis: surface.zKnown ? basis : savedLayer, flat: !surface.zKnown };
+      return { placed: true, basis: boardLayerPlacement ? savedLayer : surface.zKnown ? basis : savedLayer, flat: Boolean(boardLayerPlacement)||!surface.zKnown };
     },
     setAnalysisProbes(probes) { analysisOverlay?.setProbes(probes);invalidate(); },
     setAnalysisOpacity(value) { analysisOverlay?.setOpacity(value);invalidate(); },

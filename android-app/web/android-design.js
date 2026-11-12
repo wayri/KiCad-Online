@@ -90,7 +90,7 @@
 
   const header=make('header'),close=make('button','Close');close.type='button';close.setAttribute('aria-label','Close simulation views');close.onclick=()=>page.close();header.append(make('strong','Simulation'),close);
 
-  const body=make('div');body.className='android-sheet-content';for(const [id,label,detail]of [['openSavedReports','Saved results','KiCad workbooks and wayriCAD analysis'],['openFastPI','Fast PI · experimental','Two-point DC copper screening']]){const source=d.getElementById(id),action=make('button');action.type='button';action.disabled=!source||source.disabled;action.append(make('strong',label),make('small',detail));action.onclick=()=>{page.close();source.click();};body.append(action);}
+  const body=make('div');body.className='android-sheet-content';for(const [id,label,detail]of [['openSavedReports','Saved results','KiCad workbooks and wayriCAD analysis'],['openFastPI','Fast DC drop · experimental','Two-point DC copper screening']]){const source=d.getElementById(id),action=make('button');action.type='button';action.disabled=!source||source.disabled;action.append(make('strong',label),make('small',detail));action.onclick=()=>{page.close();source.click();};body.append(action);}
 
   page.append(header,body);page.addEventListener('click',event=>{if(event.target!==page)return;const rect=page.getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)page.close();});page.addEventListener('close',()=>{page.remove();simulationDialog=null;});d.body.append(page);page.showModal();
 

@@ -45,5 +45,19 @@
   if(!copper.length)throw Error('Saved copper mask is unavailable for this net and layer.');return{copper,holes};
  }
  function texture(field,document){const canvas=document.createElement('canvas');canvas.width=field.width;canvas.height=field.height;const context=canvas.getContext?.('2d');if(!context||!canvas.toDataURL)throw Error('Field texture rendering is unavailable.');const pixels=context.createImageData(field.width,field.height);pixels.data.set(field.rgba);context.putImageData(pixels,0,0);return canvas.toDataURL('image/png');}
- const API={color,prepare,maskGeometry,texture};root.KiCadFastPIField=API;if(typeof module==='object'&&module.exports)module.exports=API;
+ // Conservative display cells: all corners and edge midpoints must remain on
+ // validated copper. Partial boundary cells are omitted, never painted over holes.
+ function surface(result,layer,metric,contains){
+  const field=prepare(result,layer,metric),points=[],triangles=[],values=[],half=result.cellSizeMm*.499;
+  for(const n of result.nodes){if(n.layer!==layer||!Number.isFinite(n.voltageV))continue;
+   const corners=[[-half,-half],[half,-half],[half,half],[-half,half]].map(([x,y])=>({x:n.x+x,y:n.y+y,layer}));
+   if(!corners.every(contains)||!corners.every((p,i)=>contains({x:(p.x+corners[(i+1)%4].x)/2,y:(p.y+corners[(i+1)%4].y)/2,layer})))continue;
+   const samples=corners.map(p=>field.sample(p.x,p.y));if(samples.some(v=>v===null||!Number.isFinite(v)))continue;
+   const start=points.length;for(let i=0;i<4;i++){points.push([corners[i].x,corners[i].y,0]);values.push(samples[i]);}triangles.push([start,start+1,start+2],[start,start+2,start+3]);
+   if(triangles.length>=200000)throw Error('3D field exceeds its display budget.');
+  }
+  if(!triangles.length)throw Error('No complete solved copper cells on this layer. Use Layout for boundary-clipped results.');
+  return{points,triangles,values,nodal:true,layer,zKnown:false,description:field.description,maximum:field.maximum};
+ }
+ const API={color,prepare,maskGeometry,texture,surface};root.KiCadFastPIField=API;if(typeof module==='object'&&module.exports)module.exports=API;
 })(globalThis);
