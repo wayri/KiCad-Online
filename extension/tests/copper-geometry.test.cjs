@@ -17,7 +17,7 @@ test('split cap/wall materials survive translucent selection and restore the exa
  const THREE=await import(pathToFileURL(threePath).href),{copperCapMaterials}=await import('../spike/renderQuality.mjs'),{createSelectionAppearance}=await import('../spike/selectionAppearance.mjs'),geometry=new THREE.BoxGeometry(),materials=copperCapMaterials(THREE,'pad',{color:0xc9ad67}),mesh=new THREE.InstancedMesh(geometry,materials,1);mesh.userData.records=[{uuid:'pad',net:'GND'}];mesh.setMatrixAt(0,new THREE.Matrix4());const appearance=createSelectionAppearance(THREE,()=>[mesh]),sourcePolicies=materials.map(m=>[m.polygonOffset,m.polygonOffsetFactor,m.polygonOffsetUnits]);
  appearance.update(()=>false,true);assert.ok(Array.isArray(mesh.material));assert.notEqual(mesh.material,materials);assert.ok(mesh.material[0].polygonOffsetFactor<0);assert.equal(mesh.material[1].polygonOffset,false);appearance.restore();assert.equal(mesh.material,materials);assert.deepEqual(materials.map(m=>[m.polygonOffset,m.polygonOffsetFactor,m.polygonOffsetUnits]),sourcePolicies);appearance.dispose();geometry.dispose();materials.forEach(m=>m.dispose());
 });
-test('3D dimming retains source hue, vivid selected instances, and exact restore',{skip:!threePath},async()=>{
+test('3D dimming desaturates context, preserves vivid selected instances, and restores exactly',{skip:!threePath},async()=>{
  const THREE=await import(pathToFileURL(threePath).href),{createSelectionAppearance}=await import('../spike/selectionAppearance.mjs');
  const geometry=new THREE.BoxGeometry(),material=new THREE.MeshBasicMaterial({color:0x33aa66}),single=new THREE.Mesh(geometry,material),instances=new THREE.InstancedMesh(geometry,material,2);
  single.userData.record={id:'other'};instances.userData.records=[{id:'chosen'},{id:'other'}];
@@ -26,11 +26,13 @@ test('3D dimming retains source hue, vivid selected instances, and exact restore
  appearance.update(record=>record?.id==='chosen',true);
  assert.notEqual(single.material,material);assert.equal(single.material.color.getHex(),material.color.getHex());assert.equal(single.material.opacity,.24);assert.equal(single.material.transparent,true);
  assert.equal(instances.material.color.getHex(),0xffffff);
+ const baseChannels=material.color.toArray(),other=baseChannels.map((value,channel)=>value*sourceValues[3+channel]);
+ const contextLuminance=(other[0]*.2126+other[1]*.7152+other[2]*.0722)*.24;
  for(const channel of [0,1,2]){
-  const base=material.color.toArray()[channel];
-  close(instances.instanceColor.array[channel],sourceValues[channel]*base);
-  close(instances.instanceColor.array[3+channel],sourceValues[3+channel]*base*.24);
+  close(instances.instanceColor.array[channel],sourceValues[channel]*baseChannels[channel]);
+  close(instances.instanceColor.array[3+channel],contextLuminance);
  }
+ const shader={fragmentShader:'#include <opaque_fragment>'};single.material.onBeforeCompile(shader);assert.match(shader.fragmentShader,/dot\(outgoingLight/);
  appearance.update(()=>false,true,{translucent:true});
  assert.equal(single.material.color.getHex(),material.color.getHex());assert.equal(single.material.opacity,.14);
  assert.equal(instances.material.color.getHex(),material.color.getHex());assert.equal(instances.material.opacity,.14);
