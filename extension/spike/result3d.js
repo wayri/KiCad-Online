@@ -14,6 +14,17 @@ export function validateResultSurface(surface) {
   for (const p of surface.points) if (!Array.isArray(p) || p.length !== 3 || !p.every(v => Number.isFinite(v) && Number.isFinite(Math.fround(v)))) throw new Error("Saved surface contains an invalid coordinate.");
   for (const t of surface.triangles) if (!Array.isArray(t) || t.length !== 3 || !t.every(i => Number.isSafeInteger(i) && i >= 0 && i < surface.points.length)) throw new Error("Saved surface contains an invalid triangle index.");
   for (const v of surface.values) if (v !== null && !Number.isFinite(v)) throw new Error("Saved surface contains an invalid result value.");
+  // Optional host-supplied sRGB samples share an exact 2D/3D colour mapping.
+  // They are presentation metadata; scalar values and probe interpolation stay intact.
+  if (surface.colors !== undefined) {
+    if (!Array.isArray(surface.colors) || surface.colors.length !== surface.values.length) throw new Error("Saved result colours do not match the values.");
+    for (let i = 0; i < surface.colors.length; i++) {
+      const rgb = surface.colors[i];
+      if (rgb === null && surface.values[i] === null) continue;
+      if (!Array.isArray(rgb) || rgb.length !== 3 || !rgb.every(v => Number.isInteger(v) && v >= 0 && v <= 255)) throw new Error("Saved result contains an invalid sRGB colour.");
+    }
+  }
+  if (surface.range !== undefined && (!Array.isArray(surface.range) || surface.range.length !== 2 || !surface.range.every(Number.isFinite) || surface.range[0] > surface.range[1])) throw new Error("Invalid result display range.");
   return { ...surface, nodal };
 }
 
@@ -28,6 +39,7 @@ export function createResultOverlay(surface, transform = p => p) {
   const group = new THREE.Group(), pins = new THREE.Group();
   let low = Infinity, high = -Infinity;
   for (const value of data.values) if (value !== null) { low = Math.min(low, value); high = Math.max(high, value); }
+  if (data.range) [low, high] = data.range;
   const positions = [], colors = [], faces = [];
   const palette = [new THREE.Color(0x2845bb), new THREE.Color(0x00cbd3), new THREE.Color(0xffe05a), new THREE.Color(0xe73c31)];
   const color = value => { const fraction = Number.isFinite(high - low) ? (value - low) / (high - low) : (value / 2 - low / 2) / (high / 2 - low / 2); const f = high > low ? Math.max(0, Math.min(1, fraction)) : .5; const scaled = f * 3, index = Math.min(2, Math.floor(scaled)); return palette[index].clone().lerp(palette[index + 1], scaled - index); };
@@ -38,7 +50,7 @@ export function createResultOverlay(surface, transform = p => p) {
     if (points.some(p => !Array.isArray(p) || p.length !== 3 || !p.every(v => Number.isFinite(v) && Number.isFinite(Math.fround(v))))) throw new Error("Invalid result coordinate mapping.");
     const a = new THREE.Vector3(...points[0]), b = new THREE.Vector3(...points[1]), c = new THREE.Vector3(...points[2]);
     if (b.clone().sub(a).cross(c.clone().sub(a)).lengthSq() === 0) return;
-    points.forEach((p, i) => { positions.push(...p); const rgb = color(values[i]); colors.push(rgb.r, rgb.g, rgb.b); });
+    points.forEach((p, i) => { positions.push(...p); const supplied = data.colors?.[data.nodal ? triangle[i] : index]; const rgb = supplied ? new THREE.Color().setRGB(supplied[0] / 255, supplied[1] / 255, supplied[2] / 255, THREE.SRGBColorSpace) : color(values[i]); colors.push(rgb.r, rgb.g, rgb.b); });
     faces.push(index);
   });
   const geometry = new THREE.BufferGeometry();

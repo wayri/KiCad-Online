@@ -5,6 +5,21 @@ const sheets=['root.kicad_sch','channel.kicad_sch'].map(path=>({path,label:path,
 const links=['Left','Right'].map(label=>({path:'root.kicad_sch',uuid:label,label,properties:{Sheetfile:'channel.kicad_sch'}}));
 const net=(id,path,extra={})=>({id,path,kind:'schematic',name:id,primitives:[],members:[{kind:'label',position:{x:10,y:20}}],...extra});
 const nets=[net('left','root.kicad_sch',{sheetPins:[{sheetId:'Left',name:'IN'}]}),net('right','root.kicad_sch',{sheetPins:[{sheetId:'Right',name:'IN'}]}),net('input','channel.kicad_sch',{hierarchicalNames:['IN']})];
+
+test('highlight refresh reuses page geometry and source identities while changing only overlays',()=>{
+ const {refreshSheetOverview}=require('../review-workspace.js'),wire={type:'line',uuid:'w',points:[{x:1,y:2},{x:3,y:4}]},entry={path:'root',label:'Root',design:{page:{width:100,height:100},primitives:[wire]},groups:[]};
+ const first=composeSheetOverview([entry]),geometry=first.design,primitive=geometry.primitives.find(p=>p.uuid==='w'),routes=first.airwires;
+ const next=refreshSheetOverview(first,[{...entry,groups:[{primitives:[wire]}]}]);
+ assert.equal(next,first);assert.equal(next.airwires,routes);assert.equal(next.design,geometry);assert.equal(next.highlighted[0],primitive);assert.equal(primitive.sourceIndex,0);
+ refreshSheetOverview(next,[entry]);assert.deepEqual(next.highlighted,[]);assert.equal(next.design,geometry);
+ const changed={...entry,design:{...entry.design,primitives:[{...wire,uuid:'new'}]}};assert.notEqual(refreshSheetOverview(next,[changed]),next);
+});
+
+test('missing saved endpoint positions never become fabricated page-center net guides',()=>{
+ const entries=['a','b'].map(path=>({path,label:path,design:{page:{width:100,height:100},primitives:[]},groups:[]}));
+ const result=composeSheetOverview(entries,[{name:'GND',from:{path:'a',position:null},to:{path:'b',position:{x:5,y:5}}}]);
+ assert.deepEqual(result.airwires,[]);assert.equal(result.routing.unresolved,1);
+});
 test('hierarchy placements connect only the selected repeated channel and retain the full stack identity',()=>{
  const entries=sheetOverviewEntries(sheets,links),placements=entries.flatMap(e=>e.placements),channel=entries.find(e=>e.sheet.path==='channel.kicad_sch');
  assert.equal(channel.instanceCount,2);assert.equal(new Set(channel.placements.map(p=>p.id)).size,2);

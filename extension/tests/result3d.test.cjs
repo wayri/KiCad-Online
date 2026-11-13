@@ -51,3 +51,15 @@ test('opacity clamps and probe geometry uses explicit coordinate mapping', async
   overlay.setProbes([{x:2,y:3,z:0}]); const marker = overlay.group.children[1].children[0]; assert.deepEqual(marker.position.toArray(),[2,-3,0]);
   overlay.setProbes([]); assert.equal(overlay.group.children[1].children.length,0); overlay.dispose(); assert.equal(overlay.group.children.length,0);
 });
+
+
+test('explicit sRGB colours and a fixed scalar range preserve original samples and null holes',async()=>{
+ const [api,THREE]=await renderer(),input={...surface(),colors:[[68,1,84],[49,104,142],[253,231,37]],range:[0,25]},before=JSON.stringify(input),overlay=api.createResultOverlay(input);
+ assert.equal(overlay.min,0);assert.equal(overlay.max,25);
+ const colors=overlay.mesh.geometry.getAttribute('color');
+ for(let i=0;i<3;i++){const expected=new THREE.Color().setRGB(...input.colors[i].map(v=>v/255),THREE.SRGBColorSpace);assert.ok(Math.abs(colors.getX(i)-expected.r)<1e-7);assert.ok(Math.abs(colors.getY(i)-expected.g)<1e-7);assert.ok(Math.abs(colors.getZ(i)-expected.b)<1e-7);}
+ const probe=overlay.sample({object:overlay.mesh,faceIndex:0,point:new THREE.Vector3(2.5,2.5,0)});assert.equal(probe.value,7.5);assert.equal(JSON.stringify(input),before);overlay.dispose();
+ const hole=api.createResultOverlay({...input,values:[0,null,20],colors:[[0,0,0],null,[255,255,255]]});assert.equal(hole.mesh.geometry.getAttribute('position').count,0);hole.dispose();
+ for(const colors of [[[1,2,3]],[[0,0,0],[NaN,1,2],[255,255,255]],[[0,0,0],[256,1,2],[255,255,255]]])assert.throws(()=>api.validateResultSurface({...input,colors}),/colour/);
+ for(const range of [[3,2],[0,Infinity],[0],[null,1]])assert.throws(()=>api.validateResultSurface({...input,range}),/range/);
+});

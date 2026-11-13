@@ -52,6 +52,30 @@ existing work limits and 30-second timeout. The result reports the actual mesh
 size and any refinement. Disconnected copper and invalid physical inputs still
 fail; automatic refinement is not a convergence/accuracy study.
 
+## Result colours and legend
+
+The **Colour palette** selector offers the existing blue/cyan/yellow/red scale,
+Viridis, Inferno and Grayscale as bounded four-stop display palettes. The legend
+shows the selected palette, zero-to-layer-maximum range, metric units and the
+interpolation/mesh description in text as well as colour. It includes a screen
+reader label; colour is not the only indication of magnitude. Current arrows
+retain their solved signed direction.
+
+Changing palette or display layer does not rerun the solver, change its samples,
+move A/B or change the current camera. The smooth Layout field and complete-cell
+3D field use the same palette definition and zero-based range for that metric
+and layer. The range is recalculated when the metric or result layer changes;
+it is not a global range across layers. Missing or unsupported copper remains
+unpainted. Mesh diagnostic colours use the same palette when the field module
+is available; hosts missing it retain the legacy default and reject alternative
+palettes rather than mislabel their colours.
+
+A host holding the object returned by `KiCadFastPIWorkspace.mount(...)` can call
+`setPalette('viridis')` and `getPalette()`. Allowed names are `wayricad` (the
+default), `viridis`, `inferno` and `grayscale`. Invalid names are rejected before
+state changes. Preferences belong to that workspace session. These are display
+controls, not new simulation methods or evidence of physical accuracy.
+
 ## Scope and evidence
 
 This is experimental screening, not a replacement for Quick PI or SPIKE.

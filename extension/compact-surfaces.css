@@ -1,5 +1,9 @@
 /* Shared density contract. Drawing geometry and document prose keep their own styles. */
 :root{--ui-control-height:30px;--ui-header-height:36px;--ui-space:6px;--ui-caption:11px;--ui-radius:5px}
+body .net-quick-view :is(button,select){min-height:var(--ui-control-height);border-radius:var(--ui-radius)}
+body .net-quick-view header button{width:var(--ui-control-height);height:var(--ui-control-height)}
+@media(pointer:coarse){body .net-quick-view :is(button,select){min-height:44px}body .net-quick-view header button{width:44px;height:44px}}
+body .project-files-tree .project-file-tree-row{white-space:normal;overflow-wrap:anywhere;line-height:1.4;text-overflow:clip;max-width:100%}
 body :is(.viewer-settings,.review-sidebar,.review-control-popover,.workspace-tools-menu,.tool-overflow-content,.revision-picker,.repository-explorer,dialog):not(.android-reader-dialog) :is(button,select,input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file])){min-height:var(--ui-control-height);font-size:12px;line-height:1.35;border-radius:var(--ui-radius)}
 body :is(.viewer-settings,.review-sidebar,.review-control-popover,.workspace-tools-menu,.tool-overflow-content,.revision-picker,.repository-explorer,dialog) button{padding:4px 7px}
 body :is(.viewer-settings,.review-sidebar,.review-control-popover,.workspace-tools-menu,.tool-overflow-content,.revision-picker,.repository-explorer,dialog) :is(select,input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file])){padding:4px 7px}

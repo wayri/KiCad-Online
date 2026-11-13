@@ -2,13 +2,18 @@
 ((root)=>{'use strict';
  const MAX_PIXELS=384*384,MAX_MASK_POINTS=200000,MAX_MASK_SHAPES=4000,MAX_SUPPORT_RUNS=4000;
  const clamp=x=>Math.max(0,Math.min(1,x));
- const anchors=[[30,74,196],[25,190,198],[250,216,74],[218,54,58]];
+ // Four-stop display palettes. They alter colour only, never solved values.
+ const paletteStops={wayricad:[[30,74,196],[25,190,198],[250,216,74],[218,54,58]],viridis:[[68,1,84],[49,104,142],[53,183,121],[253,231,37]],inferno:[[0,0,4],[120,28,109],[237,105,37],[252,255,164]],grayscale:[[24,24,24],[99,99,99],[173,173,173],[245,245,245]]};
+ const paletteNames=()=>Object.keys(paletteStops);
+ function checkedPalette(name='wayricad'){if(typeof name!=='string'||!Object.hasOwn(paletteStops,name))throw Error('Unknown field display palette.');return name;}
  const linear=x=>(x/=255)<=.04045?x/12.92:((x+.055)/1.055)**2.4;
  const gamma=x=>Math.round(255*clamp(x<=.0031308?12.92*x:1.055*Math.max(0,x)**(1/2.4)-.055));
- const labs=anchors.map(rgb=>{const [r,g,b]=rgb.map(linear),l=Math.cbrt(.4122214708*r+.5363325363*g+.0514459929*b),m=Math.cbrt(.2119034982*r+.6806995451*g+.1073969566*b),s=Math.cbrt(.0883024619*r+.2817188376*g+.6299787005*b);return[.2104542553*l+.793617785*m-.0040720468*s,1.9779984951*l-2.428592205*m+.4505937099*s,.0259040371*l+.7827717662*m-.808675766*s];});
- function color(ratio){const q=clamp(ratio)*3,i=Math.min(2,Math.floor(q)),t=q-i,[L,a,b]=labs[i].map((v,k)=>v+(labs[i+1][k]-v)*t),l=(L+.3963377774*a+.2158037573*b)**3,m=(L-.1055613458*a-.0638541728*b)**3,s=(L-.0894841775*a-1.291485548*b)**3;return[gamma(4.0767416621*l-3.3077115913*m+.2309699292*s),gamma(-1.2684380046*l+2.6097574011*m-.3413193965*s),gamma(-.0041960863*l-.7034186147*m+1.707614701*s)];}
- const palette=Array.from({length:256},(_,i)=>color(i/255));
- function prepare(result,layer,metric){
+ const labsFor=anchors=>anchors.map(rgb=>{const [r,g,b]=rgb.map(linear),l=Math.cbrt(.4122214708*r+.5363325363*g+.0514459929*b),m=Math.cbrt(.2119034982*r+.6806995451*g+.1073969566*b),s=Math.cbrt(.0883024619*r+.2817188376*g+.6299787005*b);return[.2104542553*l+.793617785*m-.0040720468*s,1.9779984951*l-2.428592205*m+.4505937099*s,.0259040371*l+.7827717662*m-.808675766*s];});
+ const paletteLabs=Object.fromEntries(Object.entries(paletteStops).map(([name,stops])=>[name,labsFor(stops)]));
+ function color(ratio,name='wayricad'){const labs=paletteLabs[checkedPalette(name)];if(!Number.isFinite(ratio))throw Error('Field colour ratio must be finite.');const q=clamp(ratio)*3,i=Math.min(2,Math.floor(q)),t=q-i,[L,a,b]=labs[i].map((v,k)=>v+(labs[i+1][k]-v)*t),l=(L+.3963377774*a+.2158037573*b)**3,m=(L-.1055613458*a-.0638541728*b)**3,s=(L-.0894841775*a-1.291485548*b)**3;return[gamma(4.0767416621*l-3.3077115913*m+.2309699292*s),gamma(-1.2684380046*l+2.6097574011*m-.3413193965*s),gamma(-.0041960863*l-.7034186147*m+1.707614701*s)];}
+ const palettes=Object.fromEntries(paletteNames().map(name=>[name,Array.from({length:256},(_,i)=>color(i/255,name))]));
+ function prepare(result,layer,metric,paletteName='wayricad'){
+  const palette=palettes[checkedPalette(paletteName)];
   if(!['voltage','current','density','loss'].includes(metric))throw Error('Unknown field display metric.');
   const step=result.cellSizeMm;if(!Number.isFinite(step)||step<=0||!Array.isArray(result.nodes)||result.nodes.length>150000||result.edges.length>400000)throw Error('Field display exceeds its bounded sample budget.');
   const nodes=new Map(),grid=new Map(),links=new Set(),values=new Map(),sums=new Map(),key=(x,y)=>x+':'+y,pair=(a,b)=>Math.min(a,b)+':'+Math.max(a,b),sourceV=result.nodes[result.sourceIndex]?.voltageV;if(!Number.isFinite(sourceV))throw Error('The solved source voltage is unavailable.');
@@ -96,18 +101,18 @@
  }
  // Conservative display cells: all corners and edge midpoints must remain on
  // validated copper. Partial boundary cells are omitted, never painted over holes.
- function surface(result,layer,metric,contains,primitives,net){
-  const field=prepare(result,layer,metric),points=[],triangles=[],values=[],half=result.cellSizeMm*.499;
+ function surface(result,layer,metric,contains,primitives,net,paletteName='wayricad'){
+  const field=prepare(result,layer,metric,paletteName),points=[],triangles=[],values=[],colors=[],half=result.cellSizeMm*.499;
   const wholeCell=surfaceGuard(primitives,net,layer,field.bounds);
   for(const n of result.nodes){if(n.layer!==layer||!Number.isFinite(n.voltageV))continue;
    const corners=[[-half,-half],[half,-half],[half,half],[-half,half]].map(([x,y])=>({x:n.x+x,y:n.y+y,layer}));
    if(!corners.every(contains)||!corners.every((p,i)=>contains({x:(p.x+corners[(i+1)%4].x)/2,y:(p.y+corners[(i+1)%4].y)/2,layer}))||!wholeCell(corners))continue;
    const samples=corners.map(p=>field.sample(p.x,p.y));if(samples.some(v=>v===null||!Number.isFinite(v)))continue;
-   const start=points.length;for(let i=0;i<4;i++){points.push([corners[i].x,corners[i].y,0]);values.push(samples[i]);}triangles.push([start,start+1,start+2],[start,start+2,start+3]);
+   const start=points.length;for(let i=0;i<4;i++){points.push([corners[i].x,corners[i].y,0]);values.push(samples[i]);colors.push(color(field.maximum?samples[i]/field.maximum:0,paletteName));}triangles.push([start,start+1,start+2],[start,start+2,start+3]);
    if(triangles.length>=200000)throw Error('3D field exceeds its display budget.');
   }
   if(!triangles.length)throw Error('No complete solved copper cells on this layer. Use Layout for boundary-clipped results.');
-  return{points,triangles,values,nodal:true,layer,zKnown:false,description:field.description,maximum:field.maximum};
+  return{points,triangles,values,colors,range:[0,field.maximum],palette:paletteName,nodal:true,layer,zKnown:false,description:field.description,maximum:field.maximum};
  }
- const API={color,prepare,maskGeometry,texture,surface,surfaceGuard};root.KiCadFastPIField=API;if(typeof module==='object'&&module.exports)module.exports=API;
+ const API={color,paletteNames,prepare,maskGeometry,texture,surface,surfaceGuard};root.KiCadFastPIField=API;if(typeof module==='object'&&module.exports)module.exports=API;
 })(globalThis);

@@ -8,12 +8,22 @@ export function createSelectionAppearance(THREE, objects) {
     const state={material:object.material,instanceColor:object.instanceColor,owned:[]};saved.set(object,state);return state;
   }
   function dimMaterial(source,state){
-    const material=source.clone(),originalCompile=source.onBeforeCompile;
-    material.onBeforeCompile=(shader,renderer)=>{originalCompile?.call(material,shader,renderer);shader.fragmentShader=shader.fragmentShader.replace('#include <opaque_fragment>','outgoingLight = vec3(dot(outgoingLight, vec3(0.2126, 0.7152, 0.0722))) * 0.60;\n#include <opaque_fragment>');};
-    material.customProgramCacheKey=()=>source.customProgramCacheKey()+':selection-grey';state.owned.push(material);return material;
+    const material=source.clone();material.transparent=true;
+    material.opacity=Math.min(Number.isFinite(source.opacity)?source.opacity:1,.24);
+    material.depthWrite=false;
+    // Desaturate the final shaded output, including maps and instance colors.
+    // Keep saved materials untouched so clearing selection restores them exactly.
+    const sourceCompile=source.onBeforeCompile;
+    material.onBeforeCompile=function(shader,renderer){
+      sourceCompile?.call(this,shader,renderer);
+      shader.fragmentShader=shader.fragmentShader.replace('#include <opaque_fragment>',
+        'outgoingLight = vec3(dot(outgoingLight, vec3(0.2126, 0.7152, 0.0722)));\n#include <opaque_fragment>');
+    };
+    material.customProgramCacheKey=()=>source.customProgramCacheKey()+'|kicad-gray-context-v1';
+    state.owned.push(material);return material;
   }
   function ghostMaterials(state){
-    if(!state.ghost)state.ghost=list(state.material).map(source=>{const material=dimMaterial(source,state);material.transparent=true;material.opacity=Math.min(Number.isFinite(source.opacity)?source.opacity:1,.14);material.depthWrite=false;return material;});
+    if(!state.ghost)state.ghost=list(state.material).map(source=>{const material=dimMaterial(source,state);material.opacity=Math.min(material.opacity,.14);return material;});
     return Array.isArray(state.material)?state.ghost:state.ghost[0];
   }
   function update(matches,enabled,{translucent=false}={}){
@@ -29,7 +39,9 @@ export function createSelectionAppearance(THREE, objects) {
         const base=list(state.material)[0].color||new THREE.Color(0xffffff),color=new THREE.Color();
         for(let index=0;index<records.length;index++){
           if(state.instanceColor)color.fromArray(state.instanceColor.array,index*3).multiply(base);else color.copy(base);
-          if(!matches(records[index])){const grey=(color.r*.2126+color.g*.7152+color.b*.0722)*.60;color.setRGB(grey,grey,grey);}
+          // Three.js has one opacity per instanced mesh; attenuate only the
+          // unselected instance colors so selected instances stay fully vivid.
+          if(!matches(records[index])){const grey=(color.r*.2126+color.g*.7152+color.b*.0722)*.24;color.setRGB(grey,grey,grey);}
           object.setColorAt(index,color);
         }
         if(object.instanceColor)object.instanceColor.needsUpdate=true;

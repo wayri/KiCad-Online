@@ -110,41 +110,49 @@
     commands.push(`L ${path.at(-1).x} ${path.at(-1).y}`);return commands.join(' ');
   }
 
+  function netCurve(from,to){
+    const dx=to.x-from.x,dy=to.y-from.y,vertical=Math.abs(dy)>=Math.abs(dx)*.8;
+    const span=Math.max(16,Math.min(180,Math.abs(vertical?dy:dx)*.5)),direction=Math.sign(vertical?dy:dx)||1;
+    return vertical?{a:from,b:{x:from.x,y:from.y+span*direction},c:{x:to.x,y:to.y-span*direction},d:to}:{a:from,b:{x:from.x+span*direction,y:from.y},c:{x:to.x-span*direction,y:to.y},d:to};
+  }
+  function netColor(name,dark=true){const palette=dark?['#65d9ff','#ffbf69','#c4a3ff','#6fe0ad','#ff91b8','#a6d875']:['#006aa6','#945400','#7444b3','#08794b','#ae3060','#517719'];let hash=0;for(const char of String(name||''))hash=(Math.imul(hash,31)+char.codePointAt(0))>>>0;return palette[hash%palette.length];}
   function draw(view, graph, dark = false, style = {}) {
     const ctx = view?.ctx, camera = view?.viewport?.camera;
     if (!ctx || !camera || !graph?.links?.length) return;
-    ctx.save();
+    ctx.save();ctx.globalAlpha*=Number.isFinite(style.opacity)?style.opacity:1;const labels=new Set();
     for (const link of graph.links) {
-      const path=(link.exteriorPoints||link.points||[link.from,link.to]).map(p=>camera.world_to_screen(p)),a=path[0],b=path.at(-1),tail=path.at(-2)||a;
-      if(style.dashed&&link.anchorStubs?.length){ctx.save();ctx.globalAlpha=.32;ctx.strokeStyle=style.color||(dark?'#d4b565':'#9e7b29');ctx.lineWidth=1;ctx.setLineDash([2,5]);for(const stub of link.anchorStubs){const local=stub.map(p=>camera.world_to_screen(p));ctx.beginPath();ctx.moveTo(local[0].x,local[0].y);for(const p of local.slice(1))ctx.lineTo(p.x,p.y);ctx.stroke();}ctx.restore();}
+      const net=style.kind==='net',path=(net?(link.points||[link.from,link.to]):(link.exteriorPoints||link.points||[link.from,link.to])).map(p=>camera.world_to_screen(p)),a=path[0],b=path.at(-1),tail=path.at(-2)||a;
+      if(!net&&style.dashed&&link.anchorStubs?.length){ctx.save();ctx.globalAlpha=.32;ctx.strokeStyle=style.color||(dark?'#d4b565':'#9e7b29');ctx.lineWidth=1;ctx.setLineDash([2,5]);for(const stub of link.anchorStubs){const local=stub.map(p=>camera.world_to_screen(p));ctx.beginPath();ctx.moveTo(local[0].x,local[0].y);for(const p of local.slice(1))ctx.lineTo(p.x,p.y);ctx.stroke();}ctx.restore();}
       const length = Math.hypot(b.x - tail.x, b.y - tail.y);
       if (length < .1) continue;
       const ux = (b.x - tail.x) / length, uy = (b.y - tail.y) / length;
       const inset=Math.min(2,length/4),head=Math.min(6,Math.max(3,length*.65)),wing=head*.45;
-      const tip = {x: b.x - ux * inset, y: b.y - uy * inset};
+      const tip = net?b:{x: b.x - ux * inset, y: b.y - uy * inset},curve=net?netCurve(a,b):null,color=net?netColor(link.name||link.label,dark):style.color||(dark ? '#69c4ba' : '#398d84');
       ctx.beginPath(); ctx.moveTo(a.x, a.y);
-      for(let i=1;i<path.length-1;i++){const prev=path[i-1],p=path[i],next=path[i+1],before=Math.hypot(p.x-prev.x,p.y-prev.y),after=Math.hypot(next.x-p.x,next.y-p.y),radius=Math.min(12,before/3,after/3);if(!before||!after)continue;ctx.lineTo(p.x-(p.x-prev.x)/before*radius,p.y-(p.y-prev.y)/before*radius);if(ctx.quadraticCurveTo)ctx.quadraticCurveTo(p.x,p.y,p.x+(next.x-p.x)/after*radius,p.y+(next.y-p.y)/after*radius);else ctx.lineTo(p.x,p.y);}
-      ctx.lineTo(tip.x, tip.y);
+      if(net&&ctx.bezierCurveTo)ctx.bezierCurveTo(curve.b.x,curve.b.y,curve.c.x,curve.c.y,b.x,b.y);
+      else {for(let i=1;i<path.length-1;i++){const prev=path[i-1],p=path[i],next=path[i+1],before=Math.hypot(p.x-prev.x,p.y-prev.y),after=Math.hypot(next.x-p.x,next.y-p.y),radius=Math.min(12,before/3,after/3);if(!before||!after)continue;ctx.lineTo(p.x-(p.x-prev.x)/before*radius,p.y-(p.y-prev.y)/before*radius);if(ctx.quadraticCurveTo)ctx.quadraticCurveTo(p.x,p.y,p.x+(next.x-p.x)/after*radius,p.y+(next.y-p.y)/after*radius);else ctx.lineTo(p.x,p.y);}ctx.lineTo(tip.x, tip.y);}
       // A narrow paper-colored casing makes crossings unambiguous: a hierarchy
       // branch passes over a net guide instead of looking electrically joined.
       if(!style.dashed){ctx.setLineDash([]);ctx.strokeStyle=dark?'#192a34':'#ffffff';ctx.lineWidth=4;ctx.lineJoin='round';ctx.stroke();}
-      ctx.setLineDash(style.dashed?[4,4]:[]); ctx.strokeStyle = style.color||(dark ? '#69c4ba' : '#398d84'); ctx.lineWidth = 1.5; ctx.lineJoin='round'; ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(tip.x, tip.y);
+      ctx.setLineDash(style.dashed?[4,4]:[]); ctx.strokeStyle = color; ctx.lineWidth = net?1.8:1.5; ctx.lineJoin='round'; ctx.stroke();
+      if(net){for(const endpoint of [a,b]){ctx.beginPath();ctx.arc(endpoint.x,endpoint.y,3,0,Math.PI*2);ctx.fillStyle=color;ctx.fill();ctx.strokeStyle=dark?'#17191f':'#fff';ctx.lineWidth=1;ctx.stroke();}}
+      else {ctx.beginPath(); ctx.moveTo(tip.x, tip.y);
       ctx.lineTo(tip.x - ux * head - uy * wing, tip.y - uy * head + ux * wing);
       ctx.lineTo(tip.x - ux * head + uy * wing, tip.y - uy * head - ux * wing);
-      ctx.closePath(); ctx.fillStyle = style.color||(dark ? '#69c4ba' : '#398d84'); ctx.fill();
+      ctx.closePath(); ctx.fillStyle = style.color||(dark ? '#69c4ba' : '#398d84'); ctx.fill();}
       const label=String(link.label||link.name||'').trim();
-      if(link.showLabel === false || !label) continue;
-      const segment=path.slice(1).map((p,i)=>({a:path[i],b:p,length:Math.hypot(p.x-path[i].x,p.y-path[i].y)})).sort((a,b)=>b.length-a.length)[0];const text=label.slice(0,96),x=(segment.a.x+segment.b.x)/2,y=(segment.a.y+segment.b.y)/2-12;
+      if(link.showLabel === false || !label || net&&labels.has(label)) continue;labels.add(label);
+      const labelPath=(net&&link.exteriorPoints?link.exteriorPoints.map(p=>camera.world_to_screen(p)):path);const segment=labelPath.slice(1).map((p,i)=>({a:labelPath[i],b:p,length:Math.hypot(p.x-labelPath[i].x,p.y-labelPath[i].y)})).sort((a,b)=>b.length-a.length)[0];const text=label.length>40?label.slice(0,39)+'…':label,x=net?(curve.a.x+3*curve.b.x+3*curve.c.x+curve.d.x)/8:(segment.a.x+segment.b.x)/2,y=(net?(curve.a.y+3*curve.b.y+3*curve.c.y+curve.d.y)/8:(segment.a.y+segment.b.y)/2)-12;
       ctx.font = '500 10px sans-serif';
-      const width = Math.min(250, ctx.measureText(text).width + 12);
+      const width = Math.min(220, ctx.measureText(text).width + 12);
+      if(net&&Number.isFinite(camera.width)&&(x-width/2<4||x+width/2>camera.width-4||y<12||y>camera.height-12))continue;
       ctx.fillStyle = dark ? '#10212b' : '#ffffff'; ctx.fillRect(x - width / 2, y - 10, width, 20);
-      ctx.fillStyle = dark ? '#d9fff7' : '#07584f'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = net?color:dark ? '#d9fff7' : '#07584f'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(text, x, y, width - 8);
     }
     ctx.restore();
   }
 
-  root.KiCadSheetHierarchyLinks = {build, draw, pathData};
+  root.KiCadSheetHierarchyLinks = {build, draw, pathData,netCurve,netColor};
   if (typeof module === 'object' && module.exports) module.exports = root.KiCadSheetHierarchyLinks;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

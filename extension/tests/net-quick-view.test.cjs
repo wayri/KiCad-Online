@@ -13,16 +13,55 @@ class Element{
 }
 function descendants(element){return[element,...element.children.flatMap(descendants)];}
 function fixture(count=5,options={}){const document={createElement:tag=>new Element(tag,document)},holder=new Element('div',document),viewports=[],located=[];
+ options.setupDocument?.(document);
  const designs=Array.from({length:count},(_,i)=>({primitives:[{type:'line',uuid:'line'+i,points:[{x:i,y:0},{x:i+3,y:4}],layer:'F.Cu'}],layers:['F.Cu']}));
  const entries=designs.map((design,i)=>({path:'sheet'+i+'.kicad_sch',label:'Sheet '+i,instanceId:'instance'+i,design,groups:[{id:'net'+i,name:'Power '+i,primitives:design.primitives}]}));
  const canvasAPI={bounds:owned.bounds,mount(host){const viewport={canvas:new Element('canvas',document),viewport:{camera:new owned.Camera(280,280)},setDocument(design,path){this.design=design;this.path=path;},setNetHighlights(groups,options){this.groups=groups;this.highlightOptions=options;},draw(){},requestDraw(){this.drawRequests=(this.drawRequests||0)+1;},dispose(){this.disposed=true;}};host.append(viewport.canvas);viewports.push(viewport);return viewport;}};
  const quick=mount({holder,getEntries:()=>entries,onLocate:(...args)=>located.push(args),canvasAPI,document,...options});const button=label=>descendants(holder).find(element=>element.tag==='button'&&element.attributes['aria-label']===label);return{document,holder,quick,entries,viewports,located,button,canvasAPI};}
+test('probe windows and popovers remain inside a short drawing pane after drag and resize',()=>{
+ const oldWidth=globalThis.innerWidth,oldHeight=globalThis.innerHeight,oldAdd=globalThis.addEventListener,oldRemove=globalThis.removeEventListener,listeners={};let f;
+ try{globalThis.innerWidth=320;globalThis.innerHeight=240;globalThis.addEventListener=(name,callback)=>{listeners[name]=callback;};globalThis.removeEventListener=()=>{};
+  f=fixture(1);f.document.getElementById=id=>id==='drawingHost'?{getBoundingClientRect:()=>({left:20,top:50,width:280,height:180})}:null;
+  const id=f.quick.openProbe(occurrences(f.entries)[0]),window=descendants(f.holder).find(n=>n.attributes['data-window-id']===id),header=window.children[0];
+  listeners.resize();assert.equal(window.style.width,'264px');assert.equal(window.style.maxHeight,'164px');assert.ok(parseFloat(window.style.left)>=28);assert.ok(parseFloat(window.style.top)>=58);
+  header.emit('pointerdown',{clientX:40,clientY:70});header.emit('pointermove',{clientX:900,clientY:900});assert.ok(parseFloat(window.style.left)+parseFloat(window.style.width)<=292);assert.ok(parseFloat(window.style.top)<=222);
+  f.button('Probe options').emit('click');const tools=descendants(window).find(n=>n.className==='net-quick-view-tools');assert.equal(tools.style.position,'fixed');assert.ok(parseFloat(tools.style.left)>=28);assert.ok(parseFloat(tools.style.top)>=58);
+  globalThis.innerWidth=240;globalThis.innerHeight=180;listeners.resize();assert.equal(window.style.width,'204px');assert.equal(window.style.maxHeight,'114px');assert.ok(parseFloat(window.style.left)+204<=232);assert.ok(parseFloat(tools.style.left)>=28);
+ }finally{f?.quick.dispose();globalThis.innerWidth=oldWidth;globalThis.innerHeight=oldHeight;globalThis.addEventListener=oldAdd;globalThis.removeEventListener=oldRemove;}
+});
+test('overview probes follow the live canvas below its header without a window resize',async()=>{
+ const old={width:globalThis.innerWidth,height:globalThis.innerHeight,resize:globalThis.ResizeObserver,mutation:globalThis.MutationObserver};let f,overview=null,surfaceTop=110;const sizes=[],mutations=[];
+ try{globalThis.innerWidth=320;globalThis.innerHeight=240;globalThis.ResizeObserver=class{constructor(callback){this.callback=callback;sizes.push(this);this.nodes=[];}observe(node){this.nodes.push(node);}disconnect(){this.disconnected=true;}};globalThis.MutationObserver=class{constructor(callback){this.callback=callback;mutations.push(this);}observe(node){this.node=node;}disconnect(){this.disconnected=true;}};
+  const drawing=new Element('div'),surface=new Element('div'),header=new Element('header');drawing.getBoundingClientRect=()=>({left:20,top:50,width:280,height:180});surface.getBoundingClientRect=()=>({left:20,top:surfaceTop,width:280,height:240-surfaceTop});header.getBoundingClientRect=()=>({left:20,top:50,width:280,height:surfaceTop-50,bottom:surfaceTop});
+  f=fixture(1,{setupDocument:document=>{document.getElementById=id=>id==='drawingHost'?drawing:id==='sheetOverview'?overview:null;}});const id=f.quick.openProbe(occurrences(f.entries)[0]),window=descendants(f.holder).find(node=>node.attributes['data-window-id']===id);assert.ok(parseFloat(window.style.top)<110);assert.ok(sizes[0].nodes.includes(drawing),'PCB/no-overview hosts are observed before a schematic overview exists');
+  overview=new Element('section');overview.hidden=false;overview.querySelector=selector=>selector==='.sheet-shared-canvas'?surface:selector==='header'?header:null;mutations.find(observer=>observer.node===drawing).callback();await new Promise(resolve=>setTimeout(resolve,22));assert.ok(sizes[0].nodes.includes(surface));assert.ok(sizes[0].nodes.includes(header));assert.ok(parseFloat(window.style.top)>=118);assert.equal(window.style.maxHeight,'114px');
+  surfaceTop=130;sizes[0].callback();await new Promise(resolve=>setTimeout(resolve,22));assert.ok(parseFloat(window.style.top)>=138);assert.equal(window.style.maxHeight,'94px');
+ }finally{f?.quick.dispose();assert.ok(sizes.every(observer=>observer.disconnected));assert.ok(mutations.every(observer=>observer.disconnected));globalThis.innerWidth=old.width;globalThis.innerHeight=old.height;globalThis.ResizeObserver=old.resize;globalThis.MutationObserver=old.mutation;}
+});
+test('new probe views choose a free corner when the drawing has room',()=>{
+ const oldWidth=globalThis.innerWidth,oldHeight=globalThis.innerHeight;let f;
+ try{globalThis.innerWidth=1000;globalThis.innerHeight=700;f=fixture(2);const rows=occurrences(f.entries),firstId=f.quick.openProbe(rows[0]),first=descendants(f.holder).find(n=>n.attributes['data-window-id']===firstId);first.getBoundingClientRect=()=>({left:parseFloat(first.style.left),top:parseFloat(first.style.top),width:parseFloat(first.style.width),height:280});const secondId=f.quick.openProbe(rows[1]),second=descendants(f.holder).find(n=>n.attributes['data-window-id']===secondId),a=first.getBoundingClientRect(),b={left:parseFloat(second.style.left),top:parseFloat(second.style.top),width:parseFloat(second.style.width),height:280};assert.ok(b.left>=a.left+a.width||a.left>=b.left+b.width||b.top>=a.top+a.height||a.top>=b.top+b.height);
+ }finally{f?.quick.dispose();globalThis.innerWidth=oldWidth;globalThis.innerHeight=oldHeight;}
+});
 test('occurrences use only saved primitives from each exact source and preserve hierarchy instances',()=>{
  const live={uuid:'pad',type:'pad'},stale={...live},design={primitives:[live]};const entries=[{path:'a.kicad_sch',instanceId:'one',design,groups:[{id:'net',name:'VCC',primitives:[live,stale]}]},{path:'a.kicad_sch',instanceId:'two',design,groups:[{id:'net',name:'VCC',primitives:[live]}]}],before=JSON.stringify(entries),rows=occurrences(entries);
  assert.equal(rows.length,2);assert.notEqual(rows[0].id,rows[1].id);assert.deepEqual(rows[0].group.primitives,[live]);assert.equal(rows[0].group.primitives[0],live);assert.equal(JSON.stringify(entries),before);assert.equal(occurrences([{...entries[0],groups:[{primitives:[stale]}]}]).length,0);
 });
 test('popup layer default retains every copper layer, silk and outline without fabrication clutter',()=>{
  assert.deepEqual(defaultProbeLayers(['F.Cu','In1.Cu','B.Cu','F.SilkS','B.SilkS','Edge.Cuts','F.Fab','B.CrtYd','F.Paste']),['F.Cu','In1.Cu','B.Cu','F.SilkS','B.SilkS','Edge.Cuts']);
+});
+test('inset probe keeps primary actions visible and labels independent sheet controls',async()=>{
+ const f=fixture(2),id=f.quick.openProbe(occurrences(f.entries)[0]);await new Promise(resolve=>setImmediate(resolve));
+ const window=descendants(f.holder).find(n=>n.attributes['data-window-id']===id),body=window.children[1],nav=descendants(window).find(n=>n.className==='net-quick-view-nav'),actions=descendants(window).find(n=>n.className==='net-quick-view-actions'),tools=descendants(window).find(n=>n.className==='net-quick-view-tools');
+ assert.equal(tools.hidden,true);assert.equal(actions.parent,body);assert.equal(body.children.indexOf(actions)<body.children.indexOf(descendants(window).find(n=>n.className==='net-quick-view-canvas')),true);
+ assert.deepEqual(nav.children.slice(0,2).map(label=>label.children[0].textContent),['Sheet','Occurrence']);
+ assert.deepEqual(actions.children.map(button=>button.attributes['aria-label']),['Fit selection','Open probe','Locate']);
+ assert.equal(actions.children[0].textContent,'Fit');assert.equal(actions.children[0].title,'Fit selection');
+ assert.equal(descendants(actions).find(n=>n.attributes['aria-label']==='Open probe')?.parent,actions);
+ assert.equal(descendants(nav).find(n=>n.attributes['aria-label']==='Probe sheet')?.parent,nav.children[0]);
+ assert.equal(descendants(nav).find(n=>n.attributes['aria-label']==='Highlighted occurrence')?.parent,nav.children[1]);
+ assert.match(descendants(f.holder).find(n=>n.tag==='style').textContent,/net-quick-view-nav\{display:grid/);
+ f.quick.dispose();
 });
 test('subsheet-origin probes resolve the loaded root stem and explicit pair before bounded identity search',()=>{
  const paths=['board/Main.kicad_pcb','other/Main.kicad_pcb','board/alternate.kicad_pcb'];

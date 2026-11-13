@@ -60,8 +60,8 @@ function workspaceRuntime(respond=async()=>[], hooks={}){
   const canvas=new EventTarget();canvas.canvas=new Element();canvas.visibleLayers=new Set(['F.Cu']);canvas.viewport={camera:new(require('../owned-canvas.js').Camera)(hooks.width||800,hooks.frameHeight||600)};canvas.setNetHighlight=net=>canvas.netHighlight=net;canvas.resize=()=>{};canvas.draw=()=>workspace.draw();
   const receipts=new Map(hooks.unacceptedRules?[]:[['kivi:content-rules','2026-10-10-terms-1']]),localStorage={getItem:key=>receipts.get(key)||null,setItem:(key,value)=>receipts.set(key,value),removeItem:key=>receipts.delete(key)};
   const keyHandlers=new Set();
-  let resizeCallback;
-  const context={URL,URLSearchParams,innerWidth:hooks.width||800,innerHeight:hooks.frameHeight||600,EventTarget,CustomEvent,TextEncoder,Map,Set,console,crypto:require('node:crypto').webcrypto,localStorage,document:{hidden:hooks.hidden===true,body,addEventListener(){},removeEventListener(){},querySelectorAll:selector=>{const found=[];const visit=n=>{if(selector==='dialog[open]'&&n.tagName==='DIALOG'&&n.open)found.push(n);for(const c of n.children)visit(c);};visit(body);return found;},getElementById:id=>{const node=elements.get(id);return node&&body.contains(node)?node:null;},createElement:tag=>new Element(tag),createElementNS:(_,tag)=>new Element(tag)},addEventListener:(type,fn)=>{if(type==='keydown')keyHandlers.add(fn);if(type==='resize')resizeCallback=fn;},removeEventListener:(type,fn)=>{if(type==='keydown')keyHandlers.delete(fn);},matchMedia:()=>({matches:true}),
+  const resizeCallbacks=new Set();
+  const context={URL,URLSearchParams,innerWidth:hooks.width||800,innerHeight:hooks.frameHeight||600,EventTarget,CustomEvent,TextEncoder,Map,Set,console,crypto:require('node:crypto').webcrypto,localStorage,document:{hidden:hooks.hidden===true,body,addEventListener(){},removeEventListener(){},querySelectorAll:selector=>{const found=[];const visit=n=>{if(selector==='dialog[open]'&&n.tagName==='DIALOG'&&n.open)found.push(n);for(const c of n.children)visit(c);};visit(body);return found;},getElementById:id=>{const node=elements.get(id);return node&&body.contains(node)?node:null;},createElement:tag=>new Element(tag),createElementNS:(_,tag)=>new Element(tag)},addEventListener:(type,fn)=>{if(type==='keydown')keyHandlers.add(fn);if(type==='resize')resizeCallbacks.add(fn);},removeEventListener:(type,fn)=>{if(type==='keydown')keyHandlers.delete(fn);},matchMedia:()=>({matches:true}),
     KiCadWorkspaceSearch:hooks.workspaceSearchAPI,KiCadFileCompatibility:require('../file-compatibility.js'),KiCadDesignDiff:diff,KiCadCommentFocus:require('../comment-focus.js'),KiCadAnalysisData:require('../analysis-data.js'),KiCadViewState:require('../view-state.js'),KiCadBomManager:require('../bom-manager.js'),KiCadReviewHandoff:hooks.handoff,KiCadEngineeringLauncher:hooks.engineeringLauncher,KiCadCommentCompose:{...require('../comment-compose.js'),...(hooks.compose||{})},KiCadReviewTools:require('../review-tools.js'),KiCadDesignModel:require('../design-model.js'),KiCadNetModel:hooks.netModelAPI||require('../net-model.js'),KiCadReviewComments:require('../review-comments.js'),KiCadBrowserData:require('../browser-data.js'),KiCadOwnedCanvas:require('../owned-canvas.js'),
     top:hooks.top||{},KiCadRevisionActions:require('../revision-actions.js'),KiCadRepositoryExplorer:hooks.repositoryExplorer,KiCadRatsnest:require('../ratsnest.js'),KiCadTestpointTools:hooks.testpointTools,KiCadPhotoReview:hooks.photoReview,KiCadComponentLinks:require('../component-links.js'),KiCadPairedReview:require('../paired-review.js'),KiCadBomAnalytics:require('../bom-analytics.js'),
     chrome:{storage:{local:hooks.chromeStorage||{get:async()=>({}),set:async()=>{}}},runtime:{sendMessage:async message=>({ok:true,result:await respond(message)})}},setTimeout,clearTimeout,URL,Blob};
@@ -69,6 +69,8 @@ function workspaceRuntime(respond=async()=>[], hooks={}){
   if(hooks.localRuntime)context.KiCadLocalRuntime=true;
   if(hooks.chatPanel)context.KiCadChatPanel=hooks.chatPanel;
   if(hooks.quickView)context.KiCadNetQuickView=hooks.quickView;
+  if(hooks.workspaceChrome)context.KiCadWorkspaceChrome=hooks.workspaceChrome;
+  if(hooks.sheetOverview)context.KiCadSheetOverview=hooks.sheetOverview;
   if(hooks.workBoardPanel)context.KiCadWorkBoardPanel=hooks.workBoardPanel;
   if(hooks.reviewSync)context.KiCadReviewSync=hooks.reviewSync;
   if(hooks.vscode)context.KiCadVSCodeContext=typeof hooks.vscode==='object'?hooks.vscode:{};
@@ -80,7 +82,7 @@ function workspaceRuntime(respond=async()=>[], hooks={}){
   workspace.attachCanvas(canvas);
   function load(){designs.set(file.path,design);canvas.design=design;canvas.primitives=design.primitives;workspace.draw();}
   function key(value,extra={}){const event={key:value,target:canvas.canvas,composedPath:()=>[],preventDefault(){this.defaultPrevented=true;},...extra};for(const fn of keyHandlers)fn(event);return event;}
-  return{get,workspace,canvas,design,designs,load,receipts,key,document:context.document,chatDraft:()=>context.KiCadChatDraft,resize(width){hooks.width=width;resizeCallback?.();}};
+  return{get,workspace,canvas,design,designs,load,receipts,key,document:context.document,chatDraft:()=>context.KiCadChatDraft,resize(width){hooks.width=width;for(const callback of resizeCallbacks)callback();}};
 }
 const descendants=node=>[node,...node.children.flatMap(descendants)];
 
@@ -415,6 +417,16 @@ test('review shortcuts inspect pointer, highlight net, focus search, respect typ
  const count=messages.length;view.workspace.dispose();view.key('c');assert.equal(messages.length,count);
 });
 
+
+test('schematic backtick highlights, Shift+H accumulates and Shift+backtick maps the complete group',()=>{
+ let pointed='wa',maps=0;const file={path:'root.kicad_sch',content:'(kicad_sch (wire (pts (xy 0 0) (xy 10 0)) (uuid "wa")) (label "A" (at 0 0 0) (uuid "a")) (wire (pts (xy 0 10) (xy 10 10)) (uuid "wb")) (label "B" (at 0 10 0) (uuid "b")))'};
+ const view=workspaceRuntime(undefined,{pcb:false,files:[file],query:()=>[{bbox:{context:{uuid:pointed}}}],sheetOverview:{isOpen:()=>false,openNetMap(){maps++;}}});view.load();
+ const move=new Event('pointermove');Object.assign(move,{clientX:400,clientY:300,buttons:0});view.canvas.canvas.dispatchEvent(move);
+ view.key('`',{code:'Backquote'});assert.equal(view.canvas.netHighlight.name,'A');pointed='wb';view.key('H',{shiftKey:true});assert.deepEqual(Array.from(view.canvas.highlightNets).map(net=>net.name).sort(),['A','B']);
+ const before=Array.from(view.canvas.netPrimitives);view.key('~',{code:'Backquote',shiftKey:true});assert.equal(maps,1);assert.deepEqual(Array.from(view.canvas.netPrimitives),before);
+ view.key('`',{code:'Backquote',shiftKey:true});assert.equal(maps,2);assert.equal(view.get('multiHighlight').checked,false);
+ for(const extra of [{ctrlKey:true},{repeat:true},{isComposing:true},{composedPath:()=>[{tagName:'INPUT'}]},{composedPath:()=>[{isContentEditable:true}]}])view.key('~',{shiftKey:true,code:'Backquote',...extra});assert.equal(maps,2);
+});
 
 test('BOM reflects saved DNP and exposes counts, safe component navigation and copper stats',()=>{
  const source='(kicad_pcb (general (thickness 1.6)) (footprint "Resistor" (at 30 40) (uuid "fp") (attr smd dnp) (property "Reference" "R1") (property "Value" "10k") (pad "1" smd rect (at 1 0) (size 2 2) (layers "F.Cu") (uuid "pad"))))';
@@ -813,6 +825,22 @@ test('opening a loaded sheet leaves its descendant parts unselected',()=>{
  const selections=[],view=workspaceRuntime(undefined,{pcb:false,files,onSelection:s=>selections.push(s)});view.load();view.get('navSheets').click();
  const tree=view.get('sheetList').children.find(node=>node.classList.contains('sheet-tree'));tree.children[1].children.find(node=>node.classList.contains('sheet-open')).click();
  assert.deepEqual(Array.from(selections.at(-1).items),[]);assert.equal(view.canvas.netPrimitives.size,0);
+});
+
+test('modified sheet clicks add groups without leaving the active sheet or replacing earlier groups',()=>{
+ const symbol=(ref,uuid)=>`(symbol (lib_id "Device:R") (at 20 20 0) (uuid "${uuid}") (property "Reference" "${ref}") (property "Value" "10k"))`;
+ const files=[{path:'root.kicad_sch',content:'(kicad_sch)'},{path:'a.kicad_sch',content:'(kicad_sch '+symbol('R1','r1')+')'},{path:'b.kicad_sch',content:'(kicad_sch '+symbol('R2','r2')+')'}],opened=[],selections=[];
+ const states=[],view=workspaceRuntime(undefined,{pcb:false,files,currentFile:()=>files[0].path,openSheet:p=>opened.push(p),onSelection:s=>selections.push(s),workspaceChrome:{install(){},updateHighlights:(_,state)=>states.push(state)}});view.load();view.get('navSheets').click();
+ const rows=view.get('sheetList').children.find(n=>n.classList.contains('sheet-tree')).children;
+ rows[1].children.find(n=>n.classList.contains('sheet-open')).onclick({ctrlKey:true});
+ rows[2].children.find(n=>n.classList.contains('sheet-open')).onclick({metaKey:true});
+ assert.deepEqual(opened,[]);assert.deepEqual(Array.from(selections.at(-1).items).map(n=>n.reference).sort(),['R1','R2']);assert.equal(states.at(-1).objectCount,2,'off-sheet highlights remain visible in the bar');assert.equal(states.at(-1).canFit,false);states.at(-1).clear();assert.equal(states.at(-1).objectCount,0);
+});
+
+test('overview fit availability switches independently and restores local state without rebuilding selection',()=>{
+ const states=[],view=workspaceRuntime(undefined,{workspaceChrome:{install(){},updateHighlights(){},setFitAvailability:(_,enabled)=>states.push(enabled)}});view.load();
+ const before=view.canvas.netPrimitives.size;view.workspace.syncHighlightFitAvailability(true);assert.equal(view.get('fitHighlights').disabled,false);assert.equal(states.at(-1),true);
+ view.workspace.syncHighlightFitAvailability();assert.equal(view.get('fitHighlights').disabled,true);assert.equal(states.at(-1),false);assert.equal(view.canvas.netPrimitives.size,before);
 });
 
 test('toolbar opens an independent movable, minimizable check window and explorer navigation preserves it',()=>{
@@ -1703,10 +1731,10 @@ test('property field action opens a source-bound draft and saves field context o
  const saved=calls.find(m=>m.type==='comment-save').comment;assert.equal(saved.anchor.reference,'R1');assert.equal(saved.anchor.file,'board.kicad_pcb');assert.equal(saved.anchor.reviewTarget.surface,'property');assert.equal(saved.anchor.reviewTarget.field,'Value');assert.ok(saved.anchor.position);view.workspace.dispose();
 });
 
-test('keep-context checkbox defaults on and consistently controls 2D and 3D selection appearance',()=>{
- const view=workspaceRuntime();view.load();assert.equal(view.get('keepContextColors').checked,true);
- view.get('objectList').children[0].click();assert.equal(view.canvas.highlightMode,'bright');
- let dim;view.workspace.setScene({setPopulation(){},setSelection(){},setSelectionDim(value){dim=value;}});assert.equal(dim,false);
+test('gray context defaults on and keep-color checkbox consistently controls 2D and 3D selection appearance',()=>{
+ const view=workspaceRuntime();view.load();assert.equal(view.get('keepContextColors').checked,false);
+ view.get('objectList').children[0].click();assert.equal(view.canvas.highlightMode,'dim');
+ let dim;view.workspace.setScene({setPopulation(){},setSelection(){},setSelectionDim(value){dim=value;}});assert.equal(dim,true);
  view.get('keepContextColors').checked=false;view.get('keepContextColors').onchange();assert.equal(dim,true);assert.equal(view.canvas.highlightMode,'dim');
  view.get('keepContextColors').checked=true;view.get('keepContextColors').onchange();assert.equal(dim,false);assert.equal(view.canvas.highlightMode,'bright');
  view.workspace.setScene(null);assert.equal(view.canvas.highlightMode,'bright');view.workspace.dispose();
@@ -1715,7 +1743,7 @@ test('keep-context checkbox defaults on and consistently controls 2D and 3D sele
 test('net color choice persists independently of context dimming and reaches the 3D host',()=>{
  const view=workspaceRuntime();view.load();assert.equal(view.get('netHighlightColor').value,'layer');assert.equal(view.get('netHighlightColorControl').hidden,false);
  const colors=[];view.workspace.setScene({setPopulation(){},setSelection(){},setNetHighlightColor:value=>colors.push(value)});
- view.get('netHighlightColor').value='layer';view.get('netHighlightColor').onchange();assert.equal(colors.at(-1),'layer');assert.equal(view.receipts.get('kicad:net-highlight-color:v1'),'layer');assert.equal(view.get('keepContextColors').checked,true);
+ view.get('netHighlightColor').value='layer';view.get('netHighlightColor').onchange();assert.equal(colors.at(-1),'layer');assert.equal(view.receipts.get('kicad:net-highlight-color:v1'),'layer');assert.equal(view.get('keepContextColors').checked,false);
  view.get('keepContextColors').checked=false;view.get('keepContextColors').onchange();assert.equal(colors.at(-1),'layer');view.get('netHighlightColor').value='accent';view.get('netHighlightColor').onchange();assert.equal(colors.at(-1),'accent');view.workspace.dispose();
 });
 
@@ -1847,3 +1875,26 @@ test('schematic terminal Properties shows component.pin and resets when a net is
  view.get('focusSelected').click();assert.equal(view.get('selectedName').textContent,'R1.1');assert.match(view.get('propertyList').textContent,/Selected pin/);
  view.get('netList').children[0].click();assert.doesNotMatch(view.get('selectedKind').textContent,/Pin 1/);assert.doesNotMatch(view.get('propertyList').textContent,/Selected pin/);view.workspace.dispose();
 });
+
+test('BoM companion selection stays on the drawing and annotation entrypoints remain inactive',()=>{
+ const selections=[],view=workspaceRuntime(undefined,{bomCompanion:true,onSelection:selection=>selections.push(selection)});view.load();view.get('objectList').children[0].click();assert.equal(selections.at(-1).reference,'R1');assert.equal(view.get('designInspector').hidden,true);
+ assert(descendants(view.get('propertyList')).filter(n=>n.className==='field-comment').every(n=>n.hidden));
+ view.key('c');view.get('newComment').click();assert.equal(view.get('commentEditor').hidden,true);view.get('drawCommentArea').click();assert.equal(view.canvas.canvas.classList.contains('area-mode'),false);
+ view.canvas.canvas.dispatchEvent(uiEvent('contextmenu',{clientX:30,clientY:30,button:2}));assert.equal(view.get('objectMenu').children.some(n=>/comment/i.test(n.textContent)),false);view.workspace.dispose();
+});
+
+ test('BoM same-surface selection resolves exact saved identity instead of seeking the opposite drawing',()=>{
+  const focus=[],board=workspaceRuntime(undefined,{bomCompanion:true,focus:point=>focus.push(point)});board.load();
+  assert.equal(board.workspace.highlightRelated({kind:'part',path:'board.kicad_pcb',uuid:'fp',reference:'R1'}),true);assert.equal(board.get('selectedName').textContent,'R1');assert.ok(board.canvas.viewport.camera.center.x>20);board.workspace.dispose();
+  const content=fs.readFileSync(path.join(__dirname,'fixtures/kicad8/custom_fields.kicad_sch'),'utf8'),opened=[],files=[{path:'root.kicad_sch',content:'(kicad_sch)'},{path:'child.kicad_sch',content}],view=workspaceRuntime(undefined,{pcb:false,bomCompanion:true,files,openSheet:(path,point)=>opened.push({path,point})});view.load();
+  assert.equal(view.workspace.highlightRelated({kind:'part',path:'child.kicad_sch',uuid:'8e574303-eef9-471f-8bf9-dbda319f7a68',reference:'R1'}),true);assert.equal(opened.at(-1).path,'child.kicad_sch');assert.ok(opened.at(-1).point);assert.equal(view.get('designInspector').hidden,true);view.workspace.dispose();
+ });
+
+ test('entering a narrow split pane collapses transient sidebars while pinned panes stay open',()=>{
+  for(const pinned of [false,true]){const view=workspaceRuntime(undefined,{width:1300});view.load();view.get('partsButton').click();if(view.get('designNavigator').hidden)view.get('partsButton').click();if(pinned)view.get('pinNavigator').click();assert.equal(view.get('designNavigator').hidden,false);view.resize(650);assert.equal(view.get('designNavigator').hidden,!pinned);view.workspace.dispose();}
+ });
+
+ test('a PCB BoM companion maps schematic selections to footprints even with mixed project sources',()=>{
+  const source=fs.readFileSync(path.join(__dirname,'fixtures/kicad8/custom_fields.kicad_sch'),'utf8'),opened=[],files=[{path:'board.kicad_pcb',content:'(kicad_pcb (footprint "Resistor" (layer "F.Cu") (at 30 40) (uuid "fp") (property "Reference" "R1") (property "Value" "10k")))'},{path:'source.kicad_sch',content:source}],view=workspaceRuntime(undefined,{bomCompanion:true,files,openSheet:path=>opened.push(path)});view.load();
+  assert.equal(view.workspace.highlightRelated({kind:'part',path:'source.kicad_sch',uuid:'8e574303-eef9-471f-8bf9-dbda319f7a68',reference:'R1'}),true);assert.equal(opened.length,0);assert.equal(view.get('selectedKind').textContent.includes('footprint'),true);view.workspace.dispose();
+ });

@@ -17,6 +17,27 @@ test('split cap/wall materials survive translucent selection and restore the exa
  const THREE=await import(pathToFileURL(threePath).href),{copperCapMaterials}=await import('../spike/renderQuality.mjs'),{createSelectionAppearance}=await import('../spike/selectionAppearance.mjs'),geometry=new THREE.BoxGeometry(),materials=copperCapMaterials(THREE,'pad',{color:0xc9ad67}),mesh=new THREE.InstancedMesh(geometry,materials,1);mesh.userData.records=[{uuid:'pad',net:'GND'}];mesh.setMatrixAt(0,new THREE.Matrix4());const appearance=createSelectionAppearance(THREE,()=>[mesh]),sourcePolicies=materials.map(m=>[m.polygonOffset,m.polygonOffsetFactor,m.polygonOffsetUnits]);
  appearance.update(()=>false,true);assert.ok(Array.isArray(mesh.material));assert.notEqual(mesh.material,materials);assert.ok(mesh.material[0].polygonOffsetFactor<0);assert.equal(mesh.material[1].polygonOffset,false);appearance.restore();assert.equal(mesh.material,materials);assert.deepEqual(materials.map(m=>[m.polygonOffset,m.polygonOffsetFactor,m.polygonOffsetUnits]),sourcePolicies);appearance.dispose();geometry.dispose();materials.forEach(m=>m.dispose());
 });
+test('3D dimming retains source hue, vivid selected instances, and exact restore',{skip:!threePath},async()=>{
+ const THREE=await import(pathToFileURL(threePath).href),{createSelectionAppearance}=await import('../spike/selectionAppearance.mjs');
+ const geometry=new THREE.BoxGeometry(),material=new THREE.MeshBasicMaterial({color:0x33aa66}),single=new THREE.Mesh(geometry,material),instances=new THREE.InstancedMesh(geometry,material,2);
+ single.userData.record={id:'other'};instances.userData.records=[{id:'chosen'},{id:'other'}];
+ instances.setColorAt(0,new THREE.Color(0x7733aa));instances.setColorAt(1,new THREE.Color(0x2288cc));
+ const sourceColors=instances.instanceColor,sourceValues=Array.from(sourceColors.array),appearance=createSelectionAppearance(THREE,()=>[single,instances]);
+ appearance.update(record=>record?.id==='chosen',true);
+ assert.notEqual(single.material,material);assert.equal(single.material.color.getHex(),material.color.getHex());assert.equal(single.material.opacity,.24);assert.equal(single.material.transparent,true);
+ assert.equal(instances.material.color.getHex(),0xffffff);
+ for(const channel of [0,1,2]){
+  const base=material.color.toArray()[channel];
+  close(instances.instanceColor.array[channel],sourceValues[channel]*base);
+  close(instances.instanceColor.array[3+channel],sourceValues[3+channel]*base*.24);
+ }
+ appearance.update(()=>false,true,{translucent:true});
+ assert.equal(single.material.color.getHex(),material.color.getHex());assert.equal(single.material.opacity,.14);
+ assert.equal(instances.material.color.getHex(),material.color.getHex());assert.equal(instances.material.opacity,.14);
+ appearance.update(()=>false,false);
+ assert.equal(single.material,material);assert.equal(instances.material,material);assert.equal(instances.instanceColor,sourceColors);assert.deepEqual(Array.from(sourceColors.array),sourceValues);
+ appearance.dispose();geometry.dispose();material.dispose();
+});
 test('circular tessellation scales to radius and reports its bounded error or explicit limit',async()=>{
  const {circularTessellation}=await helper();let prior=0;
  for(const radius of [.05,.2,1,3,100]){const plan=circularTessellation(radius);assert.ok(plan.segments>=24&&plan.segments<=128);assert.ok(plan.segments>=prior);prior=plan.segments;close(plan.error,radius*(1-Math.cos(Math.PI/plan.segments)));assert.equal(plan.limited,plan.error>.0025);}

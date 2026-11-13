@@ -206,3 +206,18 @@ body[data-workspace-chrome] #frameControls button.icon-only{width:30px;min-width
 
 @media(min-width:851px){.workspace-action-cluster{grid-column:auto;grid-row:auto}}
 body[data-workspace-chrome] #frameControls .top-sheet-navigation button{height:30px;min-height:30px;min-width:30px;padding:5px}
+/* Selection stays close to the drawing, with advanced settings out of the way. */
+.workspace-highlight-bar{position:relative;order:100;flex:1 0 100%;box-sizing:border-box;display:flex;align-items:center;flex-wrap:wrap;gap:var(--ui-space,6px);min-width:0;max-width:100%;padding:4px 0;border-top:1px solid var(--line,#455765);color:var(--text,#e3e9ef);font:12px/1.3 var(--kiview-font,system-ui)}
+.workspace-highlight-bar[hidden]{display:none}
+.workspace-highlight-bar>strong{font-size:11px;font-weight:600;flex:none}
+.workspace-highlight-chips{display:flex;flex-wrap:wrap;flex:1 1 140px;gap:4px;min-width:0}
+.workspace-highlight-chip{--highlight-chip-color:var(--highlight-chip-dark,var(--accent));flex:0 1 auto;min-width:0;max-width:min(260px,100%);overflow-wrap:anywhere;white-space:normal;line-height:1.4;padding:3px 7px;border-radius:var(--ui-radius,5px);color:var(--highlight-chip-color,var(--text));background:color-mix(in srgb,var(--highlight-chip-color,var(--accent,#68c7e8)) 12%,var(--panel));border:1px solid color-mix(in srgb,var(--highlight-chip-color,var(--accent,#68c7e8)) 55%,transparent)}
+.workspace-highlight-bar>button{flex:none;min-height:var(--ui-control-height,30px);padding:4px 7px;border-radius:var(--ui-radius,5px);font:inherit;white-space:nowrap}
+@media(max-width:600px){.workspace-highlight-bar{gap:4px}.workspace-highlight-bar>strong{font-size:var(--ui-caption,11px)}}
+@media(pointer:coarse){.workspace-highlight-bar>button{min-height:44px;min-width:44px}}
+
+body[data-ui-theme=light] .workspace-highlight-chip{--highlight-chip-color:var(--highlight-chip-light,var(--accent))}
+
+/* Host-owned actions remain wired for commands, but have one visible entry point. */
+body[data-workspace-chrome] [data-context-hidden=true]{display:none!important}
+body[data-workspace-chrome][data-workspace-context=pane] #frameControls .drawing-title{display:none}

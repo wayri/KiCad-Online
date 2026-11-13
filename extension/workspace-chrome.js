@@ -17,6 +17,42 @@
   const api={dispose(){observer?.disconnect();for(const {tab,start,end}of bindings){tab.draggable=false;tab.removeEventListener('dragstart',start);tab.removeEventListener('dragend',end);}doc.removeEventListener('pointerdown',outside);doc.removeEventListener('keydown',key);host.removeEventListener('kicad-review:detach-state',syncState);menu.remove();detachInstallations.delete(holder);}};detachInstallations.set(holder,api);return api;
  }
 
+ // A derived view of controller-owned highlights; never owns selection state.
+ const highlightBars=new WeakMap();
+ function updateHighlights(doc,state){
+  const holder=doc.getElementById('reviewWorkspace');if(!holder)return null;
+  let view=highlightBars.get(holder);
+  if(!view){
+   const make=(tag,text)=>{const node=doc.createElement(tag);if(text)node.textContent=text;return node;};
+   const bar=make('section'),label=make('strong'),chips=make('div'),fit=make('button','Fit highlights'),clear=make('button','Clear highlights'),settings=make('button','Display');
+   settings.className='workspace-highlight-display';
+   bar.className='workspace-highlight-bar';bar.setAttribute('aria-label','Current highlights');chips.className='workspace-highlight-chips';
+   for(const node of [fit,clear,settings])node.type='button';
+   fit.title='Fit highlighted geometry';clear.title='Clear all highlights';settings.title='Highlight and display options';
+   bar.append(label,chips,fit,clear,settings);(doc.getElementById('frameControls')||holder).append(bar);
+   view={bar,label,chips,fit,clear,settings,signature:null};highlightBars.set(holder,view);
+  }
+  const nets=state.nets||[],count=state.objectCount||0;
+  view.bar.hidden=!(nets.length||count);
+  view.label.textContent='Highlighted';
+  const signature=JSON.stringify([nets.map(n=>[n.id,n.name]),count]);
+  if(signature!==view.signature){
+   view.signature=signature;view.chips.replaceChildren();
+   for(const net of nets){const chip=doc.createElement('span');chip.className='workspace-highlight-chip';chip.textContent=net.name;chip.title=net.name;const palette=root.KiCadSheetHierarchyLinks?.netColor;if(palette){chip.style?.setProperty('--highlight-chip-dark',palette(net.name,true));chip.style?.setProperty('--highlight-chip-light',palette(net.name,false));}view.chips.append(chip);}
+   if(count){const chip=doc.createElement('span');chip.className='workspace-highlight-chip';chip.textContent=count+' object'+(count===1?'':'s');view.chips.append(chip);}
+  }
+  view.fit.disabled=!state.canFit;view.fit.onclick=state.fit;view.clear.onclick=state.clear;
+  view.settings.onclick=()=>doc.getElementById('reviewToolsButton')?.click();
+  return view;
+ }
+ function setFitAvailability(doc,enabled){const holder=doc.getElementById('reviewWorkspace'),view=holder&&highlightBars.get(holder);if(view)view.fit.disabled=!enabled;}
+ // The host owns workspace navigation; a BoM companion only locates parts.
+ const workspaceActions=new Set(['projectButton','openBomManager','openDraftsman','openSavedReports','viewOppositeDrawing','navigationHelpButton','themeButton']);
+ function controlContext(host=root){const params=new URLSearchParams(host.KiCadVSCodeContext?.search||host.location?.search||'');return params.get('bomCompanion')==='1'?'bom-companion':params.get('headerViews')==='1'?'pane':'standalone';}
+ function syncContextControls(doc,context){
+  doc.body.setAttribute('data-workspace-context',context);
+  for(const id of workspaceActions){const node=doc.getElementById(id);if(!node)continue;const hidden=context!=='standalone';if(node.dataset.contextHidden!==String(hidden))node.dataset.contextHidden=String(hidden);}
+ }
  const secondary=['openTestpoints','filterTestpoints','highlightTestpoints','populationHighlight','toggleRuleMarkers','openBoardAnalytics','openRepositoryExplorer','openCalculators','openEngineeringTools','openReviewHandoff','settingsButton','themeButton','openSavedReports','openBomManager','viewRuleChecks'];
  function install(doc,host=root){
   if(host.KiCadAndroidRuntime||doc.body.classList.contains('android-design'))return null;
@@ -25,6 +61,10 @@
   const toolbar=doc.getElementById('frameControls'),rail=doc.getElementById('drawingTools');
   if(!toolbar||!rail||!doc.getElementById('selectionMode'))return installDetach(doc,host);
   if(installations.has(toolbar))return installations.get(toolbar);
+  const context=controlContext(host);syncContextControls(doc,context);
+  // Companion controls are provided by its compact stylesheet; do not construct
+  // workspace menus, simulation dialogs or detach actions in that drawing.
+  if(context==='bom-companion'){const options=doc.getElementById('reviewToolsButton');if(options){options.title='Display and highlight options';options.setAttribute('aria-label','Display and highlight options');}return null;}
   const create=(tag,className,text)=>{const node=doc.createElement(tag);node.className=className;if(text)node.textContent=text;return node;};
   const viewNavigation=create('nav','workspace-view-navigation');viewNavigation.setAttribute('aria-label','Drawing views');
   const viewButtons=new Map();
@@ -39,7 +79,7 @@
   }
   host.addEventListener('kicad-review:simulation-view',openSimulation);
 
-  const embeddedHeader=new URLSearchParams(host.location?.search||'').get('headerViews')==='1';
+  const embeddedHeader=context==='pane';
   for(const [key,label,icon]of [['schematic','Schematic','sheet'],['layout','Layout','board'],['3d','3D','cube'],['draftsman','Draftsman','draftsman'],['simulation','Simulation','analytics']]){
    const node=create('button','',label);node.type='button';node.title=label+' view';node.setAttribute('aria-label',label+' view');node.setAttribute('data-icon',icon);viewButtons.set(key,node);viewNavigation.append(node);
    node.onclick=()=>{const mode=doc.getElementById('mode3d'),board=Boolean(mode&&!mode.hidden),in3d=mode?.getAttribute('aria-pressed')==='true';
@@ -68,7 +108,7 @@
   const search=create('input','workspace-tool-search');search.type='search';search.placeholder='Find a tool…';search.setAttribute('aria-label','Find drawing tool');menu.append(search);
   function move(node,parent,before=null){moved.push({node,parent:node.parentNode,next:node.nextSibling});parent.insertBefore(node,before);}
   function reconcile(){
-   syncViewNavigation();
+   syncViewNavigation();syncContextControls(doc,context);
    for(const id of secondary){const node=doc.getElementById(id);if(node?.parentNode===rail)move(node,menu);}
    const mode=doc.getElementById('mode3d');if(mode?.parentNode===rail){mode.classList.remove('icon-only');mode.classList.add('workspace-mode-switch');mode.title='Toggle 3D board view';mode.setAttribute('aria-label','3D board view');const anchor=doc.getElementById('reviewToolsButton');move(mode,toolbar,anchor?.parentNode===toolbar?anchor:null);}
    const compatibility=toolbar.querySelector('.compatibility-button');if(compatibility)move(compatibility,menu);
@@ -80,8 +120,8 @@
   observer?.observe(rail,{childList:true});observer?.observe(toolbar,{childList:true});
   const settings=doc.getElementById('settingsButton');rail.insertBefore(trigger,settings?.parentNode===rail?settings:null);doc.body.append(menu);
   function close(restore=false){if(menu.hidden)return;menu.hidden=true;trigger.setAttribute('aria-expanded','false');if(restore)trigger.focus();}
-  function place(){if(menu.hidden)return;const rect=trigger.getBoundingClientRect();menu.style.right=Math.max(8,host.innerWidth-rect.left+6)+'px';menu.style.top=Math.max(8,Math.min(rect.top,host.innerHeight-menu.offsetHeight-8))+'px';}
-  function filter(){const nodes=[...menu.querySelectorAll('button')],query=search.value.trim().toLowerCase();for(const node of nodes)if(node.dataset.searchHidden){node.hidden=false;delete node.dataset.searchHidden;}for(const node of nodes){const target=node.dataset.target&&doc.getElementById(node.dataset.target),unavailable=Boolean(node.dataset.target&&(!target||target.hidden)),filtered=Boolean(query&&!((node.getAttribute('aria-label')||'')+' '+node.textContent+' '+node.title).toLowerCase().includes(query));node.hidden=unavailable||filtered;if(filtered&&!unavailable)node.dataset.searchHidden='true';if(node.dataset.target)node.disabled=!target||target.disabled;}place();}
+  function place(){if(menu.hidden)return;const rect=trigger.getBoundingClientRect(),width=host.visualViewport?.width||host.innerWidth,height=host.visualViewport?.height||host.innerHeight;menu.style.maxWidth=Math.max(1,width-16)+'px';menu.style.maxHeight=Math.max(1,height-16)+'px';menu.style.overflowY='auto';const box=host.KiCadResponsiveControls?.fitBounds?.({left:rect.left-menu.offsetWidth-6,top:rect.top,width:menu.offsetWidth,height:menu.offsetHeight},{left:0,top:0,width,height});if(box){menu.style.right='auto';menu.style.left=box.left+'px';menu.style.top=box.top+'px';}else{menu.style.right=Math.max(8,width-rect.left+6)+'px';menu.style.top=Math.max(8,Math.min(rect.top,height-menu.offsetHeight-8))+'px';}}
+  function filter(){const nodes=[...menu.querySelectorAll('button')],query=search.value.trim().toLowerCase();for(const node of nodes)if(node.dataset.searchHidden){node.hidden=false;delete node.dataset.searchHidden;}for(const node of nodes){const target=node.dataset.target&&doc.getElementById(node.dataset.target),unavailable=Boolean(node.dataset.target&&(!target||target.hidden||target.dataset.contextHidden==='true')),filtered=Boolean(query&&!((node.getAttribute('aria-label')||'')+' '+node.textContent+' '+node.title).toLowerCase().includes(query));node.hidden=unavailable||filtered||node.dataset.contextHidden==='true';if(filtered&&!unavailable)node.dataset.searchHidden='true';if(node.dataset.target)node.disabled=!target||target.disabled;}place();}
   search.oninput=filter;
   function open(){menu.hidden=false;search.value='';filter();trigger.setAttribute('aria-expanded','true');place();search.focus();}
   trigger.onclick=()=>menu.hidden?open():close();
@@ -101,7 +141,7 @@
   const instance={close,dispose(){observer?.disconnect();modeObserver?.disconnect();detachUI?.dispose();viewNavigation.remove();simulationDialog?.remove();host.removeEventListener('kicad-review:simulation-view',openSimulation);close();doc.removeEventListener('pointerdown',outside);doc.removeEventListener('keydown',keys,true);host.removeEventListener('resize',place);for(const item of moved.reverse())item.parent.insertBefore(item.node,item.next?.parentNode===item.parent?item.next:null);menu.remove();trigger.remove();display.remove();installations.delete(toolbar);}};
   installations.set(toolbar,instance);return instance;
  }
- if(typeof module==='object'&&module.exports){module.exports={install,secondary,installDetach,outsideWindow,detachableModes};return;}
- root.KiCadWorkspaceChrome={install};
+ if(typeof module==='object'&&module.exports){module.exports={install,controlContext,syncContextControls,secondary,installDetach,outsideWindow,detachableModes,updateHighlights,setFitAvailability};return;}
+ root.KiCadWorkspaceChrome={install,updateHighlights,setFitAvailability};
  if(root.document){const start=()=>install(root.document,root);if(root.document.readyState==='loading')root.document.addEventListener('DOMContentLoaded',start,{once:true});else start();}
 })(globalThis);

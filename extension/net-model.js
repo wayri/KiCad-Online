@@ -256,7 +256,7 @@
         net.primitives.push(...((entry.power||entry.flag) ? (byUuid.get(uuid) || []).filter((p)=>!p.frame) : entry.kind === "pin" ? entry.primitives :
           (byUuid.get(uuid) || []).filter((p)=>p.kind === entry.kind || entry.kind==="sheet_pin"&&p.kind==="sheet-pin")));
         net.members.push({uuid,reference:entry.kind === "pin" ? r.metadata.properties.Reference || "" : "",
-          pad:"",pin:entry.pin || "",kind:entry.kind,position:entry.position});
+          pad:"",pin:entry.pin || "",kind:entry.kind,position:entry.position,...((entry.name||entry.sheetPin?.name)?{name:entry.name||entry.sheetPin.name}:{}),...(entry.sheetPin?{sheetId:entry.sheetPin.sheetId}:{})});
         net.stats.lengthMm+=entry.length || 0;
       }
       nets.push(net);

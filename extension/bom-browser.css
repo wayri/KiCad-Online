@@ -1,3 +1,50 @@
 .bom-browser{display:flex;flex-direction:column;min-height:0;overflow:hidden}.bom-browser-tools{display:flex;flex-wrap:wrap;align-items:center;gap:.65rem;padding:.7rem;border-bottom:1px solid #526572}.bom-browser-tools label{display:flex;align-items:center;gap:.4rem}.bom-browser-tools select{max-width:min(50vw,48rem)}.bom-browser>p{margin:.4rem .7rem}.bom-browser-stage{flex:1;min-height:0}.bom-browser-stage iframe{border:0;width:100%;height:100%}@media(max-width:700px){.bom-browser-tools label:first-child{width:100%}.bom-browser-tools select{max-width:75vw}}
-.bom-browser-views{display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-left:auto}.bom-browser-views [aria-pressed=true]{background:#23453e;border-color:#79d7c0}.bom-browser-stage{display:flex;min-width:0;overflow:hidden}.bom-browser-parts{flex:1;min-width:0;overflow:auto;padding:10px}.bom-browser-parts h2{font-size:14px;margin:0 0 10px}.bom-browser-parts table{width:100%;border-collapse:collapse;font-size:12px}.bom-browser-parts th,.bom-browser-parts td{padding:6px 8px;text-align:left;border-bottom:1px solid #354653;overflow-wrap:anywhere;max-width:240px}.bom-browser-parts th{position:sticky;top:0;background:#16232e;z-index:1}.bom-browser-parts tr[data-selected=true]{background:#23453e}.bom-browser-companion{flex:1;min-width:0;border-left:1px solid #526572}.bom-browser-companion:empty,.bom-browser-companion[hidden]{display:none}.bom-browser-stage.with-companion .bom-browser-parts{flex:0 1 48%}@media(max-width:760px){.bom-browser-stage.with-companion{flex-direction:column}.bom-browser-stage.with-companion .bom-browser-parts{flex:1;min-height:180px}.bom-browser-companion{min-height:240px;border-left:0;border-top:1px solid #526572}.bom-browser-views{margin-left:0}}
-.bom-variable-source{display:block;margin-top:3px;color:#a9bcc7;font-size:10px;line-height:1.4}
+.bom-browser-views{display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-left:auto}.bom-browser-views [aria-pressed=true]{background:var(--selected,#23453e);border-color:var(--accent,#79d7c0)}.bom-browser-stage{display:flex;min-width:0;overflow:hidden}.bom-browser-parts{flex:1;min-width:0;overflow:auto;padding:10px}.bom-browser-parts h2{font-size:14px;margin:0 0 10px}.bom-browser-parts table{width:100%;border-collapse:collapse;font-size:12px}.bom-browser-parts th,.bom-browser-parts td{padding:6px 8px;text-align:left;border-bottom:1px solid var(--line,#354653);overflow-wrap:anywhere;max-width:240px}.bom-browser-parts th{position:sticky;top:0;background:var(--raised,#16232e);color:var(--text,#e6e9ef);z-index:1}.bom-browser-parts tr[data-selected=true]{background:var(--selected,#23453e)}.bom-browser-companion{flex:1;min-width:0;border-left:1px solid #526572}.bom-browser-companion:empty,.bom-browser-companion[hidden]{display:none}.bom-browser-stage.with-companion .bom-browser-parts{flex:0 1 48%}@media(max-width:760px){.bom-browser-stage.with-companion{flex-direction:column}.bom-browser-stage.with-companion .bom-browser-parts{flex:1;min-height:180px}.bom-browser-companion{min-height:240px;border-left:0;border-top:1px solid #526572}.bom-browser-views{margin-left:0}}
+.bom-variable-source{display:block;margin-top:3px;color:var(--muted,#a9bcc7);font-size:10px;line-height:1.4}
+.bom-browser-parts td:first-child button{margin:2px 4px 2px 0}.bom-browser-parts tr[data-selected=true] button[aria-pressed=true]{outline:2px solid var(--accent,#79d7c0);outline-offset:1px}.bom-browser-parts td:nth-child(2){font-variant-numeric:tabular-nums}
+
+/* Drawing controls inside the linked BoM remain focused on locating parts. */
+body[data-bom-companion=true] #frameControls{padding:5px 8px;gap:5px}
+body[data-bom-companion=true] #frameControls .drawing-title,
+body[data-bom-companion=true] #variantBar,
+body[data-bom-companion=true] #designNavigator,
+body[data-bom-companion=true] #designInspector,
+body[data-bom-companion=true] #drawingTools,
+body[data-bom-companion=true] :is(.sidebar-dock,#phoneExplorerDock,#phoneInspectionDock),
+body[data-bom-companion=true] #drawingLegend,
+body[data-bom-companion=true] #commentPins,
+body[data-bom-companion=true] #shortcutHelp,
+body[data-bom-companion=true] #frameControls .tool-group:not(:first-child),
+body[data-bom-companion=true] #frameControls :is(.quick-variant,.universal-search,#universalSearchResults,#focusView,#navigationHelpButton,#viewOppositeDrawing,#netQuickViews,#themeButton,#phoneSidebarToggle,#reviewToolsButton,#netClassColors,#netColorProject,#terminalNumbersButton,.workspace-highlight-display),
+body[data-bom-companion=true] :is(#commentsSidebar,#commentEditor,#companionChooser),
+body[data-bom-companion=true] .workspace-view-navigation,
+body[data-bom-companion=true] .workspace-detach-menu,
+body[data-bom-companion=true] #workspaceToolsMenu{display:none!important}
+body[data-bom-companion=true] #reviewWorkspace{min-width:0}
+body[data-bom-companion=true] .review-footer{padding:3px 8px}
+body[data-bom-companion=true] .review-footer .hint{display:none}
+
+/* Keep local fit, zoom, selection, sheet navigation and highlight actions usable. */
+body[data-bom-companion=true] #reviewWorkspace,
+body[data-workspace-chrome][data-bom-companion=true]:not(.drawing-focused) #reviewWorkspace.docked-sidebars,
+body[data-workspace-chrome][data-bom-companion=true].phone-sidebars-visible #reviewWorkspace.docked-sidebars{--tool-strip-width:0px;--pinned-left-width:0px;--pinned-right-width:0px;padding:0!important}
+body[data-bom-companion=true] #frameControls .workspace-highlight-bar{flex-basis:100%;min-width:0}
+body[data-bom-companion=true] #frameControls .workspace-highlight-chips{min-width:0;overflow:auto}
+body[data-bom-companion=true] #frameControls .top-sheet-navigation{min-width:0;flex-wrap:wrap}
+body[data-bom-companion=true] #frameControls #sheetSelect{max-width:100%}
+
+/* Preserve readable identities and statuses; long fields scroll with the table. */
+.bom-browser-parts table{min-width:760px}
+.bom-browser-parts th{white-space:nowrap;overflow-wrap:normal}
+.bom-browser-parts :is(th,td):is(:nth-child(1),:nth-child(2),:nth-child(5),:nth-child(6)){white-space:nowrap;overflow-wrap:normal}
+.bom-browser-parts :is(th,td):nth-child(3){min-width:84px}
+.bom-browser-parts :is(th,td):nth-child(4){min-width:180px}
+.bom-browser-parts :is(th,td):nth-child(7){min-width:140px}
+body[data-bom-companion=true] #frameControls{display:flex;align-items:center;flex-wrap:wrap;min-height:34px;gap:4px}
+body[data-bom-companion=true] #frameControls .frame-actions{width:auto;flex:0 0 auto}
+body[data-bom-companion=true] #frameControls #selectionMode{width:100px;min-width:90px;flex:0 0 100px}
+body[data-bom-companion=true] #frameControls .top-sheet-navigation{flex:0 1 auto;gap:2px;max-width:100%}
+body[data-bom-companion=true] #frameControls .top-sheet-navigation #sheetLabel{flex:0 1 130px}
+body[data-bom-companion=true] #frameControls .top-sheet-navigation #sheetSelect{width:130px;max-width:100%}
+.bom-browser-parts tr[data-group=true]>td:first-child{white-space:normal;min-width:160px;max-width:240px;overflow-wrap:normal}
+.bom-browser-parts td:first-child button{display:inline-flex;white-space:nowrap;vertical-align:middle}

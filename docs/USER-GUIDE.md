@@ -77,6 +77,13 @@ Open **BoM & assembly** in Android/browser project tools, or the drawing's **Ope
 
 Saved design fields remain read-only. Management drafts are scoped to the saved source/revision and variant. Prices are entered locally; there is no live purchasing or currency conversion. Repeated hierarchical instances are not expanded into manufacturing quantities. See [BoM and assembly](BOM-ASSEMBLY.md), [field table and grouping](bom-field-table.md) and [supported import formats](BOM-IMPORT.md).
 
+The development **BoM** tab opens the saved parts beside the schematic. Select a
+reference to focus its drawing; selecting a drawing part scrolls its BoM row into
+view. **Grouped view** combines matching value, footprint, population and BoM
+inclusion while keeping every reference selectable. Switch the companion to
+**Layout** or **3D**, or choose **Parts only**. Companion drawings keep navigation
+and selection controls; commenting remains in the main drawing workspace.
+
 ### Variants and DNP/DNI
 
 Use **Manage variants** to create/import a review variant and stage fitted/DNP, Value, Footprint or MPN overrides. Choose **Save variants** to retain edits. The selected variant affects BoM quantities and supported population overlays without changing the source drawing.
@@ -193,10 +200,21 @@ combines a component body, model meshes and matching pads into one component
 boundary. Outlines respect scene depth so hidden edges do not show through the
 board. Clearing selection removes the outline without changing model materials.
 
-The default **Dim context** style now keeps selected parts, terminals or nets
-coloured and greys the surrounding geometry in 2D and 3D. **Bright only** leaves
-the context colours unchanged. Source geometry, model materials and visibility
-settings are restored when highlights are cleared. A single cross-selected part
+In the development viewer, **Dim context** is the default: unselected geometry
+becomes nearly gray with a faint layer-color tint in layout, while selected nets
+stay bright in their copper-layer colors,
+including internal layers. This applies to main drawings and probe windows. 3D
+context is translucent gray, including textured models. **Keep context colors** is
+an optional display override. Clearing highlights restores the original appearance.
+Published packages retain their existing display behavior until updated.
+
+The development viewer also has a wrapping **Highlighted** ribbon row with named nets
+and **Fit highlights**, **Clear highlights** and **Display** actions. Detailed highlight options remain under
+**Display**. In Explorer’s sheet hierarchy, click to open a sheet or
+**Ctrl/⌘-click** to add that sheet and its children to the highlight group without
+leaving the current drawing. Inset windows keep **Fit**, **Open probe** and
+**Locate** visible; sheet and highlighted-occurrence selectors navigate separately.
+These refinements are not yet included in the published packages. A single cross-selected part
 replaces the previous related selection; an explicit multi-selection is relayed
 as a group. Selecting an individual reference in the BoM focuses that part.
 
@@ -241,10 +259,16 @@ nothing is selected. The **Theme** button switches the interface and drawing in
 all open panes. **T** switches only the drawing theme.
 Select a part or net, or double-click a sheet to enter it. Reused files retain
 their placement stack. **Hierarchy links** and **Net links** can be toggled
-independently. Relationship paths use the page gutters rather than running
-through drawing content; dense graphs can still share routes or cross. Only
-resolved saved relationships are shown, with bounded routing and omission notes
-in **Guide**. The Fit view adapts to rotation until you pan or zoom manually.
+independently. In the development viewer, all loaded pages remain in place when
+highlights change. **Connected sheets only** explicitly filters the pages;
+**Fit all sheets** and **Fit highlights** have separate scopes. Highlight updates
+retain the camera and existing page geometry. Colour-coded cubic net guides lead to saved connection points, marked by dots;
+hierarchy links use a quieter teal and page gutters. Net guides are visual
+relationships, not schematic wires; crossings do not create electrical joins.
+Missing endpoint coordinates are reported and omitted. Dense graphs can still
+share routes or cross. **Guide** explains bounded routing and omission limits.
+The miniature and probe windows reserve toolbar space and remain bounded when
+the pane resizes. These refinements await visual acceptance before release.
 
 Linked saved-simulation popups also work in 3D and follow their projected saved
 net anchor without resetting the sample cursor. Comment anchors project into
@@ -371,7 +395,7 @@ Associate ERC subsheets explicitly when their UUID cannot resolve uniquely; shee
 
 ### Drawing and 3D keyboard shortcuts
 
-Use **H**, **backtick** or **~** to highlight the net under the pointer (or the selected net in 3D). In PCB views, **F** flips the board; **Shift+F** fits the drawing or focused layer. The Fit button remains available. In schematics, **F** mirrors the view. **R** rotates the main or focused pop-up view 15° clockwise; **Shift+R** rotates 15° counterclockwise. The rotation buttons use the same increment.
+Use **H** or **backtick (\`)** to highlight the net under the pointer (or the selected net in 3D). **Shift+H** adds or removes a net without discarding existing highlights. In schematics, **Shift+backtick (`~` on a US keyboard)** opens the inter-sheet net map for the complete highlighted group, enables connected-sheet filtering and hides hierarchy arrows. Net-map curves use stable colours by net name. In PCB/3D, `~` remains a net-highlight alias. Shortcuts ignore text entry and input-method composition. In PCB views, **F** flips the board; **Shift+F** fits the drawing or focused layer. The Fit button remains available. In schematics, **F** mirrors the view. **R** rotates the main or focused pop-up view 15° clockwise; **Shift+R** rotates 15° counterclockwise. The rotation buttons use the same increment.
 
 In 3D, **X**, **Y** and **Z** select the positive axis views (right, back and top). **Shift+X**, **Shift+Y** and **Shift+Z** select the opposite views (left, front and bottom). **F** moves to the opposite side while preserving the orbit target and distance; **Shift+F** fits the isometric view and **Home** fits the top view. Axis-view shortcuts also work in focused 3D pop-ups. These shortcuts are inactive in text fields, editable content and input-method composition, and do not change saved board geometry. Pop-up guide lines continue inside the viewport to the selected geometry or picked point, tracking pan, zoom, rotation and flip; off-screen targets are not given a false endpoint. Selecting a new part, pin or net inside a pop-up updates its identity, highlight and guide endpoint. Press **P** or choose **Open probe** to open another independent sibling pop-up from that selection; guides connect the source and destination pop-ups, and closing one does not close the others. Unnamed schematic networks can cross-probe through saved component pin/pad associations; ambiguous or conflicting associations show an error instead of a guessed connection.
 

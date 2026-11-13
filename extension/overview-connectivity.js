@@ -58,14 +58,14 @@
       }
     }
     const adjacency=nodes.map(()=>[]), edges=[], edgeKeys=new Set();
-    const connect=(a,b,name)=> {
+    const connect=(a,b,name,anchors=null)=> {
       if(a===b || edges.length>MAX_EDGES)return;
       const pair=key(Math.min(a.index,b.index),Math.max(a.index,b.index),name);
       if(edgeKeys.has(pair))return;
-      edgeKeys.add(pair);edges.push({name,a,b});adjacency[a.index].push(b.index);adjacency[b.index].push(a.index);
+      edgeKeys.add(pair);edges.push({name,a,b,anchors});adjacency[a.index].push(b.index);adjacency[b.index].push(a.index);
     };
     // Stars retain complete reachability without quadratic global-label edges.
-    for(const [name,list] of globals)for(let i=1;i<list.length;i++)connect(list[0],list[i],name);
+    for(const [name,list] of globals)for(let i=1;i<list.length;i++)connect(list[0],list[i],name,{aKind:'global_label',bKind:'global_label'});
     for(const p of placements) {
       if(p.parentId==null || !valid.get(p.id))continue;
       const expanded=new Set();
@@ -74,8 +74,8 @@
         const parents=pins.get(key(p.parentId,p.sheetId,name))||[];
         const children=childNames.get(key(p.id,name))||[];
         if(!parents.length || !children.length)continue;
-        for(const a of parents)connect(a,children[0],name);
-        for(let i=1;i<children.length;i++)connect(parents[0],children[i],name);
+        for(const a of parents)connect(a,children[0],name,{aKind:'sheet_pin',aSheetId:p.sheetId,bKind:'hierarchical_label'});
+        for(let i=1;i<children.length;i++)connect(parents[0],children[i],name,{aKind:'sheet_pin',aSheetId:p.sheetId,bKind:'hierarchical_label'});
       }
       if(edges.length>MAX_EDGES)break;
     }
@@ -87,13 +87,14 @@
       else if(selected && typeof selected.netId==="string")seed(lookup.get(key(selected.instanceId,selected.netId)));
     }
     for(let i=0;i<queue.length;i++)for(const next of adjacency[queue[i]])if(!reached.has(next)){reached.add(next);queue.push(next);}
-    const endpoint=n=> {
-      const members=n.net.members||[], member=members.find(m=>m.kind==="global_label" || m.kind==="hierarchical_label" || m.kind==="sheet_pin") || members.find(m=>m.position);
+    const endpoint=(n,name,kind,sheetId)=> {
+      const members=(n.net.members||[]).filter(m=>Number.isFinite(m.position?.x)&&Number.isFinite(m.position?.y));
+      const member=members.find(m=>m.name===name&&m.kind===kind&&(!sheetId||m.sheetId===sheetId)) || members.find(m=>m.name===name&&(!sheetId||m.sheetId===sheetId)) || members.find(m=>!['global_label','hierarchical_label','sheet_pin','label'].includes(m.kind)) || members.find(m=>!m.name);
       const p=member?.position;
       return {path:n.net.path,netId:n.net.id,instanceId:n.instanceId,position:p && Number.isFinite(p.x) && Number.isFinite(p.y)?{x:p.x,y:p.y}:null};
     };
     return {matches:nodes.filter(n=>reached.has(n.index)).map(({net,instanceId})=>({net,instanceId})),
-      links:edges.filter(e=>reached.has(e.a.index)&&reached.has(e.b.index)).map(e=>({name:e.name,from:endpoint(e.a),to:endpoint(e.b)})),limits};
+      links:edges.filter(e=>reached.has(e.a.index)&&reached.has(e.b.index)).map(e=>({name:e.name,from:endpoint(e.a,e.name,e.anchors?.aKind,e.anchors?.aSheetId),to:endpoint(e.b,e.name,e.anchors?.bKind,e.anchors?.bSheetId)})),limits};
   }
   root.KiCadOverviewConnectivity={resolve};
   if(typeof module!=="undefined" && module.exports)module.exports=root.KiCadOverviewConnectivity;

@@ -6,6 +6,13 @@ const placements=[{id:"root",path:"root",parentId:null},{id:"root/a",path:"chann
 const channels=[net("A","root",{sheetPins:[{sheetId:"a",name:"IN"}]}),net("B","root",{sheetPins:[{sheetId:"b",name:"IN"}]}),net("input","channel",{hierarchicalNames:["IN"]})];
 const identities=result=>result.matches.map(m=>`${m.instanceId}:${m.net.id}`).sort();
 
+test('link endpoints choose the named parent entry and child port, not an unrelated first label',()=>{
+ const parent=net('parent','root',{sheetPins:[{sheetId:'a',name:'IN'}],members:[{kind:'sheet_pin',name:'OTHER',sheetId:'a',position:{x:1,y:1}},{kind:'sheet_pin',name:'IN',sheetId:'b',position:{x:2,y:2}},{kind:'sheet_pin',name:'IN',sheetId:'a',position:{x:3,y:4}}]});
+ const child=net('child','channel',{hierarchicalNames:['IN'],members:[{kind:'hierarchical_label',name:'OTHER',position:{x:5,y:5}},{kind:'hierarchical_label',name:'IN',position:{x:6,y:7}}]});
+ const result=resolve([parent,child],[{netId:'child',instanceId:'root/a'}],placements);
+ assert.deepEqual(result.links[0].from.position,{x:3,y:4});assert.deepEqual(result.links[0].to.position,{x:6,y:7});
+});
+
 test("repeated channels bind hierarchical labels to their own parent pins",()=>{
   const result=resolve(channels,[{netId:"input",instanceId:"root/a"}],placements);
   assert.deepEqual(identities(result),["root/a:input","root:A"]);

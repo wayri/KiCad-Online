@@ -413,7 +413,7 @@ test('one split button opens and closes a paired drawing without a second Unspli
 test('BoM loads exact saved project parts and keeps companion frame selection synchronized',async()=>{
  let options,lastSelection;const view=viewer({...parameters,base:''},message=>message.type==='project-inventory'?{ok:true,result:{files:[{path:'new.kicad_sch'},{path:'new.kicad_pcb'}]}}:message.type==='project'?{ok:true,result:[{path:'new.kicad_sch',content:sch('4k7')}]}:{ok:true,result:[]},{KiCadDesignModel:require('../design-model.js'),KiCadBomBrowser:{mount(value){options=value;return {show:async()=>{},select(value){lastSelection=value;}};}}});
  view.get('workspaceTabs').children.find(n=>n.attributes['aria-label']==='BoM view').click();await tick();const model=await options.loadDrawing();assert.equal(model.objects.find(o=>o.reference==='R1').properties.Value,'4k7');assert.equal(view.calls.find(m=>m.type==='project').repository,'fork/board');assert.equal(view.calls.find(m=>m.type==='project').ref,parameters.head);
- const companion=await options.companion('3d'),query=new URL(companion.url).searchParams;assert.equal(query.get('file'),'new.kicad_pcb');assert.equal(query.get('ref'),parameters.head);const frame=view.get('bomDrawing');options.onFrame(frame);
+ const companion=await options.companion('3d'),query=new URL(companion.url).searchParams;assert.equal(query.get('file'),'new.kicad_pcb');assert.equal(query.get('ref'),parameters.head);assert.equal(query.get('bomCompanion'),'1');assert.equal(query.get('headerViews'),'1');assert.equal(query.get('headerSearch'),'1');const frame=view.get('bomDrawing');options.onFrame(frame);
  const selection={kind:'part',reference:'R1',uuid:'one',path:'new.kicad_pcb'};view.message({source:frame.contentWindow,origin:'chrome-extension://test-id',data:{type:'kicad-review:selection',selection}});assert.equal(lastSelection,selection);assert.equal(view.get('headDrawing').children[0].messages.at(-1).message.selection,selection);
 });
 test('only scoped native drawing variant events update BoM and new companions receive the selected variant',async()=>{
@@ -444,4 +444,17 @@ test('new project panes inherit the workspace theme and their toggle updates the
  const view=viewer({...parameters,base:''},()=>({ok:true,result:[]})),head=view.get('headDrawing').children[0];view.get('workspaceTheme').click();
  view.get('workspaceHelpers').children[1].children.find(n=>n.getAttribute('aria-label')==='Project view').click();const project=view.get('projectWorkspace').children[0];project.listeners.load();assert.equal(project.messages.at(-1).message.uiTheme,'light');
  view.message({source:project.contentWindow,origin:'chrome-extension://test-id',data:{type:'kicad-review:theme',repository:parameters.headRepository,ref:parameters.head,file:parameters.file,uiTheme:'dark',drawingTheme:'dark'}});assert.equal(head.messages.at(-1).message.drawingTheme,'dark');assert.equal(view.get('workspaceTheme').getAttribute('aria-pressed'),'true');
+});
+
+
+test('only the primary drawing relays explicit workspace theme changes to detached views',async()=>{
+ const view=viewer({...parameters,base:'',pairedFile:'new.kicad_pcb'},()=>({ok:true,result:[]}));
+ const head=view.get('headDrawing').children[0],pair=view.get('pairDrawing').children[0];
+ const ready=(frame,file,theme)=>view.message({source:frame.contentWindow,origin:'chrome-extension://test-id',data:{type:'kicad-review:view',phase:'ready',file,ref:parameters.head,view:{x:0,y:0,zoom:1},uiTheme:theme,drawingTheme:theme}});
+ ready(head,parameters.file,'light');ready(pair,'new.kicad_pcb','dark');
+ assert.equal(pair.messages.findLast(m=>m.message.command==='set-theme').message.drawingTheme,'light');
+ for(const frame of [head,pair])assert.notEqual(frame.messages.findLast(m=>m.message.command==='set-theme').message.syncDetached,true,'readiness does not rebroadcast');
+ view.get('workspaceTheme').click();
+ assert.equal(head.messages.at(-1).message.syncDetached,true);assert.equal(pair.messages.at(-1).message.syncDetached,false);
+ assert.equal(head.messages.at(-1).message.drawingTheme,'dark');assert.equal(pair.messages.at(-1).message.drawingTheme,'dark');
 });

@@ -7,6 +7,23 @@ User direction, recorded 2026-10-10: use Siemens Xpedition and Altium as feature
 - [Altium 365 Web Viewer](https://www.altium.com/documentation/altium-365/viewers/web-viewer?version=4): linked schematic, PCB, 3D and BOM inspection; component/net cross-probing; searchable object information; contextual comments and tasks; layer inspection; access-controlled links to a particular view. Documentation checked 2026-10-10.
 - [Siemens Xpedition Viewer](https://intercom.help/sw-siemens-eda/en/articles/11421232-what-is-the-xpedition-viewer-application): project and ancillary-file organization, measurements, design markup, multiple-document viewing, cross-probing, graphical and connectivity/version comparisons, and controlled guest review. Several collaboration features are Standard-tier capabilities. Documentation checked 2026-10-10.
 
+## KiCad Prism interaction reference
+
+[KiCad Prism’s viewing guide](https://krishna-swaroop.github.io/KiCAD-Prism/use/viewing-designs/)
+was checked on 12 November 2026. Its compact named-net highlight bar, contextual
+selection panel, independent insets and sheet navigation inform the development
+viewer’s presentation. These interactions are implemented independently; no Prism
+code or screenshot assets are included. KiCad Online retains its own click
+semantics, browser-session access model and sibling-popup lifecycle. This is an
+interaction reference, not a claim of product parity or affiliation.
+
+The official [KiCad Monkey](https://github.com/wavenumber-eng/kicad_monkey)
+project and [Altium Monkey schema contract](https://github.com/wavenumber-eng/altium_monkey/blob/main/docs/schemas/altium_monkey/SPEC.md)
+also inform source-bound sheet-instance and connection identity. Their data
+contracts distinguish hierarchy from electrical connectivity and retain exact
+terminal/connection identities. This informs endpoint correctness; it is not
+proof of browser animation performance or a claim that their UI was reproduced.
+
 ## Apply to KiCad Online
 
 | Workflow | Product direction | Acceptance evidence |

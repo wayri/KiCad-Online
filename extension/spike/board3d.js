@@ -943,7 +943,7 @@ export function mountBoard3D(container, source, options = {}) {
     setAnchor(anchor){activeAnchor=anchor&&typeof anchor==='object'?anchor:null;anchorSignature='';if(activeAnchor)notifyAnchor();else options.onAnchor?.({anchor:null,point:null});},
     setNetHighlightColor(value){const next=value==='layer'?'layer':'accent';if(next===netHighlightColor)return;netHighlightColor=next;netInspection.setColorMode(next);probeRegistry.forEach(probe=>probe.setNetHighlightColor?.(next));setSelection(externalSelection);},
     setSelectionDim(enabled){selectionDim=Boolean(enabled);setSelection(externalSelection);return selectionDim;},
-    selectionAppearanceCapabilities(){return {dim:true,instanceColors:true,desaturatesTextures:true,fullNet3d:true,internalCopper:true,viaSpans:true,translucentContext:true};},
+    selectionAppearanceCapabilities(){return {dim:true,instanceColors:true,desaturatesTextures:false,fullNet3d:true,internalCopper:true,viaSpans:true,translucentContext:true};},
     setLighting(value,{persist=true}={}){return applyLighting(value,persist);},
     getLightingState(){return lightingRig.state();},
     getNetInspectionState(){return netInspection.state();},

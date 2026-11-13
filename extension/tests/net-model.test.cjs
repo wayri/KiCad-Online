@@ -200,6 +200,8 @@ test("saved parent sheet pins join wires and exact child hierarchical labels onl
   const {nets}=build([parent,child,unrelated]),selected=nets.find((n)=>n.path===parent.path);
   const hierarchy=[{path:parent.path,target:child.path,sheetId:"sheet"}];
   assert.deepEqual(selected.sheetPins,[{sheetId:"sheet",name:"SIGNAL"}]);
+  const entry=selected.members.find(member=>member.kind==='sheet_pin');assert.equal(entry.name,'SIGNAL');assert.equal(entry.sheetId,'sheet');assert.deepEqual(entry.position,{x:10,y:0});
+  assert.equal(nets.find(net=>net.path===child.path).members.find(member=>member.kind==='hierarchical_label').name,'SIGNAL');
   assert.ok(selected.uuids.includes("pin"));
   assert.deepEqual(relatedSchematicNets(nets,selected.id,hierarchy).paths,["child.kicad_sch","root.kicad_sch"]);
   assert.deepEqual(relatedSchematicNets(nets,nets.find((n)=>n.path===child.path).id,hierarchy).paths,["child.kicad_sch","root.kicad_sch"]);

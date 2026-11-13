@@ -59,3 +59,21 @@ test('field rasterization is bounded and uses an owned PNG texture without exter
  assert.throws(()=>surfaceGuard([{kind:'track',type:'line',netId:1,layer:'F.Cu',width:2,points:[{x:0,y:0},{x:1,y:0},{x:1,y:1}]}],net,'F.Cu',bounds),/unsupported/,'multi-segment stroke is not a convex cell cover');
  assert.throws(()=>surfaceGuard([{kind:'arc',type:'line',netId:1,layer:'F.Cu',width:.2,points:[{x:0,y:0},{x:1,y:1}]}],net,'F.Cu',bounds),/unsupported/);
  });
+
+
+test('named palettes change only presentation and share scalar ranges with conservative 3D surfaces',()=>{
+ const api=require('../fast-pi-field.js'),input=result(),before=JSON.stringify(input),names=api.paletteNames();
+ assert.deepEqual(names,['wayricad','viridis','inferno','grayscale']);names.push('bad');assert.equal(api.paletteNames().includes('bad'),false);
+ assert.deepEqual(api.color(0,'viridis'),[68,1,84]);assert.deepEqual(api.color(1,'inferno'),[252,255,164]);
+ const net={id:1,name:'VCC'},zone={kind:'zone',type:'polygon',netId:1,layer:'F.Cu',points:[{x:0,y:0},{x:2,y:0},{x:2,y:2},{x:0,y:2}]},baseline=api.prepare(input,'F.Cu','voltage');
+ for(const name of api.paletteNames()){
+  const f=api.prepare(input,'F.Cu','voltage',name),s=api.surface(input,'F.Cu','voltage',()=>true,[zone],net,name);
+  assert.equal(f.maximum,baseline.maximum);assert.equal(f.sample(1,1),baseline.sample(1,1));assert.deepEqual(f.support,baseline.support);assert.deepEqual(s.range,[0,f.maximum]);assert.equal(s.colors.length,s.values.length);
+  for(let i=0;i<s.values.length;i++)assert.deepEqual(s.colors[i],api.color(s.values[i]/f.maximum,name));
+  if(name!=='wayricad')assert.notDeepEqual(f.rgba,baseline.rgba);
+ }
+ assert.equal(JSON.stringify(input),before);
+ for(const name of ['invalid','__proto__',null]){assert.throws(()=>api.color(.5,name),/palette/);assert.throws(()=>api.prepare(input,'F.Cu','voltage',name),/palette/);}
+ assert.throws(()=>api.color(NaN),/finite/);
+ const zero={...input,nodes:input.nodes.map(n=>({...n,voltageV:5}))};assert.equal(api.prepare(zero,'F.Cu','voltage','grayscale').maximum,0);
+});

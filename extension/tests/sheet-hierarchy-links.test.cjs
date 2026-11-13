@@ -11,6 +11,19 @@ function pages(sheets, links) {
 }
 const link = (path, target, uuid, label = uuid) => ({path, uuid, label, properties: {Sheetfile: target}});
 
+test('net curves retain exact endpoints with smooth opposing tangents and stable readable colours',()=>{
+ const {netCurve,netColor}=require('../sheet-hierarchy-links.js');
+ for(const to of [{x:300,y:80},{x:-300,y:80},{x:40,y:300},{x:40,y:-300}]){const from={x:0,y:0},curve=netCurve(from,to);assert.equal(curve.a,from);assert.equal(curve.d,to);assert.ok([curve.b.x,curve.b.y,curve.c.x,curve.c.y].every(Number.isFinite));const first={x:curve.b.x-from.x,y:curve.b.y-from.y},last={x:to.x-curve.c.x,y:to.y-curve.c.y};assert.equal(Math.sign(first.x),Math.sign(last.x));assert.equal(Math.sign(first.y),Math.sign(last.y));}
+ assert.equal(netColor('ST09_OUT'),netColor('ST09_OUT'));assert.notEqual(netColor('ST09_OUT'),netColor('ST01_OUT'));assert.match(netColor('VCC',false),/^#[0-9a-f]{6}$/i);
+});
+
+test('net guides reach exact endpoints continuously with dots and one label per net',()=>{
+ const moves=[],ends=[],curves=[],dots=[],labels=[],dashes=[],ctx={globalAlpha:1,save(){},restore(){},beginPath(){},moveTo(x,y){moves.push([x,y]);},lineTo(x,y){ends.push([x,y]);},quadraticCurveTo(){},bezierCurveTo(...points){curves.push(points);},setLineDash(value){dashes.push(value);},stroke(){},arc(x,y){dots.push([x,y]);},fill(){},measureText(){return{width:30};},fillRect(){},fillText(text){labels.push(text);}};
+ const edge={name:'VCC',points:[{x:3,y:4},{x:-10,y:4},{x:-10,y:80},{x:100,y:80},{x:105,y:100}],exteriorPoints:[{x:-10,y:4},{x:-10,y:80},{x:100,y:80}]};
+ require('../sheet-hierarchy-links.js').draw({ctx,viewport:{camera:{world_to_screen:p=>p}}},{links:[edge,edge]},true,{kind:'net'});
+ assert.deepEqual(moves[0],[3,4]);assert.deepEqual(curves[0].slice(-2),[105,100]);assert.deepEqual(dots.slice(0,2),[[3,4],[105,100]]);assert.deepEqual(labels,['VCC']);assert.ok(dashes.every(value=>value.length===0));
+});
+
 test('miniature hierarchy paths use bounded quadratic curves and reject invalid coordinates',()=>{
  const {pathData}=require('../sheet-hierarchy-links.js'),points=[{x:0,y:0},{x:0,y:40},{x:100,y:40},{x:100,y:80}];
  const path=pathData(points);assert.match(path,/^M 0 0 L 0 28 Q 0 40 12 40/);assert.match(path,/Q 100 40 100 52 L 100 80$/);assert.equal(pathData([{x:0,y:0},{x:NaN,y:1}]),'');assert.equal(pathData([points[0],points[0]]),'');

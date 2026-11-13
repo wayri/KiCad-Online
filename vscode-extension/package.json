@@ -2,7 +2,7 @@
   "name": "kicad-visual-review",
   "displayName": "KiCad Online",
   "description": "View KiCad schematics and PCBs, inspect nets and assembly fields, and resolve Git conflicts visually.",
-  "version": "0.12.94",
+  "version": "0.12.95",
   "publisher": "wayri",
   "license": "SEE LICENSE IN LICENSE.txt",
   "engines": {

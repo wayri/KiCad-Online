@@ -20,13 +20,14 @@ async function revision(query='',extraFiles=[],options={}){
   KiCadSchematicRenderer:{build:(_ast,file,metadata)=>{(calls.schematicBuilds||=[]).push({file,metadata});return {primitives:[],layers:[],page:{width:297,height:210},warnings:[]};}},
   KiCadPCBRenderer:{build:()=>({primitives:[],layers:options.layers||[],page:{width:297,height:210},warnings:[]})},
   SpikeBoard3D:{mountBoard3D(_pane,_source,config){calls.sceneMounts=(calls.sceneMounts||0)+1;calls.modelOptions=config;return{createProbeViewport(holder,config){calls.probeOptions=config;return{setSelection(){},dispose(){}};},getProbeCount(){return calls.activeProbes||0;},dispose(){calls.sceneDisposed=(calls.sceneDisposed||0)+1;},setTheme(){},setTerminalLabels(visible){calls.terminalLabels=visible;}};}},
-  KiCadOwnedCanvas:{mount:()=>canvas},KiCadReviewWorkspace:{sheetOverviewEntries:require('../review-workspace.js').sheetOverviewEntries,composeSheetOverview:require('../review-workspace.js').composeSheetOverview,sheetPageHighlights:require('../review-workspace.js').sheetPageHighlights,mount:options=>{calls.workspaceOptions=options;return {draw(){},setScene(){},attachCanvas(){calls.attach++;},dispose(){calls.disposed++;},highlightRelated(selection){calls.related=selection;options.onSelection?.(selection);},refreshComments(){calls.refreshed=(calls.refreshed||0)+1;},options};}},
+  KiCadOwnedCanvas:{bounds:core.bounds,mount:()=>canvas},KiCadReviewWorkspace:{sheetOverviewEntries:require('../review-workspace.js').sheetOverviewEntries,composeSheetOverview:require('../review-workspace.js').composeSheetOverview,refreshSheetOverview:require('../review-workspace.js').refreshSheetOverview,sheetPageHighlights:require('../review-workspace.js').sheetPageHighlights,mount:options=>{calls.workspaceOptions=options;return {selectOverviewNet(...args){calls.overviewNetPick=args;return true;},selectOverviewObject(...args){calls.overviewObjectPick=args;return true;},draw(){},setScene(){},attachCanvas(){calls.attach++;},dispose(){calls.disposed++;},highlightRelated(selection){calls.related=selection;options.onSelection?.(selection);},refreshComments(){calls.refreshed=(calls.refreshed||0)+1;},options};}},
   addEventListener:(type,callback)=>listeners.set(type,callback)};
+ if(options.windowLink)context.KiCadWindowLink={mount(config){calls.linkOptions=config;return{publishTheme(value){(calls.linkThemes||=[]).push(value);},dispose(){}};}};
  if(options.realRender){context.KiCadNetModel=require('../net-model.js');context.KiCadPCBRenderer=require('../pcb-renderer.js');context.KiCadSchematicRenderer=require('../schematic-renderer.js');}
  if(options.android){context.KiCadNetModel=require('../net-model.js');context.KiCadAndroidUI={};context.setTimeout=(fn,ms)=>{const timer=setTimeout(fn,ms);if(ms>100)timer.unref();return timer;};context.requestAnimationFrame=fn=>setTimeout(fn,0);context.cancelAnimationFrame=clearTimeout;context.IntersectionObserver=class{constructor(callback){this.callback=callback;calls.overviewObserver=this;this.observed=[];}observe(node){this.observed.push(node);}disconnect(){this.observed=[];}};const mount=context.KiCadReviewWorkspace.mount;context.KiCadReviewWorkspace.mount=opts=>({...mount(opts),overviewSheets:()=>[{sheet:{path:initialFile,label:'Root'},depth:0},...extraFiles.map(file=>({sheet:{path:file.path,label:'Power supply'},depth:1}))],overviewSelection:path=>options.overviewSelection?.(path)||({netIds:[],uuids:[],mode:'dim'})});}
  if(options.worker)context.KiCadLoading={indicator:(_host,config)=>{calls.stopLoading=config.onStop;return{show(){},hide(){},dispose(){}};},paint:async()=>{},run:async(_job,payload,prepare)=>{calls.workerPayload=payload;return {...prepare(),design:context.KiCadSchematicRenderer.build()};}};
  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../revision-viewer.js'),'utf8'),context);await tick();
- return{canvas,camera,calls,get,reports,parent,context,viewframe(){canvasListeners.get('kicad:viewframe')();},message(data,source=parent,origin='chrome-extension://ours'){listeners.get('message')({source,origin,data});},key(key,nodes=[],modifiers={}){let prevented=false;listeners.get('keydown')({key,composedPath:()=>nodes,preventDefault(){prevented=true;},...modifiers});return prevented;},hide(){listeners.get('pagehide')();}};
+ return{canvas,camera,calls,get,reports,parent,context,selectOverview(hit,detail={}){canvas.selected=hit;canvasListeners.get('kicad:select')({detail});},viewframe(){canvasListeners.get('kicad:viewframe')();},message(data,source=parent,origin='chrome-extension://ours'){listeners.get('message')({source,origin,data});},key(key,nodes=[],modifiers={}){let prevented=false;listeners.get('keydown')({key,composedPath:()=>nodes,preventDefault(){prevented=true;},...modifiers});return prevented;},hide(){listeners.get('pagehide')();}};
 }
 
 test('GPU gesture frames update viewport status and camera reports; Canvas2D-only mode is selectable',async()=>{
@@ -101,6 +102,11 @@ test('paired selection relay validates parent and suppresses cross-highlight ech
  assert.equal(v.calls.related,null);
  v.message({type:'kicad-review:command',command:'refresh-comments'});assert.equal(v.calls.refreshed,1);
 });
+test('BoM companions use a compact surface and omit the 3D comment callback',async()=>{
+ const v=await revision('&workspace=1&bomCompanion=1',[],{pcb:true});assert.equal(v.context.document.body.dataset.bomCompanion,'true');assert.equal(v.calls.workspaceOptions.bomCompanion,true);assert(v.context.document.head.children.some(n=>n.href==='chrome-extension://ours/bom-browser.css'));
+ v.get('mode3d').click();await tick();assert.equal(v.calls.modelOptions.onComment,undefined);assert.equal(typeof v.calls.modelOptions.onSelect,'function');v.hide();
+ const regular=await revision();assert.equal(regular.calls.workspaceOptions.bomCompanion,false);assert.equal(regular.context.document.body.dataset.bomCompanion,undefined);regular.hide();
+});
 test('3D opens the board before slow model inventory finishes and retains later diagnostics',async()=>{
  let release;const inventory=new Promise(resolve=>release=resolve),v=await revision('',[],{pcb:true,modelIndex:inventory});
  await v.get('mode3d').click();assert.equal(v.calls.sceneMounts,1);assert.equal(v.get('mode3d').attributes['aria-pressed'],'true');assert.ok(v.calls.modelOptions.assetPathsPromise);assert.deepEqual(plain(v.calls.modelOptions.assetWarnings),[]);
@@ -155,6 +161,17 @@ test('layer eyes toggle visibility independently and the expanded bar survives c
  for(const listener of bar.listeners.get('keydown'))listener({key:'Escape',preventDefault(){},stopPropagation(){}});assert.equal(toggle.attributes['aria-expanded'],'false');
 });
 
+test('layer selector opens on mouse hover, remains open through layer clicks and ignores touch hover',async()=>{
+ const v=await revision('',[],{pcb:true,layers:['F.Cu','B.Cu']});
+ const bar=v.get('drawingHost').children.find(child=>child.id==='floatingLayerSelector'),toggle=bar.children[0];
+ for(const listener of bar.listeners.get('pointerenter'))listener({pointerType:'touch'});assert.equal(toggle.attributes['aria-expanded'],'false');
+ const host=v.get('drawingHost');host.getBoundingClientRect=()=>({left:0,top:0,right:800,bottom:600,width:800,height:600});const navigator=v.get('designNavigator');navigator.hidden=false;navigator.getClientRects=()=>[{}];navigator.getBoundingClientRect=()=>({left:0,top:0,right:250,bottom:600,width:250,height:600});
+ for(const listener of bar.listeners.get('pointerenter'))listener({pointerType:'mouse'});assert.equal(toggle.attributes['aria-expanded'],'true');assert.equal(bar.style.left,'258px');
+ toggle.click();assert.equal(toggle.attributes['aria-expanded'],'true');
+ const eye=bar.children[1].children.find(node=>node.className==='compact-layer-item').children[1];eye.click();assert.equal(toggle.attributes['aria-expanded'],'true');
+ for(const listener of bar.listeners.get('pointerleave'))listener({});assert.equal(toggle.attributes['aria-expanded'],'false');
+});
+
 test('sheet tree floats below the drawing, minimizes, closes, reopens from settings and focuses a page',async()=>{
  const v=await revision('',[{path:'sub/power.kicad_sch',content:'(kicad_sch)'}],{android:true});
  const miniature=v.get('drawingHost').children.find(node=>node.className==='sheet-tree-miniature'),heading=miniature.children[0],body=miniature.children[1];
@@ -203,14 +220,38 @@ test('sheet tree header drag and keyboard move the box within its drawing pane a
  v.context.KiCadSheetOverview.dispose();
 });
 
-test('Android shared overview filters matching sheets then restores all pages',async()=>{
+test('shared overview keeps its full layout until Connected sheets only is requested',async()=>{
  let active=true;
  const v=await revision('',[{path:'sub/power.kicad_sch',content:'(kicad_sch)'},{path:'other.kicad_sch',content:'(kicad_sch)'}],{android:true,overviewSelection:path=>({netActive:active,netIds:active&&path!=='other.kicad_sch'?['VCC']:[],uuids:[],mode:'dim'})});
  await v.context.KiCadSheetOverview.open();
- assert.equal(v.canvas.design.primitives.filter(p=>p.type==='text').length,2);
+ assert.equal(v.canvas.design.primitives.filter(p=>p.type==='text').length,3);
+ const heading=v.get('drawingHost').children.find(node=>node.id==='sheetOverview').children[0];await heading.children.find(node=>node.textContent==='Connected sheets only').click();assert.equal(v.canvas.design.primitives.filter(p=>p.type==='text').length,2);
  active=false;await v.context.KiCadSheetOverview.refresh();
  assert.equal(v.canvas.design.primitives.filter(p=>p.type==='text').length,3);
  v.context.KiCadSheetOverview.close();
+});
+
+test('all-sheet highlight refresh retains geometry, camera and the miniature DOM',async()=>{
+ let active=false;const v=await revision('',[{path:'sub/power.kicad_sch',content:'(kicad_sch)'}],{android:true,overviewSelection:()=>({netActive:active,netIds:active?['GND']:[],uuids:[],mode:'dim'})});
+ await v.context.KiCadSheetOverview.open();const geometry=v.canvas.design,builds=v.calls.schematicBuilds.length,fits=v.calls.board,mini=v.get('drawingHost').children.find(node=>node.className==='sheet-tree-miniature'),svg=mini.children[1].children[0];
+ v.camera.center.x=77;v.camera.center.y=88;v.camera.zoom=2.4;active=true;await v.context.KiCadSheetOverview.refresh();
+ assert.equal(v.canvas.design,geometry);assert.equal(v.calls.schematicBuilds.length,builds);assert.equal(v.calls.board,fits);assert.deepEqual([v.camera.center.x,v.camera.center.y,v.camera.zoom],[77,88,2.4]);assert.equal(mini.children[1].children[0],svg);
+ v.context.KiCadSheetOverview.close();
+});
+
+test('net-map mode shows connected pages and electrical guides without enabling hierarchy arrows',async()=>{
+ const v=await revision('',[{path:'child.kicad_sch',content:'(kicad_sch)'},{path:'other.kicad_sch',content:'(kicad_sch)'}],{android:true,overviewSelection:path=>({netActive:true,netIds:path==='other.kicad_sch'?[]:['POWER'],uuids:[],mode:'dim'})});
+ await v.context.KiCadSheetOverview.openNetMap();const heading=v.get('drawingHost').children.find(node=>node.id==='sheetOverview').children[0];
+ assert.equal(v.context.KiCadSheetOverview.isOpen(),true);assert.equal(v.canvas.design.primitives.filter(p=>p.type==='text').length,2);
+ for(const [label,pressed]of [['Connected sheets only','true'],['Net links','true'],['Hierarchy links','false']])assert.equal(heading.children.find(node=>node.textContent===label).getAttribute('aria-pressed'),pressed);
+ v.context.KiCadSheetOverview.close();
+});
+
+test('net-map picks respect Part mode and Shift individual picks while forwarding additive net selection',async()=>{
+ const v=await revision('',[],{android:true});await v.context.KiCadSheetOverview.open();const hit={sourcePath:'root.kicad_sch',uuid:'wire',kind:'wire',sourceInstanceId:'instance'};
+ v.get('selectionMode').value='part';v.selectOverview(hit);assert.deepEqual(v.calls.overviewObjectPick,['root.kicad_sch','wire']);assert.equal(v.calls.overviewNetPick,undefined);
+ v.get('selectionMode').value='all';v.selectOverview(hit,{multi:true});assert.deepEqual(v.calls.overviewNetPick,['root.kicad_sch','wire','instance',true]);v.calls.overviewNetPick=null;
+ v.selectOverview(hit,{individual:true,multi:true});assert.equal(v.calls.overviewNetPick,null);v.context.KiCadSheetOverview.close();
 });
 
 test('all-sheets Unselect and Clear highlights clear local picks and delegate to shared actions',async()=>{
@@ -357,6 +398,37 @@ test('maximized sheet tree restores its size, survives minimize/reopen and retai
 test('theme button toggles both surfaces while drawing shortcut remains independent',async()=>{
  const v=await revision();v.get('themeButton').click();assert.equal(v.canvas.dark,true);assert.equal(v.context.document.body.dataset.uiTheme,'dark');assert.equal(v.context.document.body.dataset.drawingTheme,'dark');
  v.get('themeButton').click();assert.equal(v.canvas.dark,false);assert.equal(v.context.document.body.dataset.uiTheme,'light');
+ const themeCount=v.reports.filter(r=>r.data.type==='kicad-review:theme').length;
  v.message({type:'kicad-review:command',command:'set-theme',uiTheme:'dark',drawingTheme:'light'});assert.equal(v.canvas.dark,false);assert.equal(v.context.document.body.dataset.uiTheme,'dark');
- const state=v.reports.filter(r=>r.data.type==='kicad-review:theme').at(-1).data;assert.equal(state.drawingTheme,'light');assert.equal(state.uiTheme,'dark');v.hide();
+ assert.equal(v.reports.filter(r=>r.data.type==='kicad-review:theme').length,themeCount,'parent assignment is not a user intent');v.hide();
+});
+
+
+test('opposite startup themes settle without parent echoes or detached-link feedback',async()=>{
+ const panes=await Promise.all([revision('&viewSession='+('s'.repeat(32)),[],{windowLink:true}),revision('&viewSession='+('s'.repeat(32)),[],{pcb:true,windowLink:true})]);
+ assert.deepEqual(panes.map(v=>v.canvas.dark),[false,true]);
+ for(const v of panes){
+  assert.equal(v.reports.filter(r=>r.data.type==='kicad-review:theme').length,0,'initial state travels only in readiness reports');
+  v.message({type:'kicad-review:command',command:'set-theme',theme:'dark'});
+  const draws=v.calls.draw;
+  for(let i=0;i<20;i++)v.message({type:'kicad-review:command',command:'set-theme',theme:'dark'});
+  assert.equal(v.canvas.dark,true);assert.equal(v.calls.draw,draws,'identical assignments do not redraw');
+  assert.equal(v.reports.filter(r=>r.data.type==='kicad-review:theme').length,0);
+  assert.equal(v.calls.linkThemes,undefined,'ordinary assignments do not broadcast into other windows');
+  v.calls.linkOptions.onTheme('dark');assert.equal(v.calls.draw,draws,'matching detached state is also idempotent');
+ }
+ const primary=panes[0];primary.message({type:'kicad-review:command',command:'set-theme',theme:'light',syncDetached:true});
+ assert.deepEqual(primary.calls.linkThemes,['light']);assert.equal(primary.reports.filter(r=>r.data.type==='kicad-review:theme').length,0);
+ primary.get('themeButton').click();assert.equal(primary.reports.filter(r=>r.data.type==='kicad-review:theme').length,1,'a new local choice still reports');
+ for(const v of panes)v.hide();
+});
+
+
+test('BoM schematic companions retain the drawing without mounting an overlapping sheet-tree workspace',async()=>{
+ const v=await revision('&workspace=1&bomCompanion=1',[{path:'child.kicad_sch',content:'(kicad_sch)'}]);
+ assert.equal(v.canvas.document.filename,'root.kicad_sch');assert.equal(v.context.KiCadSheetOverview,undefined);
+ assert.equal(v.get('drawingHost').children.some(n=>n.className==='sheet-tree-miniature'||n.id==='sheetOverview'),false);
+ const fitted=v.calls.board;v.get('fitDrawing').click();assert.equal(v.calls.board,fitted+1);
+ v.calls.workspaceOptions.openSheet('child.kicad_sch');assert.equal(v.canvas.document.filename,'child.kicad_sch');v.hide();
+ const full=await revision();assert.ok(full.context.KiCadSheetOverview);full.hide();
 });

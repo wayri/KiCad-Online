@@ -252,7 +252,7 @@
 
       listen('pointerup',e=>{if(this.drag){this.drag=null;this.finishMotion();}if(this.canvas.hasPointerCapture(e.pointerId))this.canvas.releasePointerCapture(e.pointerId);});listen('pointercancel',()=>{this.drag=null;this.finishMotion();});listen('lostpointercapture',()=>{if(this.drag){this.drag=null;this.finishMotion();}});
 
-      listen('click',e=>{if(e.pointerType==='touch'&&this.touchNetPick?.(e))return;const r=this.canvas.getBoundingClientRect(),at=this.viewport.camera.screen_to_world({x:e.clientX-r.left,y:e.clientY-r.top});const hit=this.query(at)[0];this.select(hit?{primitive:hit,context:{uuid:hit.uuid,reference:hit.reference,kind:hit.kind,name:hit.name,pinNumber:hit.pinNumber,pinName:hit.pinName,ownerUuid:hit.ownerUuid,connectPoint:hit.connectPoint,parent:hit.ownerUuid?{uuid:hit.ownerUuid}:null}}:null,{multi:Boolean(e.ctrlKey||e.metaKey||e.shiftKey)});});
+      listen('click',e=>{if(e.pointerType==='touch'&&this.touchNetPick?.(e))return;const r=this.canvas.getBoundingClientRect(),at=this.viewport.camera.screen_to_world({x:e.clientX-r.left,y:e.clientY-r.top});const hit=this.query(at)[0];this.select(hit?{primitive:hit,context:{uuid:hit.uuid,reference:hit.reference,kind:hit.kind,name:hit.name,pinNumber:hit.pinNumber,pinName:hit.pinName,ownerUuid:hit.ownerUuid,connectPoint:hit.connectPoint,parent:hit.ownerUuid?{uuid:hit.ownerUuid}:null}}:null,{multi:Boolean(e.ctrlKey||e.metaKey||e.shiftKey),individual:Boolean(e.shiftKey&&!e.ctrlKey&&!e.metaKey)});});
 
       listen('wheel',e=>{e.preventDefault();this.prepareMotion();const r=this.canvas.getBoundingClientRect(),p={x:e.clientX-r.left,y:e.clientY-r.top},c=this.viewport.camera,before=c.screen_to_world(p);c.zoom=Math.max(.001,Math.min(10000,c.zoom* Math.exp(-Math.max(-100,Math.min(100,e.deltaY))*.004)));const after=c.screen_to_world(p);c.center.x+=before.x-after.x;c.center.y+=before.y-after.y;if(typeof setTimeout==='function'){this.wheelMotion=true;if(this.motionTimer!==null)clearTimeout(this.motionTimer);this.motionTimer=setTimeout(()=>this.finishMotion(),120);}this.requestDraw();},{passive:false});
 
@@ -306,7 +306,7 @@
         .sort((a,b)=>a.score-b.score).slice(0,40).map(row=>row.p);
     }
 
-    select(hit,options={}){this.selected=hit?.primitive||null;this.draw();this.dispatchEvent(new CustomEvent('kicad:select',{detail:{item:hit?.context||null,multi:Boolean(options.multi)}}));}
+    select(hit,options={}){this.selected=hit?.primitive||null;this.draw();this.dispatchEvent(new CustomEvent('kicad:select',{detail:{item:hit?.context||null,multi:Boolean(options.multi),...(options.individual?{individual:true}:{})}}));}
 
     setNetHighlight(net,options={}){this.setNetHighlights(net?[net]:[],options);}
     setNetHighlights(nets,options={}){const list=Array.isArray(nets)?nets.slice(0,200):[];this.netHighlight=list.length?list[0]:null;this.highlightCount=list.length;
@@ -457,9 +457,10 @@
         if(dim&&this.isolateNet&&!p.hole&&p.layer!=='Edge.Cuts')continue;
 
         if(!this.inView(p,view))continue;
-        const color=dim&&this.highlightMode!=='bright'&&!p.hole?(this.dark?'#87919d':'#8b919a'):matches&&!p.hole?(this.selectionColor==='layer'&&this.pcb&&p.layer?root.KiCadLayerColors?.reviewColorFor?.(p.layer,this.dark)||p.color:this.selectionColor!=='source'&&this.selectionColor!=='layer'?(this.pcb?'#ffe18b':this.dark?'#78d5ff':'#006ca8'):this.netClassColors?.get(p)||null):this.netClassColors?.get(p)||null,opacity=Math.min(dim&&!p.hole&&this.highlightMode!=='bright'&&p.layer!=='Edge.Cuts'?(this.pcb?.42:.38):1,layerDim&&!p.hole?.18:1);
+        const color=matches&&!p.hole?(this.selectionColor==='layer'&&this.pcb&&p.layer?root.KiCadLayerColors?.reviewColorFor?.(p.layer,this.dark)||p.color:this.selectionColor!=='source'&&this.selectionColor!=='layer'?(this.pcb?'#ffe18b':this.dark?'#78d5ff':'#006ca8'):this.netClassColors?.get(p)||null):this.netClassColors?.get(p)||null,opacity=Math.min(dim&&!p.hole&&this.highlightMode!=='bright'&&p.layer!=='Edge.Cuts'?(this.pcb?.42:.38):1,layerDim&&!p.hole?.18:1);
         if(!this.netHighlight&&!layerDim&&!p.frame&&!p.hole&&p.type==='line'&&!p.fill&&!p.lineStyle&&p.stroke!==false&&(p.opacity===undefined||p.opacity===1)&&this.paint===Viewport.prototype.paint){batchLine(p,color);continue;}
-        flushLines();this.paint(p,{color,opacity});
+        const contextGray=dim&&this.highlightMode!=='bright'&&!p.hole&&!p.frame;
+        flushLines();this.paint(p,{color:contextGray?(this.pcb&&p.layer?root.KiCadLayerColors?.contextColorFor?.(p.layer,this.dark)||(this.dark?'#87919b':'#737b83'):(this.dark?'#87919b':'#737b83')):color,opacity:matches&&!p.hole?1:opacity});
 
       }
 
