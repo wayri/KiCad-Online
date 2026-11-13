@@ -14,7 +14,7 @@ The store may offer an earlier version than the GitHub preview while an update i
 
 ## Try the GitHub preview on desktop
 
-The [Firefox 0.12.94 ZIP](https://github.com/wayri/KiCad-Online/releases/download/v0.12.94/kicad-visual-review-firefox-0.12.94.zip) is an unsigned development package for **Firefox desktop 140 or newer**. It can be loaded temporarily; it does not replace a signed store installation.
+The [Firefox 0.12.95 ZIP](https://github.com/wayri/KiCad-Online/releases/download/v0.12.95/kicad-visual-review-firefox-0.12.95.zip) is an unsigned development package for **Firefox desktop 140 or newer**. It can be loaded temporarily; it does not replace a signed store installation.
 
 1. Download the Firefox ZIP, [verify its checksum](INSTALL.md#verify-downloads), and extract it.
 2. Open `about:debugging#/runtime/this-firefox`.
