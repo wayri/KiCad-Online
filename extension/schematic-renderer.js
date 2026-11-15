@@ -53,10 +53,12 @@
   function transform(origin = { x: 0, y: 0 }, angle = 0, mirror = "", library = false) {
     const radians = angle * Math.PI / 180, c = Math.cos(radians), s = Math.sin(radians);
     return (position) => {
-      let x = position.x, y = library ? -position.y : position.y;
-      if (mirror === "x") y = -y;
-      if (mirror === "y") x = -x;
-      return { x: round(origin.x + x * c + y * s), y: round(origin.y - x * s + y * c) };
+      const x = position.x, y = library ? -position.y : position.y;
+      // KiCad mirrors the rotated symbol in sheet axes, not in library axes.
+      let rotatedX = x * c + y * s, rotatedY = -x * s + y * c;
+      if (mirror === "x") rotatedY = -rotatedY;
+      if (mirror === "y") rotatedX = -rotatedX;
+      return { x: round(origin.x + rotatedX), y: round(origin.y + rotatedY) };
     };
   }
   function isHidden(node) {
@@ -455,8 +457,22 @@
         const position = point(property, "at"), string = value(property[2]);
         if (!position) { warn(`Visible property ${value(property[1])} has no position.`); continue; }
         const propertyAngle = value(form(property, "at")?.[3]) || 0;
-        text(position, string, fontSize(property), -propertyAngle, COLOR.symbol,
-          { ...owner, kind: "property", property: value(property[1]), ...fontStyle(property) });
+        // Field anchors are sheet coordinates, but their angle and justification
+        // remain relative to the parent symbol. Keep text upright as KiCad does.
+        const totalAngle = angle + propertyAngle;
+        const drawAngle = ((totalAngle % 180) + 180) % 180;
+        const basis = transform({ x: 0, y: 0 }, totalAngle, mirror);
+        const horizontal = basis({ x: 1, y: 0 }), vertical = basis({ x: 0, y: 1 });
+        const radians = drawAngle * Math.PI / 180, c = Math.cos(radians), s = Math.sin(radians);
+        const style = fontStyle(property);
+        if (horizontal.x * c - horizontal.y * s < 0) {
+          style.align = ({ left: "right", right: "left" })[style.align] || style.align;
+        }
+        if (vertical.x * s + vertical.y * c < 0) {
+          style.baseline = ({ top: "bottom", bottom: "top" })[style.baseline] || style.baseline;
+        }
+        text(position, string, fontSize(property), -drawAngle, COLOR.symbol,
+          { ...owner, kind: "property", property: value(property[1]), ...style });
       }
     }
     function renderLabel(node, owner, kind = typeOf(node)) {

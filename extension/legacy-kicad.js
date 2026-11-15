@@ -66,10 +66,10 @@
    }
    if(type==='$Comp'){
     const b=block(i+1,'$EndComp');i=b.end;const r=b.records,L=r.find(x=>x[0]==='L'),U=r.find(x=>x[0]==='U'),P=r.find(x=>x[0]==='P');if(!L||!P)throw Error('Incomplete legacy component.');const id=L[1],matrix=r.find(x=>x.length===4&&x.every(n=>/^-?\d+$/.test(n)))?.map(Number)||[1,0,0,-1];let orientation=null;
-    for(const angle of [0,90,180,270])for(const mirror of ['', 'x','y']){const rad=angle*Math.PI/180,c=Math.round(Math.cos(rad)),s=Math.round(Math.sin(rad)),sx=mirror==='y'?-1:1,sy=mirror==='x'?1:-1,actual=[sx*c,sy*s,-sx*s,sy*c];if(matrix.every((n,j)=>n===actual[j]))orientation={angle,mirror};}
+    for(const angle of [0,90,180,270])for(const mirror of ['', 'x','y']){const rad=angle*Math.PI/180,c=Math.round(Math.cos(rad)),s=Math.round(Math.sin(rad)),sx=mirror==='y'?-1:1,sy=mirror==='x'?-1:1,actual=[sx*c,-sx*s,-sy*s,-sy*c];if(matrix.every((n,j)=>n===actual[j]))orientation={angle,mirror};}
     if(!orientation){warn('Legacy component '+id+' has an unsupported orientation and is omitted.');continue;}
     const node=['symbol',['lib_id',q(id)],at(P[1],P[2],orientation.angle),['unit',Number(U?.[1]||1)],['convert',Number(U?.[2]||1)],['uuid',q(U?.[3]||'legacy-component-'+i)],...(orientation.mirror?[['mirror',orientation.mirror]]:[])];
-    for(const f of r.filter(x=>x[0]==='F')){const name=['Reference','Value','Footprint','Datasheet'][Number(f[1])]||f[11]||'Field'+f[1];node.push(property(name,f[2],f[4],f[5],f[6],f[7]!=='0000',f[3]==='V'?90:0));}
+    for(const f of r.filter(x=>x[0]==='F')){const name=['Reference','Value','Footprint','Datasheet'][Number(f[1])]||f[11]||'Field'+f[1];node.push(property(name,f[2],f[4],f[5],f[6],f[7]!=='0000',(((f[3]==='V'?90:0)-orientation.angle)%180+180)%180));}
     const definition=defs.get(id)||defs.get(id.split(':').pop());if(definition){if(!placed.includes(id)){embedded.push(['symbol',q(id),...definition.slice(2)]);placed.push(id);}}else warn('Missing saved legacy library definition for '+id+': symbol body and pins omitted; fields remain visible.');ast.push(node);continue;
    }
    if(['$Bitmap','$EndBitmap'].includes(type))warn('Legacy bitmap omitted.');

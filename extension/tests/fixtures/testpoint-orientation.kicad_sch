@@ -1,0 +1,136 @@
+(kicad_sch (version 20250114) (generator "eeschema") (uuid "60bfaf33-e34a-4faa-aef0-f291be04c79c") (paper "A4") (lib_symbols (symbol "Connector:TestPoint"
+		(pin_numbers
+			(hide yes)
+		)
+		(pin_names
+			(offset 0.762)
+			(hide yes)
+		)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(duplicate_pin_numbers_are_jumpers no)
+		(property "Reference" "TP"
+			(at 0 6.858 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "TestPoint"
+			(at 0 5.08 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 5.08 0 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 5.08 0 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "test point"
+			(at 0 0 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "ki_keywords" "test point tp"
+			(at 0 0 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "ki_fp_filters" "Pin* Test*"
+			(at 0 0 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(hide yes)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(symbol "TestPoint_0_1"
+			(circle
+				(center 0 3.302)
+				(radius 0.762)
+				(stroke
+					(width 0)
+					(type default)
+				)
+				(fill
+					(type none)
+				)
+			)
+		)
+		(symbol "TestPoint_1_1"
+			(pin passive line
+				(at 0 0 90)
+				(length 2.54)
+				(name "1"
+					(effects
+						(font
+							(size 1.27 1.27)
+						)
+					)
+				)
+				(number "1"
+					(effects
+						(font
+							(size 1.27 1.27)
+						)
+					)
+				)
+			)
+		)
+		(embedded_fonts no)
+	))
+(symbol (lib_id "Connector:TestPoint") (at 40 40 0)  (unit 1) (in_bom yes) (on_board yes) (dnp no) (uuid "ebec3e71-8554-486d-abb0-22507a4e30d5") (property "Reference" "TP1" (at 40 32 0) (effects (font (size 1.27 1.27)))) (property "Value" "TestPoint" (at 40 48 0) (effects (font (size 1.27 1.27)))) (pin "1" (uuid "b3380900-1076-4499-89e0-f525c1ae5370")) (instances (project "testpoint-orientation" (path "/60bfaf33-e34a-4faa-aef0-f291be04c79c" (reference "TP1") (unit 1)))))
+(symbol (lib_id "Connector:TestPoint") (at 90 40 90)  (unit 1) (in_bom yes) (on_board yes) (dnp no) (uuid "b0aa18aa-c2b3-4054-ad76-bb379fae898a") (property "Reference" "TP2" (at 90 32 90) (effects (font (size 1.27 1.27)))) (property "Value" "TestPoint" (at 90 48 90) (effects (font (size 1.27 1.27)))) (pin "1" (uuid "833dbedc-2012-4057-ba6b-138bace1346f")) (instances (project "testpoint-orientation" (path "/60bfaf33-e34a-4faa-aef0-f291be04c79c" (reference "TP2") (unit 1)))))
+(symbol (lib_id "Connector:TestPoint") (at 140 40 180)  (unit 1) (in_bom yes) (on_board yes) (dnp no) (uuid "dccdd4a2-d9d0-435b-82e3-e89f1c845d5a") (property "Reference" "TP3" (at 140 32 0) (effects (font (size 1.27 1.27)))) (property "Value" "TestPoint" (at 140 48 0) (effects (font (size 1.27 1.27)))) (pin "1" (uuid "de1daafa-ba15-4c78-8799-90ee31b98379")) (instances (project "testpoint-orientation" (path "/60bfaf33-e34a-4faa-aef0-f291be04c79c" (reference "TP3") (unit 1)))))
+(symbol (lib_id "Connector:TestPoint") (at 190 40 270)  (unit 1) (in_bom yes) (on_board yes) (dnp no) (uuid "adeaa2f9-bb7c-4917-a137-b1d4e713328d") (property "Reference" "TP4" (at 190 32 90) (effects (font (size 1.27 1.27)))) (property "Value" "TestPoint" (at 190 48 90) (effects (font (size 1.27 1.27)))) (pin "1" (uuid "8d60dcd9-e02e-431d-b21b-4504d3d0ea8c")) (instances (project "testpoint-orientation" (path "/60bfaf33-e34a-4faa-aef0-f291be04c79c" (reference "TP4") (unit 1)))))
+(symbol (lib_id "Connector:TestPoint") (at 40 90 0) (mirror x) (unit 1) (in_bom yes) (on_board yes) (dnp no) (uuid "a416806b-fb98-481f-a9bc-34e2ccd91214") (property "Reference" "TP5" (at 40 82 0) (effects (font (size 1.27 1.27)))) (property "Value" "TestPoint" (at 40 98 0) (effects (font (size 1.27 1.27)))) (pin "1" (uuid "af2c48da-64e1-4dd6-bc5f-9ce6778e9a46")) (instances (project "testpoint-orientation" (path "/60bfaf33-e34a-4faa-aef0-f291be04c79c" (reference "TP5") (unit 1)))))
+(symbol (lib_id "Connector:TestPoint") (at 90 90 90) (mirror x) (unit 1) (in_bom yes) (on_board yes) (dnp no) (uuid "b87e0de8-579a-4a5d-a9c8-82a980445faf") (property "Reference" "TP6" (at 90 82 90) (effects (font (size 1.27 1.27)))) (property "Value" "TestPoint" (at 90 98 90) (effects (font (size 1.27 1.27)))) (pin "1" (uuid "95701c8d-e419-43ad-bc00-e7e1a83e291f")) (instances (project "testpoint-orientation" (path "/60bfaf33-e34a-4faa-aef0-f291be04c79c" (reference "TP6") (unit 1)))))
+(symbol (lib_id "Connector:TestPoint") (at 140 90 180) (mirror x) (unit 1) (in_bom yes) (on_board yes) (dnp no) (uuid "0546901e-8c13-452f-9eed-3950d158fe37") (property "Reference" "TP7" (at 140 82 0) (effects (font (size 1.27 1.27)))) (property "Value" "TestPoint" (at 140 98 0) (effects (font (size 1.27 1.27)))) (pin "1" (uuid "7d6186cb-ced9-462a-89a8-9b1f3f054a65")) (instances (project "testpoint-orientation" (path "/60bfaf33-e34a-4faa-aef0-f291be04c79c" (reference "TP7") (unit 1)))))
+(symbol (lib_id "Connector:TestPoint") (at 190 90 270) (mirror x) (unit 1) (in_bom yes) (on_board yes) (dnp no) (uuid "84c48efc-c0d2-4677-8e70-d9ff8eadbd93") (property "Reference" "TP8" (at 190 82 90) (effects (font (size 1.27 1.27)))) (property "Value" "TestPoint" (at 190 98 90) (effects (font (size 1.27 1.27)))) (pin "1" (uuid "2f69368d-af36-4684-9c38-a53aa49d72a5")) (instances (project "testpoint-orientation" (path "/60bfaf33-e34a-4faa-aef0-f291be04c79c" (reference "TP8") (unit 1)))))
+(symbol (lib_id "Connector:TestPoint") (at 40 140 0) (mirror y) (unit 1) (in_bom yes) (on_board yes) (dnp no) (uuid "1106c009-2f0b-4cbc-acd4-56fde8319a83") (property "Reference" "TP9" (at 40 132 0) (effects (font (size 1.27 1.27)))) (property "Value" "TestPoint" (at 40 148 0) (effects (font (size 1.27 1.27)))) (pin "1" (uuid "3dc11a00-79a8-4987-998b-aa4e0767c356")) (instances (project "testpoint-orientation" (path "/60bfaf33-e34a-4faa-aef0-f291be04c79c" (reference "TP9") (unit 1)))))
+(symbol (lib_id "Connector:TestPoint") (at 90 140 90) (mirror y) (unit 1) (in_bom yes) (on_board yes) (dnp no) (uuid "b5ba8546-0016-4324-ad31-0abca6fd59a5") (property "Reference" "TP10" (at 90 132 90) (effects (font (size 1.27 1.27)))) (property "Value" "TestPoint" (at 90 148 90) (effects (font (size 1.27 1.27)))) (pin "1" (uuid "e82ef539-1c84-4008-8b5a-6b8006ffaf5e")) (instances (project "testpoint-orientation" (path "/60bfaf33-e34a-4faa-aef0-f291be04c79c" (reference "TP10") (unit 1)))))
+(symbol (lib_id "Connector:TestPoint") (at 140 140 180) (mirror y) (unit 1) (in_bom yes) (on_board yes) (dnp no) (uuid "10f0994f-e689-45a5-901c-370cdb28bb3e") (property "Reference" "TP11" (at 140 132 0) (effects (font (size 1.27 1.27)))) (property "Value" "TestPoint" (at 140 148 0) (effects (font (size 1.27 1.27)))) (pin "1" (uuid "98b73f03-410c-463a-b80e-f7a55363976e")) (instances (project "testpoint-orientation" (path "/60bfaf33-e34a-4faa-aef0-f291be04c79c" (reference "TP11") (unit 1)))))
+(symbol (lib_id "Connector:TestPoint") (at 190 140 270) (mirror y) (unit 1) (in_bom yes) (on_board yes) (dnp no) (uuid "63b56a35-3a14-4ff4-a09d-d1d3befd421c") (property "Reference" "TP12" (at 190 132 90) (effects (font (size 1.27 1.27)))) (property "Value" "TestPoint" (at 190 148 90) (effects (font (size 1.27 1.27)))) (pin "1" (uuid "27db8c0a-20d7-4857-b57d-941f4c1f0d26")) (instances (project "testpoint-orientation" (path "/60bfaf33-e34a-4faa-aef0-f291be04c79c" (reference "TP12") (unit 1)))))
+(sheet_instances (path "/" (page "1"))))
