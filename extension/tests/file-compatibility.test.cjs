@@ -44,7 +44,10 @@ test('official KiCad 8 release corpus remains byte-identical and preserves tstam
 test('only unavailable features produce an upgrade recommendation for KiCad 8',()=>{
  const eight=inspect(parse('(kicad_pcb (generator_version "8.0.9"))'));
  for(const id of ['drawing','review','hierarchy','copper','models'])assert.equal(compatibility.capability(eight,id).available,true);
- for(const id of ['embeddedAssets','componentClasses','netclassRuleAreas','schematicTables']){const result=compatibility.capability(eight,id);assert.equal(result.available,false);assert.equal(result.upgrade,true);assert.match(result.reason,/latest stable KiCad/);assert.match(result.reason,/upgrading the project alone will not enable/);}
+ for(const id of ['embeddedAssets','componentClasses','netclassRuleAreas']){const result=compatibility.capability(eight,id);assert.equal(result.available,false);assert.equal(result.upgrade,true);assert.match(result.reason,/latest stable KiCad/);assert.match(result.reason,/upgrading the project alone will not enable/);}
+ const tables=compatibility.capability(eight,'schematicTables');assert.equal(tables.available,false);assert.equal(tables.upgrade,true);assert.doesNotMatch(tables.reason,/upgrading the project alone will not enable/);
+ const nativeTables=compatibility.capability({majorVersion:10},'schematicTables');assert.equal(nativeTables.available,true);assert.match(nativeTables.reason,/Horizontal tables/);assert.match(nativeTables.reason,/Rotated tables are omitted/);
+ assert.deepEqual(inspect(parse('(kicad_sch (table))')).unknown,[]);
  assert.equal(compatibility.capability(inspect(parse('(kicad_pcb (generator_version "9.0"))')),'embeddedAssets').upgrade,false);
  assert.equal(compatibility.capability(inspect(parse('(kicad_pcb (version 20231120))')),'embeddedAssets').upgrade,false);
 });

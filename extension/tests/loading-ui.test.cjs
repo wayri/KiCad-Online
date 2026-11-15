@@ -7,6 +7,27 @@ function runtime(withWorker=true,android=false){
  const context={URL,Promise,Date,KiCadAndroidRuntime:android,document:{currentScript:{src:'https://local.test/extension/loading-ui.js'},createElement:()=>new Element()},location:{href:'https://local.test/extension/pcb-viewer.html'},setTimeout:fn=>{timers.set(++id,fn);return id;},clearTimeout:n=>timers.delete(n),setInterval:fn=>{timers.set(++id,fn);return id;},clearInterval:n=>timers.delete(n),...(withWorker?{Worker}:{})};vm.runInNewContext(source,context);return{api:context.KiCadLoading,workers,timers,context,host:new Element()};
 }
 test('loading indicator announces stages, clears timers and releases busy state',()=>{const r=runtime(),ui=r.api.indicator(r.host),pane=r.host.children[0];ui.show('Fetching board');assert.equal(pane.hidden,true);const reveal=[...r.timers.values()][0];r.timers.clear();reveal();assert.equal(pane.hidden,false);assert.equal(r.host.attributes['aria-busy'],'true');assert.equal(pane.children[1].children[1].textContent,'Fetching board');ui.show('Preparing geometry');assert.equal(r.timers.size,1);ui.hide();assert.equal(pane.hidden,true);assert.equal(r.host.attributes['aria-busy'],'false');assert.equal(r.timers.size,0);ui.dispose();assert.equal(pane.removed,true);});
+
+test('project opening shows immediately, updates one surface and dismisses completely',()=>{
+ const r=runtime(),ui=r.api.indicator(r.host,{fullscreen:true}),pane=r.host.children[0];
+ ui.show('Finding project files');assert.equal(pane.hidden,false);assert.equal(r.host.attributes['aria-busy'],'true');
+ assert.equal(pane.children[1].children[0].textContent,'Opening your project');
+ ui.show('Preparing schematic');assert.equal(r.host.children.length,1);assert.equal(r.timers.size,1);
+ assert.equal(pane.children[1].children[1].textContent,'Preparing schematic');
+ assert.equal(pane.children.at(-1).hidden,true,'no fake Stop on a noncancellable discovery');
+ ui.hide();assert.equal(pane.hidden,true);assert.equal(r.timers.size,0);assert.equal(r.host.attributes['aria-busy'],'false');
+ ui.show('Retrying');assert.equal(pane.hidden,false);ui.dispose();assert.equal(r.timers.size,0);
+});
+test('fullscreen Stop remains cancellable once and leaves no loader after cancellation',()=>{
+ const r=runtime();let calls=0;let ui;
+ ui=r.api.indicator(r.host,{fullscreen:true,onStop:()=>{calls++;ui.hide();}});
+ ui.show('Reading schematic');const pane=r.host.children[0];pane.children.at(-1).onclick();
+ assert.equal(calls,1);assert.equal(pane.hidden,true);assert.equal(r.timers.size,0);assert.equal(r.host.attributes['aria-busy'],'false');
+});
+test('loading stylesheet is included in browser and VS Code distribution asset lists',()=>{
+ for(const script of ['package_extension.py','package_vscode.py'])assert.match(fs.readFileSync(path.join(__dirname,'../../scripts',script),'utf8'),/'loading-ui.css'/);
+ assert.ok(fs.readFileSync(path.join(__dirname,'../loading-ui.css'),'utf8').includes('prefers-reduced-motion'));
+});
 test('worker reports stages, returns one result and terminates',async()=>{const r=runtime(),stages=[];const p=r.api.run('settings',{content:'{}'},()=>assert.fail('fallback'),{onStage:s=>stages.push(s)}),w=r.workers[0];assert.equal(w.url,'https://local.test/extension/load-worker.js');w.onmessage({data:{stage:'Reading settings'}});w.onmessage({data:{ok:true,result:{file:'board'}}});assert.equal((await p).file,'board');assert.deepEqual(stages,['Reading settings']);assert.equal(w.terminated,true);assert.equal(r.timers.size,0);});
 test('cancelled or failed workers cannot return a stale result',async()=>{for(const fail of ['abort','error','timeout']){const r=runtime(),controller=new AbortController(),p=r.api.run('drawing',{},()=>assert.fail('fallback'),{signal:controller.signal}),w=r.workers[0];if(fail==='abort')controller.abort();else if(fail==='error')w.onmessage({data:{ok:false,error:'Invalid source'}});else [...r.timers.values()][0]();await assert.rejects(p,/cancelled|stopped|Invalid source|two minutes/);w.onmessage({data:{ok:true,result:{stale:true}}});assert.equal(w.terminated,true);assert.equal(r.timers.size,0);}});
 test('without worker support the source-preserving fallback runs and pre-cancelled jobs do not',async()=>{const r=runtime(false);assert.equal(await r.api.run('settings',{},()=>42),42);const c=new AbortController();c.abort();await assert.rejects(r.api.run('settings',{},()=>assert.fail('fallback'),{signal:c.signal}),/cancelled/);});

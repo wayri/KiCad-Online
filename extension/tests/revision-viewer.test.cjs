@@ -26,6 +26,7 @@ async function revision(query='',extraFiles=[],options={}){
  if(options.realRender){context.KiCadNetModel=require('../net-model.js');context.KiCadPCBRenderer=require('../pcb-renderer.js');context.KiCadSchematicRenderer=require('../schematic-renderer.js');}
  if(options.android){context.KiCadNetModel=require('../net-model.js');context.KiCadAndroidUI={};context.setTimeout=(fn,ms)=>{const timer=setTimeout(fn,ms);if(ms>100)timer.unref();return timer;};context.requestAnimationFrame=fn=>setTimeout(fn,0);context.cancelAnimationFrame=clearTimeout;context.IntersectionObserver=class{constructor(callback){this.callback=callback;calls.overviewObserver=this;this.observed=[];}observe(node){this.observed.push(node);}disconnect(){this.observed=[];}};const mount=context.KiCadReviewWorkspace.mount;context.KiCadReviewWorkspace.mount=opts=>({...mount(opts),overviewSheets:()=>[{sheet:{path:initialFile,label:'Root'},depth:0},...extraFiles.map(file=>({sheet:{path:file.path,label:'Power supply'},depth:1}))],overviewSelection:path=>options.overviewSelection?.(path)||({netIds:[],uuids:[],mode:'dim'})});}
  if(options.worker)context.KiCadLoading={indicator:(_host,config)=>{calls.stopLoading=config.onStop;return{show(){},hide(){},dispose(){}};},paint:async()=>{},run:async(_job,payload,prepare)=>{calls.workerPayload=payload;return {...prepare(),design:context.KiCadSchematicRenderer.build()};}};
+ if(options.miniEntries){const mount=context.KiCadReviewWorkspace.mount;context.KiCadReviewWorkspace.mount=opts=>({...mount(opts),overviewSheets:()=>options.miniEntries,followSheet(path){calls.followedSheet=path;options.onFollowSheet?.(path);}});context.KiCadSheetHierarchyLinks=require('../sheet-hierarchy-links.js');}
  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../revision-viewer.js'),'utf8'),context);await tick();
  return{canvas,camera,calls,get,reports,parent,context,selectOverview(hit,detail={}){canvas.selected=hit;canvasListeners.get('kicad:select')({detail});},viewframe(){canvasListeners.get('kicad:viewframe')();},message(data,source=parent,origin='chrome-extension://ours'){listeners.get('message')({source,origin,data});},key(key,nodes=[],modifiers={}){let prevented=false;listeners.get('keydown')({key,composedPath:()=>nodes,preventDefault(){prevented=true;},...modifiers});return prevented;},hide(){listeners.get('pagehide')();}};
 }
@@ -381,6 +382,36 @@ test('a newly selected unnamed schematic net opens the correct layout/3D probe a
  const occurrences=await v.calls.workspaceOptions.getSchematicProbeRows(layout,layout.selection);assert.equal(occurrences.occurrences.length,1);
  const back=await v.calls.workspaceOptions.resolveProbeViews(layout,layout.selection,'schematic');assert.ok(back.group.members.some(m=>m.reference==='R1'&&m.pin==='2'));assert.ok(!back.group.members.some(m=>m.reference==='R1'&&m.pin==='1'));
  const again=await v.calls.workspaceOptions.resolveProbeViews(back,back.selection,'schematic');assert.equal(again.group.id,back.group.id);v.hide();
+});
+
+function miniatureEntries(count=5){return Array.from({length:count},(_,index)=>{const path=index?'sheets/child-'+index+'.kicad_sch':'root.kicad_sch';return {sheet:{path,label:index<3?'Communication_controller_channel_shared_prefix_'+(index?'B':'A'):index<5?'Power conversion stage':'Temperature sensing 温度計測'},placements:[{id:'instance-'+index,path,parentId:index?'instance-0':null}]};});}
+
+test('small sheet trees fit every card with bounded distinct two-line labels and curved separated branches',async()=>{
+ const miniEntries=miniatureEntries(),v=await revision('',miniEntries.slice(1).map(entry=>({path:entry.sheet.path,content:'(kicad_sch)'})),{android:true,miniEntries}),mini=v.get('drawingHost').children.find(node=>node.className==='sheet-tree-miniature'),svg=mini.children[1].children[0],nodes=svg.children.filter(node=>node.attributes.role==='button'),[x,y,w,h]=svg.attributes.viewBox.split(' ').map(Number),defs=svg.children.find(node=>node.children.some(child=>child.attributes.id==='sheetTreeArrow'));
+ assert.equal(nodes.length,5);assert.equal(mini.children[2].children[3].textContent,'100%');const labels=[];
+ for(const [index,node]of nodes.entries()){
+  const [rect,label,tooltip]=node.children,lines=label.children;assert.ok(lines.length>=1&&lines.length<=2);labels.push(lines.map(span=>span.textContent).join('\n'));assert.ok(tooltip.textContent.includes(miniEntries[index].sheet.path));assert.ok(tooltip.textContent.includes(miniEntries[index].sheet.label));
+  const clipId=/url\(#([^)]*)\)/.exec(label.attributes['clip-path'])[1],clip=defs.children.find(child=>child.attributes.id===clipId).children[0];assert.ok(Number(clip.attributes.x)>Number(rect.attributes.x));assert.ok(Number(clip.attributes.width)<Number(rect.attributes.width));assert.ok(Number(clip.attributes.height)<Number(rect.attributes.height));
+  assert.ok(Number(rect.attributes.x)>=x&&Number(rect.attributes.y)>=y);assert.ok(Number(rect.attributes.x)+Number(rect.attributes.width)<=x+w+.001);assert.ok(Number(rect.attributes.y)+Number(rect.attributes.height)<=y+h+.001);
+ }
+ assert.equal(new Set(labels).size,5,'abbreviated duplicate labels stay distinguishable');assert.ok(labels.some(label=>label.includes('\n')));assert.ok(labels.some(label=>label.includes('…')));
+ const branches=svg.children.filter(node=>node.attributes.class==='sheet-tree-miniature-link');assert.equal(branches.length,4);assert.ok(branches.every(branch=>branch.attributes.d.includes('Q ')));assert.equal(svg.children.filter(node=>node.attributes.class==='sheet-tree-miniature-link-casing').length,4);
+ const childRects=nodes.slice(1).map(node=>node.children[0].attributes).sort((a,b)=>Number(a.x)-Number(b.x));for(let i=1;i<childRects.length;i++)assert.ok(Number(childRects[i].x)-Number(childRects[i-1].x)-Number(childRects[i-1].width)>70);
+ v.hide();
+});
+
+test('large sheet trees initially focus the current sheet while Fit reveals the complete tree and zoom preserves aspect',async()=>{
+ const miniEntries=miniatureEntries(30),v=await revision('',miniEntries.slice(1).map(entry=>({path:entry.sheet.path,content:'(kicad_sch)'})),{android:true,miniEntries}),mini=v.get('drawingHost').children.find(node=>node.className==='sheet-tree-miniature'),svg=mini.children[1].children[0],tools=mini.children[2],box=()=>svg.attributes.viewBox.split(' ').map(Number),initial=box();
+ assert.ok(initial[2]<=720&&initial[3]<=400);tools.children[1].click();const zoomed=box();assert.ok(zoomed[2]<initial[2]);assert.ok(Math.abs(zoomed[2]/zoomed[3]-initial[2]/initial[3])<1e-10);tools.children[2].click();assert.ok(box()[2]>initial[2]);assert.equal(tools.children[3].textContent,'100%');v.hide();
+});
+
+test('any miniature sheet selection restores compact size before navigation without resetting its pan or zoom',async()=>{
+ const miniEntries=miniatureEntries(2);let v;const observed=[];
+ v=await revision('',[{path:miniEntries[1].sheet.path,content:'(kicad_sch)'}],{android:true,miniEntries,onFollowSheet:path=>observed.push([path,v.get('drawingHost').children.find(node=>node.className==='sheet-tree-miniature').classList.contains('maximized')])});
+ const mini=v.get('drawingHost').children.find(node=>node.className==='sheet-tree-miniature'),header=mini.children[0],svg=mini.children[1].children[0],nodes=svg.children.filter(node=>node.attributes.role==='button'),maximize=header.children.find(node=>node.id==='maximizeSheetTree');mini.children[2].children[1].click();const camera=svg.attributes.viewBox;
+ for(const [index,node]of nodes.entries()){maximize.click();assert.equal(mini.classList.contains('maximized'),true);if(index===0)node.click();else for(const listener of node.listeners.get('keydown'))listener({key:'Enter',preventDefault(){},stopPropagation(){}});assert.equal(mini.classList.contains('maximized'),false);assert.equal(maximize.attributes['aria-pressed'],'false');assert.equal(svg.attributes.viewBox,camera);}
+ assert.deepEqual(observed,miniEntries.map(entry=>[entry.sheet.path,false]));assert.ok(header.children.slice(1).every(button=>button.className==='icon-only'));assert.equal(mini.children[2].children[0].className,'icon-only');assert.equal(mini.children[2].children[1].className,'icon-only');
+ await v.context.KiCadSheetOverview.open();maximize.click();const before={...v.camera.bbox};nodes[1].click();assert.equal(mini.classList.contains('maximized'),false);assert.equal(mini.style.top,'','restoring clears the maximized top inset');assert.equal(v.context.KiCadSheetOverview.isOpen(),true);assert.notDeepEqual(v.camera.bbox,before);assert.equal(svg.attributes.viewBox,camera);v.hide();
 });
 
 test('maximized sheet tree restores its size, survives minimize/reopen and retains the drawing camera',async()=>{

@@ -22,6 +22,10 @@ Listing text, screenshots, privacy disclosures and permission explanations must 
 
 ## Submit to each store
 
+For GitHub Actions deployment and one-time credential setup, see
+[store CI/CD](maintainers/STORE-CI.md). The workflow defaults to verification only;
+live store authentication and environment configuration are separate setup steps.
+
 - **Chrome:** upload the Chromium ZIP, save listing changes and submit for review. Choose automatic or staged publication deliberately. A pending review can block another upload; do not cancel it without the owner's approval.
 - **Mozilla:** upload the Firefox ZIP and matching readable source with reproducible build instructions. Supply release notes and reviewer information. Follow the [Firefox maintainer guide](maintainers/FIREFOX.md). Validator success is not publication approval.
 - **VS Code:** upload the VSIX under publisher `wayri`, then wait for verification. Inspect the version and availability shown by the publisher dashboard.

@@ -7,6 +7,20 @@ test('default installation has no permanent repository host grants or automatic 
 
 
 test('bridge preserves only static known denial codes without leaking provider text',async()=>{const h=harness(async()=>{throw Object.assign(Error('SECRET SAML PAYLOAD'),{code:'GITLAB_SAML_REQUIRED'});});const reply=await h.send({type:'github-session-read'});assert.equal(reply.code,'GITLAB_SAML_REQUIRED');assert.match(reply.error,/SSO/);assert.doesNotMatch(reply.error,/SECRET/);});
+test('policy row diagnostics display fixed structural labels without forwarding arbitrary details',async()=>{
+ for(const details of [['header','link-label','SECRET URL',null,{}],['no-name-link','link-origin'],['__proto__','constructor'],'SECRET',Array(64).fill('header'),null]){
+  const h=harness(async()=>{throw Object.assign(Error('SECRET raw HTML'),{code:'GITHUB_POLICY_ROWS',policyRowIssues:details});}),reply=await h.send({type:'github-session-read'});
+  assert.equal(reply.code,'GITHUB_POLICY_ROWS');assert.doesNotMatch(reply.error,/SECRET|raw HTML|__proto__|constructor/);assert.equal(reply.policyRowIssues,undefined);
+  if(Array.isArray(details)&&details[0]==='header'&&details.length<=11)assert.match(reply.error,/Row checks: unsupported header, filename label\./);
+  else if(Array.isArray(details)&&details[0]==='no-name-link')assert.match(reply.error,/Row checks: missing filename link, link origin\./);
+  else assert.doesNotMatch(reply.error,/Row checks:/);
+ }
+ const h=harness(async()=>{throw Object.assign(Error('SECRET'),{code:'GITHUB_WEBSITE_DENIED',policyRowIssues:['header']});});assert.doesNotMatch((await h.send({type:'github-session-read'})).error,/Row checks:/);
+});
+test('structural footer and later-cell diagnostics expose only fixed labels',async()=>{
+ const h=harness(async()=>{throw Object.assign(Error('PRIVATE filename and URL'),{code:'GITHUB_POLICY_ROWS',policyRowIssues:['no-name-link','row-footer-marker','row-last','row-single-cell','row-button-one','footer-bad-wrapper','row-empty-first-cell','row-later-file-link','PRIVATE']});});
+ const reply=await h.send({type:'github-session-read'});assert.match(reply.error,/known footer marker, last row, one cell, one button, footer wrapper differs, blank first cell, file link in later cell/);assert.doesNotMatch(reply.error,/PRIVATE|filename and URL/);assert.equal(reply.policyRowIssues,undefined);
+});
 test('GitHub diagnostics distinguish missing tree metadata, network failure, stale revisions and real denials without leaking private errors',async()=>{
  for(const [code,pattern]of [['GITHUB_TREE_UNAVAILABLE',/branch\/folder metadata/],['GITHUB_WEBSITE_NETWORK',/network layer/],['GITHUB_REVISION_MISMATCH',/different revision/],['GITHUB_WEBSITE_DENIED',/401\/403/],['GITHUB_WEBSITE_NOT_FOUND',/404/],['GITHUB_READ_TIMEOUT',/timed out/]]){
   const h=harness(async()=>{throw Object.assign(Error('SECRET signed-url=token'),{code});}),reply=await h.send({type:'github-session-read'});
@@ -14,6 +28,17 @@ test('GitHub diagnostics distinguish missing tree metadata, network failure, sta
  }
 });
 test('bridge bounds concurrent bytes before starting readers and releases reservation after completion',async()=>{const finish=[];const h=harness(()=>new Promise(resolve=>finish.push(resolve))),request={type:'github-session-read',limit:64*1024*1024},a=h.send(request),b=h.send(request);await new Promise(setImmediate);const denied=await h.send(request);assert.equal(denied.ok,false);assert.match(denied.error,/budget/);assert.equal(h.calls.length,2);finish.splice(0).forEach(resolve=>resolve(null));await Promise.all([a,b]);await new Promise(setImmediate);const c=h.send(request);await new Promise(setImmediate);assert.equal(h.calls.length,3);finish[0](null);assert.equal((await c).ok,true);});
+
+test('size diagnostics expose only fixed stage text and a validated effective byte limit',async()=>{
+ for(const [code,cap,pattern]of [['GITHUB_PAGE_TOO_LARGE',8*1024*1024,/page metadata/],['GITHUB_SOURCE_TOO_LARGE',64*1024*1024,/source file/],['GITHUB_ASSET_TOO_LARGE',32*1024*1024,/binary asset/],['GITHUB_HISTORY_TOO_LARGE',4*1024*1024,/history feed/],['GITHUB_POLICY_TOO_LARGE',128*1024,/comment policy file/],['GITHUB_JSON_PAYLOAD_LIMIT',0,/too many JSON/]]){
+  for(const limit of [1,cap,cap+1,0,-1,1.5,NaN,Infinity,'SECRET',undefined]){
+   const h=harness(async()=>{throw Object.assign(Error('SECRET signed-url=token'),{code,limit});}),reply=await h.send({type:'github-session-read'});
+   assert.equal(reply.code,code);assert.match(reply.error,pattern);assert.doesNotMatch(reply.error,/SECRET|signed-url|token/);
+   assert.equal(reply.error.includes(' Limit: '),cap>0&&Number.isSafeInteger(limit)&&limit>=1&&limit<=cap);
+   if(cap>0&&Number.isSafeInteger(limit)&&limit>=1&&limit<=cap)assert.ok(reply.error.endsWith(' Limit: '+limit+' bytes.'));
+  }
+ }
+});
 test('website review mutations accept only the background worker and sanitize unknown errors',async()=>{
  const h=harness();h.context.chrome.runtime.getURL=path=>'chrome-extension://ours/'+path;
  let calls=0;h.context.KiCadGitHubSessionReview={create:()=>({dispatch:async()=>{calls++;return {messageId:'123'};}})};
@@ -22,4 +47,12 @@ test('website review mutations accept only the background worker and sanitize un
   assert.equal((await h.send({type:'github-session-review',action},{id:'ours',url:'chrome-extension://ours/background.js'})).ok,true);
  }
  assert.equal(calls,3);
+});
+test('review bridge distinguishes known pre-click rejection from uncertainty and hides unknown codes',async()=>{
+ for(const code of ['WEBSITE_REVIEW_UNAVAILABLE','WEBSITE_REVIEW_UNCERTAIN','SECRET_CODE']){
+  const h=harness();h.context.chrome.runtime.getURL=path=>'chrome-extension://ours/'+path;
+  h.context.KiCadGitHubSessionReview={create:()=>({dispatch:async()=>{throw Object.assign(Error(code==='SECRET_CODE'?'SECRET text':'Draft changed. Nothing sent.'),{code});}})};
+  const result=await h.send({type:'github-session-review',action:'commit-create'},{id:'ours',url:'chrome-extension://ours/background.js'});
+  assert.equal(result.ok,false);assert.equal(result.code,code==='SECRET_CODE'?undefined:code);assert.doesNotMatch(result.error,/SECRET/);
+ }
 });

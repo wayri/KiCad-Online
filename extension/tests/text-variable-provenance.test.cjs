@@ -40,3 +40,51 @@ test('saved prototype-like variable names are ordinary data; unknown prototype p
  const vars=JSON.parse('{"__proto__":"saved","constructor":"declared"}'),resolver=compat.textResolver(['kicad_sch'],{textVariables:vars});
  assert.equal(resolver.resolve('${__proto__} ${constructor}'),'saved declared');assert.equal(resolver.inspect('${toString}').status,'unresolved');
 });
+
+test('sheet fields override project globals and inherit ancestors without leaking object fields',()=>{
+ const resolver=compat.textResolver(['kicad_sch'],{textVariables:{CONFIG:'project',VALUE_B:'global',PART:'${CONFIG}'},sheetContexts:[{fields:{CONFIG:'child',VALUE_B:'${CONFIG}'},source:'Sheet /A/child/'},{fields:{INHERITED:'parent',CONFIG:'parent'},source:'Sheet /A/'}]});
+ assert.equal(resolver.resolve('${VALUE_B} ${CONFIG} ${INHERITED}'),'child child parent');
+ assert.equal(resolver.resolve('${VALUE_B} ${CONFIG} ${PART}',{CONFIG:'object'}),'child object project');
+ assert.equal(resolver.inspect('${VALUE_B}').variables[0].source,'Sheet /A/child/');
+});
+
+test('reference field expressions resolve in their owning symbol rather than the caller',()=>{
+ const ast=diff.parse('(kicad_sch (symbol (property "Reference" "U2") (property "Value" "${CONFIG}") (property "CONFIG" "target")))');
+ assert.equal(compat.textResolver(ast).resolve('${U2:VALUE}',{CONFIG:'caller'}),'target');
+});
+
+function repeatedSheets(){return [{path:'root.kicad_sch',content:'(kicad_sch (uuid root) (sheet (uuid a) (property "Sheetname" "A") (property "Sheetfile" "child.kicad_sch") (property "CONFIG" "A config") (property "VALUE_B" "${CONFIG}")) (sheet (uuid b) (property "Sheetname" "B") (property "Sheetfile" "child.kicad_sch") (property "CONFIG" "B config") (property "VALUE_B" "${CONFIG}")))'},{path:'child.kicad_sch',content:'(kicad_sch (uuid child) (text "${VALUE_B} ${CONFIG}"))'}];}
+
+test('repeated saved sheets resolve independently by UUID instance path',()=>{
+ const files=repeatedSheets(),before=JSON.stringify(files),options={rootFile:'root.kicad_sch',parse:diff.parse};
+ const a=compat.textContext(files,'child.kicad_sch',{...options,instancePath:'/root/a'}),b=compat.textContext(files,'child.kicad_sch',{...options,instancePath:'/root/b/'});
+ assert.equal(a.contextStatus,'resolved');assert.equal(a.sheetName,'A');assert.equal(b.sheetName,'B');assert.equal(a.instances.length,2);
+ const resolver=context=>compat.textResolver(diff.parse(files[1].content),{textVariables:{CONFIG:'global'},...context});
+ assert.equal(resolver(a).resolve('${VALUE_B} ${CONFIG}'),'A config A config');assert.equal(resolver(b).resolve('${VALUE_B} ${CONFIG}'),'B config B config');assert.equal(JSON.stringify(files),before);
+});
+
+test('ambiguous sheets preserve variables instead of using a sibling or global value',()=>{
+ const context=compat.textContext(repeatedSheets(),'child.kicad_sch',{rootFile:'root.kicad_sch',parse:diff.parse}),resolver=compat.textResolver(['kicad_sch'],{textVariables:{CONFIG:'global',OTHER:'available'},...context});
+ assert.equal(context.contextStatus,'ambiguous');const result=resolver.inspect('${CONFIG} ${VALUE_B} ${OTHER}');assert.equal(result.value,'${CONFIG} ${VALUE_B} available');assert.equal(result.status,'unresolved');assert.equal(result.variables[0].source,'Ambiguous sheet instance');
+ assert.equal(resolver.resolve('${CONFIG}',{CONFIG:'object'}),'object');assert.equal(resolver.list().find(item=>item.name==='CONFIG').status,'unresolved');
+});
+
+test('saved sheet field hierarchy retains ancestor scope and safe relative paths',()=>{
+ const files=[{path:'hw/root.kicad_sch',content:'(kicad_sch (uuid root) (sheet (uuid a) (property "Sheetname" "A") (property "Sheetfile" "nested/a.kicad_sch") (property "PARENT" "${CONFIG}") (property "CONFIG" "parent")))'},{path:'hw/nested/a.kicad_sch',content:'(kicad_sch (sheet (uuid b) (property "Sheetname" "B") (property "Sheetfile" "../b.kicad_sch") (property "CONFIG" "child")))'},{path:'hw/b.kicad_sch',content:'(kicad_sch)'}];
+ const context=compat.textContext(files,'hw/b.kicad_sch',{rootFile:files[0].path,parse:diff.parse});assert.equal(context.instancePath,'/root/a/b');assert.equal(context.sheetPath,'/A/B/');assert.equal(compat.textResolver(['kicad_sch'],context).resolve('${CONFIG} ${PARENT}'),'child parent');
+});
+
+test('title block context wins over a same-named project variable',()=>{
+ const ast=diff.parse('(kicad_sch (title_block (title "${CONFIG}")))');assert.equal(compat.textResolver(ast,{textVariables:{TITLE:'wrong',CONFIG:'saved'},sheetContexts:[{fields:{CONFIG:'local'}}]}).resolve('${TITLE}'),'saved');
+});
+
+test('variable inventory exposes shadowed project and ancestor definitions in their own scopes',()=>{
+ const resolver=compat.textResolver(['kicad_sch'],{textVariables:{CONFIG:'global',PART:'${CONFIG}'},sheetContexts:[{fields:{CONFIG:'child'},source:'Sheet /A/B/'},{fields:{CONFIG:'ancestor',PART:'${CONFIG}'},source:'Sheet /A/'}]});
+ const rows=resolver.list({CONFIG:'object'},{includeShadowed:true}).filter(row=>row.name==='CONFIG');assert.deepEqual(rows.map(row=>[row.source,row.value,!!row.shadowed]),[['Selected object field','object',false],['Project','global',true],['Sheet /A/B/','child',true],['Sheet /A/','ancestor',true]]);
+ assert.equal(resolver.list({},{includeShadowed:true}).find(row=>row.name==='PART'&&row.source==='Project').value,'global');
+});
+
+test('direct child views retain loaded ancestor fields and repeated instance ambiguity',()=>{
+ const files=repeatedSheets(),context=compat.textContext(files,'child.kicad_sch',{rootFile:'child.kicad_sch',parse:diff.parse});assert.equal(context.contextStatus,'ambiguous');assert.equal(context.instances.length,2);
+ const selected=compat.textContext(files,'child.kicad_sch',{rootFile:'child.kicad_sch',instancePath:'/root/a',parse:diff.parse});assert.equal(compat.textResolver(['kicad_sch'],selected).resolve('${VALUE_B}'),'A config');
+});

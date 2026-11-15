@@ -45,6 +45,9 @@
   const titles=[...doc.querySelectorAll('main input[name="discussion[title]"]')].filter(n=>visible(n)&&!n.disabled&&!n.readOnly),bodies=[...doc.querySelectorAll('main textarea[name="discussion[body]"]')].filter(n=>visible(n)&&!n.disabled&&!n.readOnly),buttons=[...doc.querySelectorAll('main button')].filter(n=>visible(n)&&n.textContent.trim()==='Start discussion');
   if(titles.length!==1||bodies.length!==1||buttons.length!==1)throw problem('GitHub new-Discussion controls changed. No discussion was created.');discussionForm(titles[0].form,[titles[0],bodies[0],buttons[0]],repository,'/discussions');return {title:titles[0],box:bodies[0],button:buttons[0]};
  }
+ function newDraftChecks(fields,ticket){
+  const checks=[];if(fields.title!==ticket.fields.title)checks.push('title-element');if(fields.title.value!==ticket.title)checks.push('title-value');if(fields.box!==ticket.fields.box)checks.push('body-element');if(fields.box.value!==ticket.body)checks.push('body-value');if(fields.button.disabled)checks.push('button-disabled');return checks;
+ }
  function screenshotBytes(capture){
   if(!capture||capture.mime!=='image/png'||typeof capture.dataUrl!=='string'||capture.dataUrl.length>262144||!/^data:image\/png;base64,iVBORw0KGgo[A-Za-z0-9+/]*={0,2}$/.test(capture.dataUrl)||![capture.width,capture.height].every(n=>Number.isSafeInteger(n)&&n>=1&&n<=1024))throw problem('Invalid review screenshot. Nothing posted.');
   let bytes;try{bytes=Uint8Array.from(root.atob(capture.dataUrl.split(',')[1]),n=>n.charCodeAt(0));}catch{throw problem('Invalid review screenshot encoding.');}
@@ -164,6 +167,7 @@
    const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);
    try{
     const response=await fetcher(url,{credentials:'same-origin',redirect:'error',cache:'no-store',headers:{Accept:'text/html'},signal:controller.signal});
+    if(response.status===404){const feature=path.startsWith('/discussions')?'Discussions':'Issues';throw problem('GitHub returned HTTP 404 for '+feature+' in this repository. Check that '+feature+' is enabled and available to the signed-in account in the matching browser session. Nothing was posted; your draft is kept.');}
     if(!response.ok||response.url&&response.url!==url||!/text\/html/i.test(response.headers.get('content-type')||''))throw problem('GitHub website review access is unavailable. Open the repository tab and complete its sign-in or SSO.');
     if(Number(response.headers.get('content-length'))>8*1024*1024)throw problem('GitHub review page exceeds its size budget.');
     const reader=response.body.getReader(),chunks=[];let size=0;
@@ -210,8 +214,8 @@
      const ticket=root.crypto.randomUUID();while(pending.size>=8)pending.delete(pending.keys().next().value);pending.set(ticket,{repository,account,kind,category,newIssue:true,title:message.title,body:next.box.value,fields,expires:Date.now()+30000});return {ticket,account,repository,body:next.box.value,...(attachment?{attachment}:{})};
     }
     const ticket=pending.get(message.ticket);if(!ticket?.newIssue||ticket.repository!==repository||(ticket.kind||'issue')!==kind||ticket.account!==account||ticket.expires<Date.now())throw problem('New-conversation send expired. Nothing sent.');
-    const fields=fieldsFor();if(fields.title!==ticket.fields.title||fields.box!==ticket.fields.box||fields.title.value!==ticket.title||fields.box.value!==ticket.body||fields.button.disabled)throw problem('GitHub new-conversation draft changed. Nothing sent.');
-    if(action==='verify-create'){const fresh=await page(repository,newPath);currentPage();const current=fieldsFor();if(login(fresh)!==ticket.account||login(document)!==ticket.account||current.title!==ticket.fields.title||current.box!==ticket.fields.box||current.title.value!==ticket.title||current.box.value!==ticket.body||current.button.disabled)throw problem('GitHub account, permissions or new-conversation draft changed. Nothing sent.');ticket.verifiedAt=Date.now();return {verified:true,account};}
+    const fields=fieldsFor(),checks=newDraftChecks(fields,ticket);if(checks.length)throw problem('GitHub new-conversation draft changed. Nothing sent. Checks: '+checks.join(', ')+'.');
+    if(action==='verify-create'){const fresh=await page(repository,newPath);currentPage();const current=fieldsFor(),checks=newDraftChecks(current,ticket);if(login(fresh)!==ticket.account||login(document)!==ticket.account)checks.push('account');if(checks.length)throw problem('GitHub account, permissions or new-conversation draft changed. Nothing sent. Checks: '+checks.join(', ')+'.');ticket.verifiedAt=Date.now();return {verified:true,account};}
     pending.delete(message.ticket);if(!Number.isFinite(ticket.verifiedAt)||Date.now()-ticket.verifiedAt>10000)throw problem('New-Issue verification expired. Nothing sent.');
     fields.button.click();return {attempted:true,account};
    }

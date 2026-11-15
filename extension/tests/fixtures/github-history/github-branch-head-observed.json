@@ -1,0 +1,37 @@
+{
+  "_provenance": {
+    "source": "https://github.com/wayri/KERO/commits/main/",
+    "observedDate": "2026-11-15",
+    "retention": "Public in-app-browser DOM observed by the root agent. Only explicit repository, branch-head and first-page filter/pagination metadata retained; no session, CSRF, private data or API response."
+  },
+  "payload": {
+    "commitsRefRoute": {
+      "repo": {
+        "ownerLogin": "wayri",
+        "name": "KERO"
+      },
+      "refInfo": {
+        "name": "main",
+        "refType": "branch",
+        "currentOid": "7be8fef589bc28eee149323e3790ef95b0873032"
+      },
+      "currentCommit": {
+        "oid": "7be8fef589bc28eee149323e3790ef95b0873032"
+      },
+      "filters": {
+        "since": null,
+        "until": null,
+        "author": null,
+        "newPath": null,
+        "originalBranch": null,
+        "currentBlobPath": null,
+        "pagination": {
+          "startCursor": "7be8fef589bc28eee149323e3790ef95b0873032 0",
+          "endCursor": "7be8fef589bc28eee149323e3790ef95b0873032 34",
+          "hasNextPage": true,
+          "hasPreviousPage": false
+        }
+      }
+    }
+  }
+}

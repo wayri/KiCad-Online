@@ -187,6 +187,12 @@ body[data-workspace-chrome] #sourceLink,body[data-workspace-chrome] #projectTool
 #workspaceHelpers>div>button{display:flex;align-items:center;gap:8px;min-height:34px;width:100%;text-align:left;background:transparent;border:0}
 #workspaceHelpers .split-options>span{position:static;width:100%;box-shadow:none}
 #projectTools>#navigationHelpButton{order:10;width:32px;min-width:32px;padding:6px;margin-left:2px}
+#projectTools>#navigationHelpButton{flex:0 0 32px;box-sizing:border-box;justify-content:center;overflow:hidden}
+#navigationHelpButton.icon-only>.button-label{display:none}
+#navigationHelpButton.icon-only>.ui-icon{width:18px;height:18px;flex:none}
+.navigation-help-dialog>header h2{min-width:0;overflow-wrap:anywhere}
+.navigation-help-dialog>header button{flex:none}
+@media(max-width:420px){.navigation-help-dialog dl{grid-template-columns:minmax(0,1fr)}.navigation-help-dialog dd{margin-bottom:8px}}
 body[data-workspace-chrome] #frameControls button{height:30px;min-height:30px;padding:5px 7px;font-size:12px}
 body[data-workspace-chrome] #frameControls button.icon-only{width:30px;min-width:30px;padding:6px}
 #frameControls>#navigationHelpButton{margin-left:auto;order:90}

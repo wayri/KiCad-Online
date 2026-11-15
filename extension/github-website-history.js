@@ -45,6 +45,20 @@
   if(!Array.isArray(commit.parents)||commit.parents.length>16||commit.parents.some(parent=>!SHA.test(parent)||parent.toLowerCase()===commit.oid.toLowerCase())||new Set(commit.parents.map(parent=>parent.toLowerCase())).size!==commit.parents.length)throw Error('Invalid GitHub website commit parents.');
   return {repository,sha:commit.oid.toLowerCase(),parents:commit.parents.map(parent=>parent.toLowerCase()),parentsKnown:true};
  }
+ // Explicit branch identity from the unfiltered first commits page, not the
+ // ordering of displayed commits. The caller verifies the fresh exact URL.
+ function parseBranchHead(objects,{repository,ref}){
+  repositoryCheck(repository);if(!branchName(ref)||!Array.isArray(objects)||objects.length>100)throw Error('Invalid GitHub branch head metadata.');
+  const routes=objects.map(value=>value?.payload?.commitsRefRoute).filter(value=>value!==undefined);
+  if(routes.length!==1)throw Error('GitHub website branch head metadata is unavailable or conflicting.');
+  const route=routes[0],repo=route?.repo,info=route?.refInfo,commit=route?.currentCommit;
+  if(typeof repo?.ownerLogin!=='string'||typeof repo?.name!=='string'||(repo.ownerLogin+'/'+repo.name).toLowerCase()!==repository.toLowerCase()||info?.name!==ref||info?.refType!=='branch'||typeof info.currentOid!=='string'||!SHA.test(info.currentOid)||typeof commit?.oid!=='string'||!SHA.test(commit.oid)||commit.oid.toLowerCase()!==info.currentOid.toLowerCase())throw Error('GitHub website returned a different branch head.');
+  const filters=route.filters,nullable=['since','until','author','newPath','originalBranch','currentBlobPath'],pagination=filters?.pagination,oid=info.currentOid.toLowerCase();
+  if(!filters||typeof filters!=='object'||Array.isArray(filters)||Object.keys(filters).some(key=>key!=='pagination'&&!nullable.includes(key))||nullable.some(key=>filters[key]!==null)||pagination?.hasPreviousPage!==false||typeof pagination?.hasNextPage!=='boolean'||pagination.startCursor!==info.currentOid+' 0'||typeof pagination.endCursor!=='string')throw Error('GitHub branch head requires an unfiltered first history page.');
+  const end=/^([a-f0-9]{40}) (0|[1-9][0-9]?)$/i.exec(pagination.endCursor);
+  if(!end||end[1].toLowerCase()!==oid)throw Error('Invalid GitHub branch head pagination.');
+  return {repository,ref,sha:oid};
+ }
  function validateBranches(value,repository){
   repositoryCheck(repository);if(value?.repository!==repository||!Array.isArray(value.branches)||value.branches.length>100||typeof value.partial!=='boolean'||value.branches.some(branch=>!branchName(branch?.name)||typeof branch.isDefault!=='boolean')||new Set(value.branches.map(branch=>branch.name)).size!==value.branches.length)throw Error('Invalid GitHub website branches response.');
   return {repository,branches:value.branches.map(({name,isDefault})=>({name,isDefault})),partial:value.partial,warnings:value.partial?['GitHub website branch window: additional branches may exist. Enter another branch name to load it.']:[]};
@@ -53,5 +67,5 @@
   if(value?.repository!==repository||!SHA.test(value?.sha||'')||!value.sha.toLowerCase().startsWith(ref.toLowerCase())||value.parentsKnown!==true)throw Error('Invalid GitHub website commit response.');
   return parseCommit([{payload:{commitRoute:{commit:{oid:value.sha,url:'/'+repository+'/commit/'+value.sha,parents:value.parents}}}}],{repository,ref});
  }
- const api={parseAtom,parseBranches,parseCommit,validateBranches,validateCommit,MAX_BYTES};root.KiCadGitHubWebsiteHistory=api;if(typeof module==='object'&&module.exports)module.exports=api;
+ const api={parseAtom,parseBranches,parseCommit,parseBranchHead,validateBranches,validateCommit,MAX_BYTES};root.KiCadGitHubWebsiteHistory=api;if(typeof module==='object'&&module.exports)module.exports=api;
 })(globalThis);

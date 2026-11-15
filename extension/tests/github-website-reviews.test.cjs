@@ -57,6 +57,52 @@ function tabHarness(){
  const chrome={permissions:{contains:async()=>true},tabs:{get:async id=>{if(!tabs.has(id))throw Error('closed');return {...tabs.get(id)};},create:async args=>{calls.push(['create',args]);const tab={...args,id:next++,status:'complete'};tabs.set(tab.id,tab);return {...tab};},update:async(id,args)=>{calls.push(['update',id,args]);Object.assign(tabs.get(id),args);return {...tabs.get(id)};},remove:async id=>{removed.push(id);tabs.delete(id);},sendMessage:async(id,message)=>{calls.push(['message',id,message.action]);if(message.action==='lease-inspect')return {ok:true,result:{safeToNavigate:true}};if(message.action==='commit'&&failCommit)throw Error('port closed');return {ok:true,result:message.action==='prepare'?{ticket:'ticket-'+id,repository:message.repository,number:message.number,account:'reviewer'}:message.action==='verify'?{verified:true,account:'reviewer'}:{messageId:'123',account:'reviewer'}};}},scripting:{executeScript:async value=>calls.push(['install',value.target.tabId])}};
  return {tabs,calls,removed,api:chrome,sessions:session,transport:api.createTabTransport({api:chrome,sessions:session,assertWrites:async()=>{},delay:async()=>{}}),set bound(value){bound=value;},set failCommit(value){failCommit=value;}};
 }
+test('website tab reads and manual preflight share one FIFO send slot without overlap',async()=>{
+ const h=tabHarness(),calls=[];let active=0,maximum=0,release,started;const gate=new Promise(resolve=>release=resolve),entered=new Promise(resolve=>started=resolve);
+ h.api.tabs.sendMessage=async(id,message)=>{calls.push(message.action+':'+(message.kind||'issue'));maximum=Math.max(maximum,++active);if(calls.length===1){started();await gate;}active--;return {ok:true,result:{account:'reviewer'}};};
+ const first=h.transport.invoke({repository:'owner/repo',action:'read',number:7});await entered;
+ const discussion=h.transport.invoke({repository:'owner/repo',action:'list',kind:'discussion'}),preflight=h.transport.invoke({repository:'owner/repo',action:'list'});await new Promise(setImmediate);
+ assert.equal(calls.length,1);release();await Promise.all([first,discussion,preflight]);assert.equal(maximum,1);assert.deepEqual(calls,['read:issue','list:discussion','list:issue']);
+});
+
+test('failed website read releases its slot and a queued preflight proceeds once',async()=>{
+ const h=tabHarness();let sent=0,release,started;const gate=new Promise(resolve=>release=resolve),entered=new Promise(resolve=>started=resolve);
+ h.api.tabs.sendMessage=async()=>{sent++;if(sent===1){started();await gate;return {ok:false,error:'Catalogue unavailable'};}return {ok:true,result:{account:'reviewer'}};};
+ const first=h.transport.invoke({repository:'owner/repo',action:'list'}),rejected=assert.rejects(first,/Catalogue unavailable/);await entered;
+ const next=h.transport.invoke({repository:'owner/repo',action:'list'});release();await rejected;assert.equal((await next).account,'reviewer');assert.equal(sent,2);
+});
+
+test('website send queue bounds waiting calls at eight and accepts fresh work after draining',async()=>{
+ const h=tabHarness();let sent=0,release,started;const gate=new Promise(resolve=>release=resolve),entered=new Promise(resolve=>started=resolve);
+ h.api.tabs.sendMessage=async()=>{sent++;if(sent===1){started();await gate;}return {ok:true,result:{account:'reviewer'}};};
+ const request={repository:'owner/repo',action:'list'},first=h.transport.invoke(request);await entered;
+ const waiting=Array.from({length:8},()=>h.transport.invoke(request));await new Promise(setImmediate);
+ await assert.rejects(h.transport.invoke(request),error=>error.code==='WEBSITE_REVIEW_UNAVAILABLE'&&/queue is full/.test(error.message));assert.equal(sent,1);
+ release();await Promise.all([first,...waiting]);assert.equal(sent,9);await h.transport.invoke(request);assert.equal(sent,10);
+});
+
+test('queued website requests recheck repository binding before sending',async()=>{
+ for(const change of ['binding','navigation']){
+  const h=tabHarness();let sent=0,release,started;const gate=new Promise(resolve=>release=resolve),entered=new Promise(resolve=>started=resolve);
+  h.api.tabs.sendMessage=async()=>{sent++;started();await gate;return {ok:true,result:{account:'reviewer'}};};
+  const request={repository:'owner/repo',action:'list'},first=h.transport.invoke(request);await entered;const next=h.transport.invoke(request),rejected=assert.rejects(next,/session changed/);await new Promise(setImmediate);
+  if(change==='binding')h.bound=false;else h.tabs.get(1).url='https://github.com/foreign/repo';release();await first;await rejected;assert.equal(sent,1);
+ }
+});
+
+test('queued commits are dispatched once and recheck the exact helper destination',async()=>{
+ for(const redirect of [false,true]){
+  const h=tabHarness(),request={repository:'owner/repo',number:7},prepared=await h.transport.invoke({...request,action:'prepare',body:'review'}),native=h.api.tabs.sendMessage;let release,started;const gate=new Promise(resolve=>release=resolve),entered=new Promise(resolve=>started=resolve);
+  h.api.tabs.sendMessage=async(id,message)=>{if(message.action==='verify'){started();await gate;}return native(id,message);};
+  const verify=h.transport.invoke({...request,action:'verify',ticket:prepared.ticket});await entered;
+  const commit=h.transport.invoke({...request,action:'commit',ticket:prepared.ticket});let duplicate,result;
+  if(redirect)result=assert.rejects(commit,/changed repository or conversation/);else{duplicate=h.transport.invoke({...request,action:'commit',ticket:prepared.ticket});result=assert.rejects(duplicate,error=>error.code!=='WEBSITE_REVIEW_UNAVAILABLE');}
+  await new Promise(setImmediate);assert.equal(h.calls.filter(call=>call[0]==='message'&&call[2]==='commit').length,0);
+  if(redirect)h.tabs.get(2).url='https://github.com/owner/repo/issues/8';release();await verify;if(!redirect)await commit;await result;
+  assert.equal(h.calls.filter(call=>call[0]==='message'&&call[2]==='commit').length,redirect?0:1);
+ }
+});
+
 test('extension Send uses its scoped helper and leaves the original repository tab unchanged',async()=>{
  const h=tabHarness(),message={repository:'owner/repo',number:7};
  const prepared=await h.transport.invoke({...message,action:'prepare',body:'review'});
@@ -85,6 +131,28 @@ test('activeTab-only Send leases the authorized tab and restores its exact origi
  await h.transport.invoke({...message,action:'verify',ticket:draft.ticket});await h.transport.invoke({...message,action:'commit',ticket:draft.ticket});
  assert.equal(h.tabs.get(1).url,original);assert.deepEqual(h.removed,[]);
 });
+test('a newly navigated review helper retains fresh policy reads through the installed bridge and history parser',async()=>{
+ const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm'),h=tabHarness(),contexts=new Map(),requests=[],branch=structuredClone(require('./fixtures/github-history/github-branch-head-observed.json')),sha=branch.payload.commitsRefRoute.refInfo.currentOid;
+ branch.payload.commitsRefRoute.repo={ownerLogin:'owner',name:'repo'};h.api.permissions.contains=async()=>false;
+ const update=h.api.tabs.update,nativeSend=h.api.tabs.sendMessage;h.api.tabs.update=async(id,args)=>{const result=await update(id,args);contexts.delete(id);return result;};
+ h.api.tabs.sendMessage=async(id,message)=>message.action==='prepare-create'?{ok:true,result:{ticket:'new-ticket',account:'reviewer'}}:nativeSend(id,message);
+ h.api.scripting.executeScript=async({target,files})=>{
+  let context=contexts.get(target.tabId);if(!context){
+   const documentFor=pinned=>({querySelectorAll:selector=>selector.startsWith('script')&&pinned?[{textContent:JSON.stringify({payload:{codeViewTreeRoute:{path:'/',refInfo:{name:'main',currentOid:sha},tree:{items:[],totalCount:0}}}})}]:[],querySelector:selector=>selector==='meta[name="user-login"]'?{getAttribute:()=> 'reviewer'}:selector.startsWith('table[')?{}:selector.includes('ref-picker')?{textContent:'main'}:null});
+   context={URL,AbortController,TextEncoder,TextDecoder,setTimeout,clearTimeout,location:new URL(h.tabs.get(target.tabId).url),document:documentFor(false),DOMParser:class{parseFromString(html){return documentFor(html==='pinned');}},chrome:{runtime:{id:'ours',onMessage:{addListener(fn){context.listener=fn;}}}},fetch:async(url,init)=>{
+    requests.push(url);assert.equal(init.credentials,'same-origin');assert.equal(init.cache,'no-store');assert.equal(init.redirect,'error');
+    const atom=url.endsWith('.atom'),html=url.endsWith('/commits/main/'),pinned=url.endsWith('/tree/'+sha),response=new Response(atom?'Not Found':html?'<script type="application/json">'+JSON.stringify(branch)+'</script>':pinned?'pinned':'root',{status:atom?404:200,headers:{'content-type':'text/html'}});Object.defineProperty(response,'url',{value:url});return response;
+   }};vm.createContext(context);contexts.set(target.tabId,context);
+  }
+  for(const file of files)vm.runInContext(fs.readFileSync(path.join(__dirname,'..',file),'utf8'),context,{filename:file});
+ };
+ await h.transport.invoke({repository:'owner/repo',action:'prepare-create',title:'Review',body:'Draft'});assert.equal(h.tabs.get(1).url,'https://github.com/owner/repo/issues/new');
+ const context=contexts.get(1),reply=await new Promise(resolve=>{if(!context.listener({type:'github-session-read',repository:'owner/repo',ref:'HEAD',action:'policy'},{id:'ours'},resolve))resolve(null);});
+ assert.equal(reply?.ok,true);assert.equal(reply.result.source,'default');assert.equal(reply.result.sha,sha);assert.equal(reply.result.account,'reviewer');
+ assert.deepEqual(requests,['https://github.com/owner/repo','https://github.com/owner/repo/commits/main.atom','https://github.com/owner/repo/commits/main/','https://github.com/owner/repo/tree/'+sha]);
+ assert.equal(h.calls.filter(call=>call[0]==='message'&&['commit','commit-create'].includes(call[2])).length,0);
+});
+
 test('activeTab lease never restores over a user navigation to another repository',async()=>{
  const h=tabHarness(),message={repository:'owner/repo',number:7};h.api.permissions.contains=async()=>false;
  const draft=await h.transport.invoke({...message,action:'prepare'});h.tabs.get(1).url='https://github.com/other/repo';
@@ -141,6 +209,58 @@ test('new-Issue publication persists pending before clicking and blocks uncertai
  const value={repository:'owner/repo',title:'Review title',body:'Review body',clientMutationId:'12345678-1234-1234-1234-123456789abc',confirmedSend:true};
  await assert.rejects(transport.createIssue(value),/not confirmed/);uncertain=false;
  await assert.rejects(transport.createIssue(value),/unconfirmed outcome/);assert.equal(calls.filter(n=>n.action==='commit-create').length,1);
+});
+test('new conversation helper preserves explicit pre-click rejection without polling or closing its draft',async()=>{
+ for(const kind of ['issue','discussion']){
+  const h=tabHarness();let waits=0;
+  const transport=api.createTabTransport({api:h.api,sessions:h.sessions,delay:async()=>{waits++;}});
+  h.api.tabs.sendMessage=async(id,value)=>value.action==='prepare-create'?{ok:true,result:{ticket:'ticket',repository:'owner/repo',account:'reviewer'}}:{ok:false,code:'WEBSITE_REVIEW_UNAVAILABLE',error:'GitHub draft changed. Nothing sent.'};
+  const request={repository:'owner/repo',kind,category:'general',title:'Review',body:'Text'};
+  await transport.invoke({...request,action:'prepare-create'});
+  await assert.rejects(transport.invoke({repository:request.repository,kind,ticket:'ticket',action:'commit-create'}),error=>error.code==='WEBSITE_REVIEW_UNAVAILABLE'&&/draft changed/.test(error.message));
+  assert.equal(waits,0);assert.deepEqual(h.removed,[]);
+ }
+});
+
+test('binding lost after Create retains pending receipt across adapter restart and cannot create twice',async()=>{
+ for(const kind of ['issue','discussion']){
+  const h=tabHarness(),data={};let clicks=0;
+  h.api.tabs.sendMessage=async(id,value)=>{
+   if(value.action==='categories')return {ok:true,result:{categories:[{id:'general'}],account:'reviewer'}};
+   if(value.action==='list')return {ok:true,result:{account:'reviewer',threads:[]}};
+   if(value.action==='prepare-create')return {ok:true,result:{ticket:'ticket',repository:'owner/repo',account:'reviewer'}};
+   if(value.action==='verify-create')return {ok:true,result:{verified:true,account:'reviewer'}};
+   if(value.action==='commit-create'){clicks++;h.tabs.get(id).url='https://github.com/owner/repo/'+(kind==='issue'?'issues':'discussions')+'/8';h.bound=false;return {ok:true,result:{attempted:true,account:'reviewer'}};}
+   throw Error('Unexpected action '+value.action);
+  };
+  const options={crypto:webcrypto,assertWrites:async()=>{},reserve:async()=>{},storage:{get:async key=>({[key]:data[key]}),set:async value=>Object.assign(data,value)},call:value=>h.transport.invoke(value)};
+  let adapter=api.create(options);const request={repository:'owner/repo',kind,categoryId:'general',title:'Review title',body:'Review body',clientMutationId:message.clientMutationId,confirmedSend:true};
+  await assert.rejects(adapter.createIssue(request),/attempted.*not confirmed/);
+  assert.equal(clicks,1);assert.equal(Object.values(data)[0].status,'pending');
+  h.bound=true;adapter=api.create(options);
+  await assert.rejects(adapter.createIssue(request),/unconfirmed outcome/);assert.equal(clicks,1);
+ }
+});
+test('only confirmed pre-click failures allow a later explicit retry for comments and new conversations',async()=>{
+ for(const newThread of [false,true])for(const kind of ['issue','discussion'])for(const receiptFails of [false,true]){
+  const data={},calls=[];let reject=true;
+  const options={crypto:webcrypto,assertWrites:async()=>{},reserve:async()=>{},storage:{get:async key=>({[key]:data[key]}),set:async value=>{if(receiptFails&&Object.values(value)[0].status==='not-sent')throw Error('Storage failed');Object.assign(data,value);}},call:async request=>{
+   calls.push(request.action);
+   if(request.action==='categories')return {categories:[{id:'general'}]};
+   if(request.action==='list')return {account:'reviewer'};
+   if(request.action==='read')return {account:'reviewer',capabilities:{create:true},comments:[]};
+   if(request.action.startsWith('prepare'))return {ticket:'ticket',repository:'owner/repo',number:1,account:'reviewer'};
+   if(request.action.startsWith('verify'))return {verified:true,account:'reviewer'};
+   if(reject)throw Object.assign(Error('GitHub draft changed. Nothing sent.'),{code:'WEBSITE_REVIEW_UNAVAILABLE'});
+   return {kind,number:1,title:'Title',author:'reviewer',url:'https://github.com/owner/repo/'+(kind==='issue'?'issues':'discussions')+'/1'+(newThread?'':kind==='issue'?'#issuecomment-123':'#discussioncomment-123')};
+  }};
+  let transport=api.create(options);const request={...message,kind,title:'Title',categoryId:'general'},publish=()=>newThread?transport.createIssue(request):transport.send(request);
+  await assert.rejects(publish(),/draft changed/);assert.equal(Object.values(data)[0].status,receiptFails?'pending':'not-sent');assert.equal(calls.filter(n=>n.startsWith('commit')).length,1);
+  // A worker restart must retain the known failure, without making a retry itself.
+  reject=false;transport=api.create(options);
+  if(receiptFails){await assert.rejects(publish(),/unconfirmed outcome/);assert.equal(calls.filter(n=>n.startsWith('commit')).length,1);}
+  else {await publish();assert.equal(Object.values(data)[0].status,'done');assert.equal(calls.filter(n=>n.startsWith('commit')).length,2);}
+ }
 });
 test('screenshot Send requires a native GitHub asset result and updates annotation metadata before commit',async()=>{
  const comments=require('../review-comments.js'),data={},calls=[],id='12345678-1234-1234-1234-123456789abc',repository='owner/repo',url='https://github.com/user-attachments/assets/12345678-1234-1234-1234-123456789abc';

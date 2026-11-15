@@ -3,6 +3,7 @@
  'use strict';
  const query=new URLSearchParams(location.search),status=document.getElementById('launchStatus'),title=document.getElementById('launchTitle'),details=document.getElementById('launchDetails'),projects=document.getElementById('launchProjects'),retry=document.getElementById('launchRetry');
  let busy=false,attempts=0;
+ const loading=globalThis.KiCadLoading?.indicator(document.body,{fullscreen:true});
  function localAlternative(){
   const help=document.createElement('span');help.className='launch-access-help';help.textContent='Viewing does not require GitHub/GitLab app authorization. If your organization permits downloads but blocks extension page access, download ZIP from the repository website, extract it, then open that folder here. Files are rendered on this device.';
   const local=document.createElement('a');local.href=chrome.runtime.getURL('local-viewer.html');local.textContent='Open downloaded project folder';local.className='launch-local-alternative';details.append(help);details.append(local);
@@ -12,6 +13,7 @@
   try{
    const source=query.get('source');
    if(!source){title.textContent='No KiCad project detected';status.textContent=query.get('error')||'Open a GitHub or approved GitLab repository, then click the extension icon. You can also open local files or recent projects above.';return;}
+   loading?.show('Finding KiCad projects in this repository…');
    const context=KiCadProjectLaunch.context(source,{ref:query.get('ref'),allowUnresolved:true});
    if(context?.kind!=='repository')throw Error('Open a repository page, then click the extension icon again.');
    status.textContent='Checking '+context.repository+'…';details.textContent=context.source+' · '+(context.ref||'Resolving saved branch metadata');
@@ -24,15 +26,17 @@
    if(context.revisionKind==='pull'&&(result.pullNumber!==context.pullNumber||result.pullRepository!==context.repository))throw Error('The discovered pull request does not match the requested pull request.');
    const info={...context,sha:result.sha,...(result.headRepository?{headRepository:result.headRepository}:{}),...(result.base?{base:result.base}:{}),...(result.pullNumber?{pullNumber:result.pullNumber,pullRepository:result.pullRepository}:{})};
    const warnings=Array.isArray(result.warnings)?result.warnings.slice(0,8).map(value=>String(value).slice(0,400)).join(' '):'';
-   details.textContent=context.source+' · '+(result.ref||context.ref||result.sha.slice(0,12))+(warnings?' · '+warnings:'');
-   const files=result.projects;for(const file of files)KiCadProjectLaunch.viewerURL(info,file,p=>chrome.runtime.getURL(p));
+   details.textContent=context.repository;if(warnings)console.warn('KiCad Online project discovery:',warnings);
+   for(const file of result.projects)KiCadProjectLaunch.viewerURL(info,file,p=>chrome.runtime.getURL(p));
+   const files=result.projects.filter(file=>/\.(?:kicad_pro|pro)$/i.test(file));
    if(files.length===1&&!result.truncated){location.replace(KiCadProjectLaunch.viewerURL(info,files[0],p=>chrome.runtime.getURL(p)));return;}
    title.textContent=files.length?'Choose a KiCad project':result.truncated?'Project discovery incomplete':'No KiCad project detected';
-   status.textContent=files.length?files.length+' projects or standalone drawings found.':result.truncated?'No KiCad project detected in the partial listing. Additional folders may contain projects.':'No KiCad project detected in this repository revision.';
-   if(result.truncated){retry.hidden=false;details.textContent+=' · Partial listing; additional projects may exist.';if(Array.isArray(result.warnings))details.textContent+=' '+result.warnings.slice(0,8).map(value=>String(value).slice(0,400)).join(' ');}
-   for(const file of files){const link=document.createElement('a');link.textContent=file;link.href=KiCadProjectLaunch.viewerURL(info,file,p=>chrome.runtime.getURL(p));projects.append(link);}
+   status.textContent=files.length?files.length+' KiCad project'+(files.length===1?'':'s')+' found.':result.truncated?'No KiCad project detected in the partial listing. Additional folders may contain projects.':'No KiCad project detected in this repository revision.';
+   if(result.truncated){retry.hidden=false;details.textContent+=' · Partial listing; additional projects may exist.';}
+   for(const file of files){const link=document.createElement('a');link.className='project-choice';link.href=KiCadProjectLaunch.viewerURL(info,file,p=>chrome.runtime.getURL(p));const badge=document.createElement('span');badge.className='project-type-badge';badge.textContent=/\.kicad_pro$/i.test(file)?'KiCad project':'Legacy project';const name=document.createElement('h2');name.textContent=file.split('/').at(-1).replace(/\.(?:kicad_pro|pro)$/i,'');const folder=document.createElement('p');folder.className='project-folder';folder.textContent=file.includes('/')?file.slice(0,file.lastIndexOf('/')):'Repository root';const filename=document.createElement('small');filename.textContent=file;link.append(badge);link.append(name);link.append(folder);link.append(filename);projects.append(link);}
   }catch(error){title.textContent='Project discovery unavailable';status.className='error';status.textContent='! '+error.message;localAlternative();retry.hidden=false;}
-  finally{busy=false;}
+  finally{busy=false;loading?.hide();}
  }
+ addEventListener('pagehide',()=>loading?.dispose());
  retry.addEventListener('click',load);load();
 })();

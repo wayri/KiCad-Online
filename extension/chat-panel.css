@@ -54,6 +54,11 @@
 .chat-options-menu .chat-search-toggle,.chat-options-menu .chat-close{width:auto;text-align:left;font:inherit;padding:6px 8px}
 .chat-composer .chat-compose-actions{flex-wrap:nowrap;gap:5px}
 .chat-composer .chat-send,#commentPostRow #postComment{display:grid;place-items:center;width:34px;min-width:34px;min-height:32px;padding:0;border-radius:6px;font-size:22px;font-weight:500;margin:0 0 0 auto}
+/* Recovery belongs below the action strip, never beside the Send button. */
+#commentPostRow{flex-wrap:wrap}
+#commentPostRow #commentPublishSettings:not([hidden]){display:contents}
+#commentPostRow .publication-recovery{flex:0 0 100%;min-width:0;box-sizing:border-box;grid-template-columns:minmax(0,1fr);overflow-wrap:anywhere}
+#commentPostRow .publication-recovery label{min-width:0;display:grid}
 .chat-composer .chat-format-toggle,#commentPostRow .chat-format-toggle{min-width:32px;padding:3px 5px;background:transparent;border-color:transparent;font-size:13px;color:var(--muted)}
 .chat-format-toggle[aria-expanded=true]{background:var(--selected)!important;color:var(--text)!important}
 .chat-format-tools{display:flex;gap:3px;padding:2px 3px;border-bottom:1px solid var(--line)}.chat-format-tools[hidden]{display:none!important}.chat-format-tools button{min-height:28px;min-width:28px;padding:2px 6px;background:transparent;border-color:transparent;font-size:12px}
@@ -162,3 +167,30 @@ body #commentsSidebar .comment-category-tabs>#commentSettingsButton{flex:0 0 28p
  .chat-panel .chat-byline{padding-right:38px}
  .chat-panel .chat-keyboard-hint{display:none}
 }
+
+#commentPostRow #postComment.text-send{width:auto;min-width:64px;padding:0 10px;font-size:13px}
+#commentPostRow #postComment.text-send .button-label{display:inline}
+
+/* Keep navigation fixed; only the conversation body scrolls beneath it. */
+#commentsSidebar #commentsPane{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden;padding:0}
+#commentsSidebar #commentCategoryTabs{flex:none;min-width:0;margin:0;padding:4px 8px;background:var(--panel)}
+#commentsSidebar #commentCategoryTabs>button{min-width:0;line-height:1.4;overflow-wrap:normal;white-space:nowrap}
+#commentsSidebar #commentCategoryContent{flex:1;min-width:0;min-height:0;overflow:auto;padding:8px;scrollbar-gutter:stable}
+#commentsSidebar #commentSettings{flex:0 1 auto;min-height:0;max-height:65%;overflow:auto;padding:8px}
+#commentsSidebar #commentDiagnostics{font-size:11px;overflow-wrap:anywhere}
+#commentsSidebar #commentDiagnostics summary{cursor:pointer;padding:6px 0}
+#commentsSidebar #commentDiagnostics #commentThreadStatus{display:block;margin:4px 0;font-size:11px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
+.comment-load-notice{display:flex;align-items:baseline;gap:8px;margin:4px 0;font-size:11px;line-height:1.5;color:var(--muted)}
+.comment-load-notice[hidden]{display:none}
+.comment-load-notice>span{flex:1;min-width:0;overflow-wrap:anywhere}
+.comment-load-notice>button{flex:none;background:transparent;border:0;font-size:11px;padding:3px}
+.chat-catalog-menu .thread-read-controls{flex-wrap:wrap}
+.chat-catalog-menu .thread-read-controls :is(input,select){flex:1;min-width:65px;max-width:100%}
+.chat-conversation :is(strong,small){max-width:100%;overflow-wrap:anywhere;word-break:normal;white-space:normal}
+.note-metadata{display:grid;gap:5px;min-width:0;padding:5px 0 8px;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
+.note-metadata :is(small,strong){font-size:10px;line-height:1.5;letter-spacing:0;white-space:normal}
+.chat-panel .chat-message-goto,.note .comment-goto{display:inline-grid;place-items:center;box-sizing:border-box;flex:0 0 28px;width:28px;min-width:28px;height:28px;min-height:28px;padding:4px;border:0;border-radius:var(--ui-radius,5px);background:transparent;color:var(--muted);font:500 16px/1 system-ui}
+.chat-panel .chat-message-goto:hover,.note .comment-goto:hover{color:var(--accent);background:var(--selected)}
+.chat-panel .chat-message-goto .ui-icon,.note .comment-goto .ui-icon{width:16px;height:16px;flex-basis:16px}
+#commentPins .pin.selected{outline:2px solid var(--accent);outline-offset:2px}
+#commentPins .drawing-comment-pin{border-radius:5px}

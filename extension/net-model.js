@@ -400,6 +400,15 @@
     function clear(){cache.clear();primitiveIds=new WeakMap();nextPrimitiveId=0;}
     return {build:cachedBuild,clear};
   }
-  root.KiCadNetModel={build,createBuilder,relatedSchematicNets,displayName};
+  function selectedTrackLength(objects){
+    const seen=new Set();let lengthMm=0,count=0,omitted=0;
+    for(const object of objects||[]){if(!object||!['segment','arc'].includes(object.kind))continue;const key=JSON.stringify([object.path,object.uuid||object.id]);if(seen.has(key))continue;seen.add(key);
+      const tree=object.saved?.tree;let length=null;
+      if(object.kind==='arc')length=arcLength(tree);else{const a=point(tree,'start'),b=point(tree,'end');if(a&&b)length=distance(a,b);}
+      if(Number.isFinite(length)&&length>=0){lengthMm+=length;count++;}else omitted++;
+    }
+    return {lengthMm,count,omitted};
+  }
+  root.KiCadNetModel={build,createBuilder,relatedSchematicNets,displayName,selectedTrackLength};
   if(typeof module === "object" && module.exports)module.exports=root.KiCadNetModel;
 })(typeof globalThis === "object" ? globalThis : this);

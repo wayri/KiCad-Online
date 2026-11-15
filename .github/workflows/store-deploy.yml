@@ -1,0 +1,165 @@
+name: Deploy verified store release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing audited GitHub release tag (for example v0.12.91)
+        required: true
+        type: string
+      store:
+        description: Destination
+        type: choice
+        options: [vscode, chrome, firefox]
+        required: true
+      submit:
+        description: Submit to the store (false only verifies existing packages)
+        type: boolean
+        default: false
+      source_sha256:
+        description: Firefox only — approved readable-source ZIP SHA-256, already attached to this GitHub release
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  # Serialize every version for the same store; never interrupt a submission.
+  group: store-deploy-${{ inputs.store }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.repository == 'wayri/KiCad-Online' && github.ref == 'refs/heads/main'
+    # Configure a GitHub-hosted larger Linux runner meeting the operating reserve.
+    runs-on: ${{ vars.STORE_RUNNER || 'ubuntu-24.04' }}
+    timeout-minutes: 20
+    environment: store-${{ inputs.store }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      STORE: ${{ inputs.store }}
+      SOURCE_SHA256: ${{ inputs.source_sha256 }}
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Check isolated runner capacity before downloads
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        run: |
+          python3 - <<'PY'
+          import os, shutil
+          from pathlib import Path
+          if os.environ['RUNNER_ENVIRONMENT'] != 'github-hosted':
+              raise SystemExit('Use an isolated GitHub-hosted runner; shared runners require a storage coordinator.')
+          seen = set()
+          for path in (Path.cwd(), Path.home(), Path(os.environ['RUNNER_TEMP']), Path('/tmp')):
+              volume = path.stat().st_dev
+              if volume in seen:
+                  continue
+              seen.add(volume)
+              free = shutil.disk_usage(path).free
+              print(f'{path}: {free / 2**30:.2f} GiB free')
+              if free < 102 * 2**30:
+                  raise SystemExit('Need 100 GiB reserve plus 2 GiB bounded deployment workspace; configure STORE_RUNNER.')
+          PY
+      # Execute trusted deployment code from main, never code from a downloaded release.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.11'
+      - name: Validate inputs
+        run: |
+          python - <<'PY'
+          import os, re
+          assert re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', os.environ['RELEASE_TAG']), 'Invalid tag'
+          assert os.environ['STORE'] in ('chrome', 'firefox', 'vscode'), 'Invalid store'
+          if os.environ['STORE'] == 'firefox':
+              assert re.fullmatch('[a-f0-9]{64}', os.environ['SOURCE_SHA256']), 'Reviewed source hash required'
+          PY
+      - name: Download only the selected existing release artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          mkdir -p submission
+          version="${RELEASE_TAG#v}"
+          case "$STORE" in
+            chrome) file="kicad-visual-review-chrome-edge-brave-opera-vivaldi-chromium-$version.zip" ;;
+            firefox) file="kicad-visual-review-firefox-$version.zip" ;;
+            vscode) file="kicad-visual-review-vscode-$version.vsix" ;;
+          esac
+          gh release download "$RELEASE_TAG" --dir submission --pattern "$file" \
+            --pattern release-manifest.json --pattern SHA256SUMS.txt --pattern RELEASE-NOTES.md
+          if [ "$STORE" = firefox ]; then
+            gh release download "$RELEASE_TAG" --dir submission \
+              --pattern "kicad-visual-review-amo-source-$version.zip"
+          fi
+          # GitHub resolves annotated and lightweight version tags to a commit.
+          gh api "repos/$GH_REPO/commits/$RELEASE_TAG" --jq .sha > submission/tag-commit.txt
+          if [ "$STORE" = firefox ]; then
+            sha="$(cat submission/tag-commit.txt)"
+            gh api "repos/$GH_REPO/contents/LICENSE?ref=$sha" --jq .content | base64 --decode > submission/LICENSE
+          fi
+      - name: Verify hashes, clean source, tag, packaged version and store identity
+        run: |
+          python scripts/store_deploy.py --directory submission --tag "$RELEASE_TAG" \
+            --commit "$(cat submission/tag-commit.txt)" --store "$STORE" --source-sha256 "$SOURCE_SHA256"
+      - name: Submit Chrome update without cancelling reviews
+        if: inputs.submit && inputs.store == 'chrome'
+        env:
+          CHROME_PUBLISHER_ID: ${{ vars.CHROME_PUBLISHER_ID }}
+          CHROME_CLIENT_ID: ${{ secrets.CHROME_CLIENT_ID }}
+          CHROME_CLIENT_SECRET: ${{ secrets.CHROME_CLIENT_SECRET }}
+          CHROME_REFRESH_TOKEN: ${{ secrets.CHROME_REFRESH_TOKEN }}
+        run: |
+          python scripts/store_deploy.py --directory submission --tag "$RELEASE_TAG" \
+            --commit "$(cat submission/tag-commit.txt)" --store chrome --submit
+      - name: Submit Firefox update and matching readable source
+        if: inputs.submit && inputs.store == 'firefox'
+        env:
+          AMO_API_KEY: ${{ secrets.AMO_API_KEY }}
+          AMO_API_SECRET: ${{ secrets.AMO_API_SECRET }}
+        run: |
+          python scripts/store_deploy.py --directory submission --tag "$RELEASE_TAG" \
+            --commit "$(cat submission/tag-commit.txt)" --store firefox --source-sha256 "$SOURCE_SHA256" --submit
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: inputs.submit && inputs.store == 'vscode'
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Publish existing VSIX using Marketplace Trusted Publishing
+        if: inputs.submit && inputs.store == 'vscode'
+        env:
+          VSCE_VERSION: ${{ vars.VSCE_VERSION }}
+        run: |
+          # Set an exact reviewed vsce version supporting --oidc in the environment.
+          [[ "$VSCE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Set VSCE_VERSION'; exit 1; }
+          npm exec --yes --ignore-scripts --package="@vscode/vsce@$VSCE_VERSION" -- \
+            vsce publish --oidc --packagePath "submission/kicad-visual-review-vscode-${RELEASE_TAG#v}.vsix"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path('submission/vscode-submission.json')
+          result = json.loads(path.read_text())
+          result['state'] = 'upload_accepted_verification_pending'
+          path.write_text(json.dumps(result, indent=2) + '\n')
+          PY
+          printf '%s\n' 'Upload accepted; inspect Marketplace verification before claiming publication.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain non-secret receipts
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: store-${{ inputs.store }}-${{ github.run_id }}
+          path: |
+            submission/*-submission.json
+            submission/tag-commit.txt
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Report remaining deployment capacity
+        if: always()
+        run: df -h "$GITHUB_WORKSPACE" "$RUNNER_TEMP" "$HOME"

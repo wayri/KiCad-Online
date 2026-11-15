@@ -2,13 +2,31 @@
  * Transport only returns normalized data; no website credentials are received. */
 ((root)=>{'use strict';
  function createTabTransport({api,sessions,assertWrites=async()=>{},delay=ms=>new Promise(resolve=>setTimeout(resolve,ms)),now=()=>Date.now()}={}){
-  const tickets=new Map(),helpers=new Set(),leased=new Set(),quarantined=new Map(),host='https://github.com';
+  const tickets=new Map(),helpers=new Set(),leased=new Set(),quarantined=new Map(),sendQueues=new Map(),host='https://github.com';
   function matching(tab,repository,number,newIssue=false,kind='issue',category){try{const url=new URL(tab.url);return url.origin===host&&!url.username&&!url.password&&url.pathname.toLowerCase()==='/'+repository.toLowerCase()+'/'+(kind==='discussion'?'discussions':'issues')+'/'+(newIssue?'new':number)&&(newIssue&&kind==='discussion'?url.searchParams.size===1&&url.searchParams.get('category')===category:!url.search);}catch{return false;}}
   async function liveBindings(repository){const result=[];for(const candidate of (await sessions.candidates('github',host,repository)).filter(n=>n.bound)){
    try{const tab=await api.tabs.get(candidate.id),url=new URL(tab.url);if(quarantined.has(tab.id)&&quarantined.get(tab.id)!==tab.url)quarantined.delete(tab.id);if(url.origin===host&&!url.username&&!url.password&&(url.pathname.toLowerCase()==='/'+repository.toLowerCase()||url.pathname.toLowerCase().startsWith('/'+repository.toLowerCase()+'/')))result.push(tab);}catch{}
   }return result;}
-  async function install(tabId){await api.scripting.executeScript({target:{tabId,frameIds:[0]},files:['github-session-review.js','repository-session-bridge.js']});}
-  async function send(tabId,message){return api.tabs.sendMessage(tabId,{...message,type:'github-session-review'},{frameId:0}).catch(()=>null);}
+  async function install(tabId){await api.scripting.executeScript({target:{tabId,frameIds:[0]},files:['github-website-history.js','github-session-reader.js','github-session-review.js','repository-session-bridge.js']});}
+  async function send(tabId,message){
+   let queue=sendQueues.get(tabId);if(queue?.pending>=9)throw Object.assign(Error('The repository website review queue is full. Wait for the current reads and retry. Nothing was sent.'),{code:'WEBSITE_REVIEW_UNAVAILABLE'});
+   if(!queue){queue={tail:Promise.resolve(),pending:0};sendQueues.set(tabId,queue);}queue.pending++;
+   const task=queue.tail.then(async()=>{
+    // A queued call must not inherit stale tab or ticket checks from invoke.
+    const bound=await liveBindings(message.repository),tab=await api.tabs.get(tabId),url=new URL(tab.url),kind=message.kind||'issue';
+    if(!bound.length||url.origin!==host||url.username||url.password||!(url.pathname.toLowerCase()==='/'+message.repository.toLowerCase()||url.pathname.toLowerCase().startsWith('/'+message.repository.toLowerCase()+'/')))throw Object.assign(Error('The repository website session changed while waiting. Nothing sent.'),{code:'WEBSITE_REVIEW_UNAVAILABLE'});
+    if(['prepare','prepare-create','verify','verify-create','commit','commit-create','update-prepared'].includes(message.action)){
+     await assertWrites();const current=await api.tabs.get(tabId),prepared=['prepare','prepare-create'].includes(message.action),ticket=prepared?null:tickets.get(message.ticket);
+     if(!prepared&&(!ticket||ticket.tabId!==tabId||ticket.repository!==message.repository||ticket.number!==message.number||ticket.kind!==kind||ticket.expires<now()))throw Error('Website review send expired. Reload the conversation before sending.');
+     if(ticket?.commitStarted)throw Error('The website review send was already attempted. Inspect its conversation before retrying.');
+     if(!matching(current,message.repository,message.number,prepared?message.action==='prepare-create':ticket.newIssue,kind,prepared?message.category:ticket.category))throw Object.assign(Error('The review helper changed repository or conversation. Nothing sent.'),{code:'WEBSITE_REVIEW_UNAVAILABLE'});
+     if(['commit','commit-create'].includes(message.action))ticket.commitStarted=true;
+    }
+    return api.tabs.sendMessage(tabId,{...message,type:'github-session-review'},{frameId:0}).catch(()=>null);
+   });
+   queue.tail=task.catch(()=>{});
+   try{return await task;}finally{queue.pending--;if(!queue.pending&&sendQueues.get(tabId)===queue)sendQueues.delete(tabId);}
+  }
   async function finish(ticket,confirmed){
    if(ticket.owned){if(confirmed){try{const tab=await api.tabs.get(ticket.tabId);if(matching(tab,ticket.repository,ticket.number,ticket.newIssue,ticket.kind,ticket.category))await api.tabs.remove(ticket.tabId);}catch{}helpers.delete(ticket.tabId);}}
    else {
@@ -25,10 +43,14 @@
    if(!mutation){bound=bound.filter(tab=>!leased.has(tab.id)&&!helpers.has(tab.id));if(!bound.length)throw Error('A comment send is using the repository session. Its readback will refresh when the send finishes.');}
    if(['verify','commit','verify-create','commit-create','update-prepared'].includes(message.action)){
     const ticket=tickets.get(message.ticket);if(!ticket||ticket.repository!==message.repository||ticket.number!==message.number||ticket.kind!==kind)throw Error('Website review send expired. Reload the conversation before sending.');
-    try{
+    let creationAttempted=false;try{
     const tab=await api.tabs.get(ticket.tabId);if(!matching(tab,message.repository,message.number,ticket.newIssue,kind,ticket.category)){tickets.delete(message.ticket);await finish(ticket,false);throw Error('The review helper changed repository or conversation. Nothing sent.');}
     const reply=await send(tab.id,message);if(['commit','commit-create'].includes(message.action))tickets.delete(message.ticket);
+    // An explicit pre-click rejection is different from losing the reply after
+    // GitHub navigates. Preserve it without waiting for a post that was not sent.
+    if(reply?.ok===false&&reply.code==='WEBSITE_REVIEW_UNAVAILABLE')throw Object.assign(Error(reply.error),{code:reply.code});
     if(message.action==='commit-create'){
+     creationAttempted=true;
      // Clicking Create navigates GitHub's own page. A lost response is not a
      // reason to click again: confirm only the exact marked issue after navigation.
      for(let i=0;i<100;i++){
@@ -44,7 +66,7 @@
     if(message.action==='update-prepared'){ticket.body=message.body;ticket.expires=now()+30000;}
     if(message.action==='commit')await finish(ticket,true);
     return reply.result;
-    }catch(error){tickets.delete(message.ticket);await finish(ticket,false);throw error;}
+    }catch(error){tickets.delete(message.ticket);await finish(ticket,false);if(creationAttempted&&error?.code==='WEBSITE_REVIEW_UNAVAILABLE')throw Object.assign(Error('Conversation creation was attempted but readback is unavailable. Inspect GitHub before retrying; no automatic second Create will occur.'),{code:'WEBSITE_REVIEW_UNCERTAIN'});throw error;}
    }
    if(['prepare','prepare-create'].includes(message.action)){
     // Explicit Send uses a scoped helper, or briefly leases a clean authorized
@@ -91,6 +113,15 @@
  }
  function create({call,storage,assertWrites,assertPolicy=async()=>{},reserve,comments,crypto=root.crypto,now=()=>Date.now()}={}){
   const locks=new Map(),cache=new Map(),confirmed=new Map(),catalogs=new Map(),scans=new Map();
+  async function commitFailure(error,operation,digest,message){
+   if(error?.code==='WEBSITE_REVIEW_UNAVAILABLE'){
+    // Only the isolated composer can positively report a rejection before its
+    // click. Retain the receipt and allow a subsequent explicit user retry.
+    try{await storage.set({[operation]:{status:'not-sent',digest}});}catch{throw Error(error.message+' The local receipt could not be updated; automatic retries remain blocked.');}
+    throw error;
+   }
+   throw Error(message);
+  }
   const key=(repository,number,kind='issue')=>JSON.stringify(kind==='issue'?[repository.toLowerCase(),number]:[repository.toLowerCase(),kind,number]),catalogKey=(repository,kind='issue')=>repository.toLowerCase()+(kind==='discussion'?':discussion':'');
   async function snapshot(store,id,ttl,load){
    const old=store.get(id);if(old&&(old.pending||now()-old.at<ttl))return old.promise;
@@ -154,7 +185,7 @@
     const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(fingerprint))),n=>n.toString(16).padStart(2,'0')).join('');
     let marked=body.replace(/\r\n?/g,'\n')+'\n\n<!-- pocket-kiview-session:'+clientMutationId+' -->';let attachments;
     const record=confirmed.get(operation)||(await storage.get(operation))[operation];
-    if(record){
+    if(record&&record.status!=='not-sent'){
      if(record.digest!==digest)throw Error('This send ID belongs to a different message or website account.');
      if(record.status==='done')return {...record.result,duplicate:true};
      const matches=thread.comments.filter(n=>n.author===thread.account&&n.body===(record.body||marked));
@@ -173,7 +204,7 @@
     await assertWrites();
     let result;
     try{result=await call({repository,number,kind,action:'commit',ticket:prepared.ticket});}
-    catch{throw Error('Send was attempted but not confirmed. Inspect GitHub before retrying; this message will not be resent automatically.');}
+    catch(error){await commitFailure(error,operation,digest,'Send was attempted but not confirmed. Inspect GitHub before retrying; this message will not be resent automatically.');}
     const target=new URL(result?.url||'about:blank');
     if(result?.author!==thread.account||result.number!==number||result.kind!==kind||target.origin!=='https://github.com'||target.pathname!=='/'+repository+'/'+(kind==='discussion'?'discussions':'issues')+'/'+number||!(kind==='discussion'?/^#discussioncomment-[0-9]+$/:/^#issuecomment-[0-9]+$/).test(target.hash))throw Error('GitHub did not confirm the matching comment. Inspect its conversation before retrying.');
     if(attachments)result={...result,attachments};
@@ -192,14 +223,14 @@
     await assertPolicy(repository,account);
     const fingerprint=JSON.stringify([repository.toLowerCase(),title,body,account,annotation?.capture||null,kind,categoryId||null]),hash=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(fingerprint)),digest=Array.from(new Uint8Array(hash),n=>n.toString(16).padStart(2,'0')).join('');
     const record=confirmed.get(operation)||(await storage.get(operation))[operation];
-    if(record){if(record.digest!==digest)throw Error('This issue send ID belongs to another draft or account.');if(record.status==='done')return {...record.result,duplicate:true};throw Error('A previous Create has an unconfirmed outcome. Inspect GitHub before trying again; no automatic duplicate issue will be created.');}
+    if(record&&record.status!=='not-sent'){if(record.digest!==digest)throw Error('This issue send ID belongs to another draft or account.');if(record.status==='done')return {...record.result,duplicate:true};throw Error('A previous Create has an unconfirmed outcome. Inspect GitHub before trying again; no automatic duplicate issue will be created.');}
     let marked=body.replace(/\r\n?/g,'\n')+'\n\n<!-- pocket-kiview-session:'+clientMutationId+' -->';let attachments;await reserve();
     const prepared=await call({repository,kind,...(kind==='discussion'?{category:categoryId}:{}),title,body:marked,action:'prepare-create',...(annotation?.capture?{capture:annotation.capture}:{})});if(prepared.repository!==repository||prepared.account!==account||typeof prepared.ticket!=='string')throw Error('GitHub new-conversation account or draft changed. Nothing sent.');
     const captured=await finalizeCapture(prepared,{repository,kind,annotation,clientMutationId,baseBody:body});if(captured){marked=captured.body;attachments=captured.attachments;}
     await assertPolicy(repository,account);
     const checked=await call({repository,kind,ticket:prepared.ticket,action:'verify-create'});if(checked?.verified!==true||checked.account!==account)throw Error('GitHub new-conversation account changed. Nothing sent.');
     await assertWrites();await storage.set({[operation]:{status:'pending',digest,account,body:marked,title,...(attachments?{attachments}:{}),startedAt:new Date(now()).toISOString()}});await assertWrites();
-    let result;try{result=await call({repository,kind,ticket:prepared.ticket,action:'commit-create'});}catch{throw Error('Conversation creation was attempted but not confirmed. Inspect GitHub before retrying; no automatic second Create will occur.');}
+    let result;try{result=await call({repository,kind,ticket:prepared.ticket,action:'commit-create'});}catch(error){await commitFailure(error,operation,digest,'Conversation creation was attempted but not confirmed. Inspect GitHub before retrying; no automatic second Create will occur.');}
     const url=new URL(result?.url||'about:blank');if(result?.kind!==kind||result.author!==account||!Number.isSafeInteger(result.number)||result.number<1||url.origin!=='https://github.com'||url.pathname!=='/'+repository+'/'+(kind==='discussion'?'discussions':'issues')+'/'+result.number||url.hash||result.title!==title)throw Error('GitHub did not confirm the matching new conversation. Inspect GitHub before retrying.');
     if(attachments)result={...result,attachments};
     catalogs.delete(catalogKey(repository,kind));scans.delete(repository.toLowerCase());const receipt={status:'done',digest,result};confirmed.set(operation,receipt);if(confirmed.size>64)confirmed.delete(confirmed.keys().next().value);try{await storage.set({[operation]:receipt});}catch{result={...result,receiptWarning:'Created on GitHub; the local receipt could not be saved.'};}return result;

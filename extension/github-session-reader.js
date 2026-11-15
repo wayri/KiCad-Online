@@ -1,6 +1,8 @@
 "use strict";
 (function(root) {
   const SHA=/^[a-f0-9]{40}$/i, REPO=/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+  const POLICY_ROW_ISSUES=['header','no-name-link','link-origin','link-query-hash','link-repository','link-route','link-ref','link-path','link-nesting','link-label','link-format','row-footer-marker','row-no-footer-marker','row-last','row-not-last','row-single-cell','row-multiple-cells','row-empty-first-cell','row-text-first-cell','row-later-file-link','row-button-none','row-button-one','row-button-many','footer-no-mobile','footer-multiple-markers','footer-bad-colspan','footer-button-not-link','footer-bad-label','footer-bad-wrapper','footer-extra-elements','footer-extra-controls','footer-no-files'];
+  function policyRowIssues(value){return Array.isArray(value)&&value.length<=POLICY_ROW_ISSUES.length?[...new Set(value.filter(item=>typeof item==='string'&&POLICY_ROW_ISSUES.includes(item)))]:[];}
   function safePath(path, empty=false) {
     return typeof path==='string' && path.length<=500 && (empty&&path==='' || path!==''&&path.split('/').every(p=>p&&p!=='.'&&p!=='..'&&!/[\\:\x00-\x1f\x7f]/.test(p)));
   }
@@ -15,7 +17,7 @@
     const items=new Map();let sha=null;
     for(const route of routes){
       const oid=route.refInfo?.currentOid,tree=route.tree;
-      if(policyRequired&&tree?.policyTableComplete===false)throw Error('Repository policy root has unverified file rows; publishing is blocked.');
+      if(policyRequired&&tree?.policyTableComplete===false)throw Object.assign(Error('Repository policy root has unverified file rows; publishing is blocked.'),{code:'GITHUB_POLICY_ROWS',policyRowIssues:policyRowIssues(tree.policyRowIssues)});
       if(!SHA.test(oid||'')||(SHA.test(ref)?oid.toLowerCase()!==ref.toLowerCase():ref!=='HEAD'&&route.refInfo?.name!==ref))throw Error('GitHub session returned a different revision.');
       if(sha&&sha!==oid.toLowerCase())throw Error('GitHub website returned conflicting directory revisions.');sha=oid.toLowerCase();
       if(!Array.isArray(tree?.items)||tree.items.length>2000||tree.truncated)throw Error('GitHub website directory is incomplete. Open a smaller project folder; additional saved files may exist.');
@@ -42,11 +44,12 @@
     return {repository,ref,directory,...treeData(objects,ref,directory)};
   }
   // Service workers have no DOMParser. Read inert JSON script payloads only.
+  function sizeError(code,limit){return Object.assign(Error('GitHub session response exceeds its size limit.'),{code,limit});}
   function htmlObjects(html){
-    if(typeof html!=='string'||new TextEncoder().encode(html).length>8*1024*1024)throw Error('GitHub website page exceeds its size limit.');
+    if(typeof html!=='string'||new TextEncoder().encode(html).length>8*1024*1024)throw sizeError('GITHUB_PAGE_TOO_LARGE',8*1024*1024);
     const objects=[];for(const match of html.matchAll(/<script\b([^>]*?)>([\s\S]*?)<\/script\s*>/gi)){
       if(!/\btype\s*=\s*(?:"application\/json"|'application\/json'|application\/json)(?=\s|$)/i.test(match[1]))continue;
-      if(objects.length>=100)throw Error('GitHub website contains too many JSON payloads.');
+      if(objects.length>=100)throw Object.assign(Error('GitHub website contains too many JSON payloads.'),{code:'GITHUB_JSON_PAYLOAD_LIMIT'});
       try{objects.push(JSON.parse(match[2]));}catch{}
     }
     return objects;
@@ -75,11 +78,31 @@
       const commit=[...(doc.querySelectorAll('[data-testid="latest-commit"] a[href], [data-testid="latest-commit-details"] a[href], [data-testid="latest-commit-html"] a[href]')||[])].map(a=>new URL(a.getAttribute('href'),page)).find(u=>u.origin===page.origin&&u.pathname.startsWith('/'+repository+'/commit/')&&SHA.test(u.pathname.slice(('/'+repository+'/commit/').length)));
       if(!commit){objects.push({githubFileTableContext:{repository,ref,directory}});return objects;}sha=commit.pathname.split('/').at(-1).toLowerCase();
     }
-    const items=new Map(),rows=[...table.querySelectorAll('tr')];let policyTableComplete=rows.length>0;if(rows.length>1001||/truncat|too many files|unable to (?:load|display)/i.test(table.textContent||''))throw Error('GitHub website directory is incomplete.');
+    const items=new Map(),rows=[...table.querySelectorAll('tr')],rowIssues=new Set();let policyTableComplete=rows.length>0;if(rows.length>1001||/truncat|too many files|unable to (?:load|display)/i.test(table.textContent||''))throw Error('GitHub website directory is incomplete.');
+    const rejectRow=issue=>{policyTableComplete=false;rowIssues.add(issue);return true;};
+    const mobileControls=rows.filter(row=>row.getAttribute?.('data-testid')==='view-all-files-row');
     for(const row of rows){const candidates=[...row.querySelectorAll('a[href]')].map(a=>new URL(a.getAttribute('href'),page)).filter(u=>u.origin===page.origin&&!u.search&&!u.hash);
+      // GitHub appends this responsive disclosure control after the actual
+      // file rows. Recognize its complete observed shape, never arbitrary rows
+      // without filename links: those must still prevent policy-absence proof.
+      // Its presentational mobile class is absent on an observed private page.
+      const cells=[...row.querySelectorAll('td')],controls=[...row.querySelectorAll('button')],wrapper=cells[0]?.children?.[0];
+      if(row===rows.at(-1)&&items.size>0&&mobileControls.length===1&&mobileControls[0]===row&&row.children?.length===1&&row.children[0]===cells[0]&&cells.length===1&&cells[0].getAttribute?.('colspan')==='3'&&cells[0].children?.length===1&&wrapper?.tagName==='DIV'&&wrapper.children?.length===1&&wrapper.children[0]===controls[0]&&!row.querySelectorAll('th').length&&!row.querySelectorAll('a[href],input,select,textarea').length&&controls.length===1&&controls[0].getAttribute?.('data-component')==='Link'&&controls[0].textContent.trim()==='View all files'&&row.textContent.trim()==='View all files')continue;
       const cell=row.querySelector?.('td'),nameLinks=[...(cell?.querySelectorAll('a[href]')||[])];
-      if(!cell){const headers=[...row.querySelectorAll('th')];if(headers.length<2||String(headers[0].textContent||'').trim()!=='Name'||row.querySelectorAll('td').length)policyTableComplete=false;}
-      else if(!nameLinks.length||nameLinks.some(link=>{try{const u=new URL(link.getAttribute('href'),page),segments=u.pathname.split('/').filter(Boolean).map(decodeURIComponent),suffix=segments.slice(3).join('/'),path=suffix.slice(ref.length+1);return u.origin!==page.origin||u.search||u.hash||segments.slice(0,2).join('/')!==repository||!['tree','blob'].includes(segments[2])||!suffix.startsWith(ref+'/')||!safePath(path)||path.split('/').slice(0,-1).join('/')!==directory||String(link.textContent||'').trim()!==path.split('/').at(-1);}catch{return true;}}))policyTableComplete=false;
+      if(!cell){const headers=[...row.querySelectorAll('th')];if(headers.length<2||String(headers[0].textContent||'').trim()!=='Name'||row.querySelectorAll('td').length)rejectRow('header');}
+      else if(!nameLinks.length){
+        rejectRow('no-name-link');const footer=row.getAttribute?.('data-testid')==='view-all-files-row';
+        rowIssues.add(footer?'row-footer-marker':'row-no-footer-marker');rowIssues.add(row===rows.at(-1)?'row-last':'row-not-last');rowIssues.add(cells.length===1?'row-single-cell':'row-multiple-cells');rowIssues.add(String(cell.textContent||'').trim()?'row-text-first-cell':'row-empty-first-cell');rowIssues.add(controls.length===0?'row-button-none':controls.length===1?'row-button-one':'row-button-many');
+        if(cells.slice(1).some(later=>[...(later.querySelectorAll?.('a[href]')||[])].some(link=>{try{const u=new URL(link.getAttribute('href'),page),segments=u.pathname.split('/').filter(Boolean).map(decodeURIComponent),suffix=segments.slice(3).join('/'),path=suffix.slice(ref.length+1);return u.origin===page.origin&&!u.search&&!u.hash&&segments.slice(0,2).join('/')===repository&&['tree','blob'].includes(segments[2])&&suffix.startsWith(ref+'/')&&safePath(path)&&path.split('/').slice(0,-1).join('/')===directory;}catch{return false;}})))rowIssues.add('row-later-file-link');
+        if(footer){
+          if(mobileControls.length!==1)rowIssues.add('footer-multiple-markers');if(cells[0]?.getAttribute?.('colspan')!=='3')rowIssues.add('footer-bad-colspan');if(!items.size)rowIssues.add('footer-no-files');
+          if(controls.length===1&&controls[0].getAttribute?.('data-component')!=='Link')rowIssues.add('footer-button-not-link');if(controls.length===1&&(String(controls[0].textContent||'').trim()!=='View all files'||String(row.textContent||'').trim()!=='View all files'))rowIssues.add('footer-bad-label');
+          if(cells[0]?.children?.length!==1||wrapper?.tagName!=='DIV'||wrapper.children?.length!==1||wrapper.children[0]!==controls[0])rowIssues.add('footer-bad-wrapper');if(row.children?.length!==1||row.children[0]!==cells[0]||row.querySelectorAll('th').length)rowIssues.add('footer-extra-elements');if(row.querySelectorAll('a[href],input,select,textarea').length)rowIssues.add('footer-extra-controls');
+        }
+      }
+      else nameLinks.some(link=>{try{const u=new URL(link.getAttribute('href'),page),segments=u.pathname.split('/').filter(Boolean).map(decodeURIComponent),suffix=segments.slice(3).join('/'),path=suffix.slice(ref.length+1);
+        if(u.origin!==page.origin)return rejectRow('link-origin');if(u.search||u.hash)return rejectRow('link-query-hash');if(segments.slice(0,2).join('/')!==repository)return rejectRow('link-repository');if(!['tree','blob'].includes(segments[2]))return rejectRow('link-route');if(!suffix.startsWith(ref+'/'))return rejectRow('link-ref');if(!safePath(path))return rejectRow('link-path');if(path.split('/').slice(0,-1).join('/')!==directory)return rejectRow('link-nesting');if(String(link.textContent||'').trim()!==path.split('/').at(-1))return rejectRow('link-label');return false;
+      }catch{return rejectRow('link-format');}});
       for(const u of candidates){const segments=u.pathname.split('/').filter(Boolean).map(decodeURIComponent);if(segments.slice(0,2).join('/')!==repository||!['tree','blob'].includes(segments[2]))continue;
         const suffix=segments.slice(3).join('/');if(!suffix.startsWith(ref+'/'))continue;const path=suffix.slice(ref.length+1);if(!safePath(path))throw Error('Unsafe GitHub file table entry.');
         if(path.split('/').slice(0,-1).join('/')!==directory)continue;
@@ -87,7 +110,7 @@
       }
     }
     if(!items.size)return objects;
-    objects.push({payload:{codeViewTreeRoute:{path:directory||'/',refInfo:{name:ref,currentOid:sha},tree:{items:[...items.values()],totalCount:items.size,truncated:false,policyTableComplete}}}});return objects;
+    objects.push({payload:{codeViewTreeRoute:{path:directory||'/',refInfo:{name:ref,currentOid:sha},tree:{items:[...items.values()],totalCount:items.size,truncated:false,policyTableComplete,policyRowIssues:[...rowIssues]}}}});return objects;
   }
   function websiteError(status,html=''){
     const text=String(html).slice(0,1024*1024),failure=message=>Object.assign(Error(message),{code:status===429?'GITHUB_WEBSITE_RATE_LIMIT':status===404?'GITHUB_WEBSITE_NOT_FOUND':status===401||status===403?'GITHUB_WEBSITE_DENIED':'GITHUB_WEBSITE_UNREADABLE',source:'github-website',status,accessIssue:{kind:status===429?'website-rate-limit':'website-access',confirmed:status===429,title:status===429?'GitHub website temporarily limited':'GitHub website access unavailable',message,action:'Check this repository directly on GitHub and retry. Project discovery reads the website, not the GitHub API.'}});
@@ -101,13 +124,20 @@
     if(/\.(?:kicad_(?:sch|pcb|pro|mod|sym|dru)|sch|pro|brd|lib)$/i.test(path)&&/^\s*(?:<!doctype\s+html\b|<html\b|<head\b|<body\b|<title\b|<form\b)/i.test(content))throw Error('GitHub returned an HTML website page instead of saved KiCad source. Check repository website access; no source was cached.');
     return content;
   }
-  async function bounded(response,limit,signal,binary=false) {
-    if(Number(response.headers.get('content-length'))>limit){await response.body?.cancel();throw Error('GitHub session response exceeds its size limit.');}
+  async function bounded(response,limit,signal,binary=false,sizeCode='GITHUB_PAGE_TOO_LARGE') {
+    if(Number(response.headers.get('content-length'))>limit){try{await response.body?.cancel();}catch{}throw sizeError(sizeCode,limit);}
     const reader=response.body.getReader(), chunks=[];let size=0;
     const cancel=()=>reader.cancel().catch(()=>{});signal?.addEventListener('abort',cancel,{once:true});if(signal?.aborted)cancel();
-    try{while(true){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>limit){await reader.cancel();throw Error('GitHub session response exceeds its size limit.');}chunks.push(value);}}finally{signal?.removeEventListener('abort',cancel);}
+    try{while(true){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>limit)throw sizeError(sizeCode,limit);chunks.push(value);}}catch(error){try{await reader.cancel();}catch{}throw error;}finally{signal?.removeEventListener('abort',cancel);reader.releaseLock();}
     if(signal?.aborted)throw Error('Project loading cancelled.');
     const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}return binary?bytes:new TextDecoder('utf-8',{fatal:true}).decode(bytes);
+  }
+  async function responseError(response,signal){
+    let text='';
+    if([401,403,404,429].includes(response.status)){try{await response.body?.cancel();}catch{}}
+    else try{text=await bounded(response,1024*1024,signal);}catch(error){if(error?.code!=='GITHUB_PAGE_TOO_LARGE')throw error;}
+    if(signal?.aborted)throw Error('Project loading cancelled.');
+    return websiteError(response.status,text);
   }
   function create({fetch:fetcher=root.fetch,location=root.location,signal,parseDocument=()=>documentObjects(root.document,location.href),parseHTML=(html,url)=>documentObjects(new DOMParser().parseFromString(html,'text/html'),url),parsePullHTML=(html)=>new DOMParser().parseFromString(html,'text/html')}={}) {
     async function treeWithFeed(objects,repository,ref,directory,readSignal,policyRequired=false) {
@@ -116,18 +146,41 @@
       if(hints.length!==1)throw Error('GitHub website did not expose a readable repository tree.');
       const hint=hints[0];scope(repository,hint.ref);
       if(directory!==''||hint.directory!==''||hint.repository!==repository||SHA.test(ref)||ref!=='HEAD'&&hint.ref!==ref)throw Error('GitHub file table returned a different branch or directory.');
-      // Modern GitHub renders the branch-head header after the initial HTML.
-      // Resolve HEAD from its same-origin branch feed, then read a pinned tree.
-      const feedURL='https://github.com/'+repository+'/commits/'+encodeURIComponent(hint.ref)+'.atom';
-      const response=await fetcher(feedURL,{credentials:'same-origin',redirect:'error',cache:'no-store',signal:readSignal});
-      if(!response.ok)throw websiteError(response.status,await bounded(response,1024*1024,readSignal));
-      if(response.url&&response.url!==feedURL||!/atom|xml/i.test(response.headers.get('content-type')||''))throw Error('GitHub returned a different branch feed location or format.');
-      const parser=root.KiCadGitHubWebsiteHistory||(typeof require==='function'?require('./github-website-history.js'):null);
-      if(!parser)throw Error('Reload the repository session to enable branch metadata.');
-      const feed=parser.parseAtom(await bounded(response,4*1024*1024,readSignal),{repository,ref:hint.ref}),sha=feed.commits[0]?.sha;
-      if(!SHA.test(sha||''))throw Error('GitHub branch HEAD metadata is unavailable.');
+      // A route shell can advertise the exact head before its file tree is
+      // hydrated. Use that explicit same-root branch identity, never an
+      // arbitrary commit link or the displayed historical page.
+      const shells=objects.flatMap(value=>[value?.payload?.codeViewTreeRoute,value?.payload?.codeViewRepoRoute]).filter(route=>route&&(route.path??'/')==='/'&&route.refInfo?.currentOid!==undefined);
+      let sha=null;
+      for(const route of shells){
+        if(route.refInfo.name!==hint.ref||!SHA.test(route.refInfo.currentOid||''))throw Error('GitHub session returned a different revision.');
+        const oid=route.refInfo.currentOid.toLowerCase();
+        if(sha&&sha!==oid)throw Error('GitHub website returned conflicting directory revisions.');sha=oid;
+      }
+      if(!sha){
+        const parser=root.KiCadGitHubWebsiteHistory||(typeof require==='function'?require('./github-website-history.js'):null);
+        if(!parser)throw Error('Reload the repository session to enable branch metadata.');
+        const feedURL='https://github.com/'+repository+'/commits/'+encodeURIComponent(hint.ref)+'.atom';
+        const response=await fetcher(feedURL,{credentials:'same-origin',redirect:'error',cache:'no-store',signal:readSignal});
+        if(response.status===404){
+          // Private Atom feeds can be unavailable to an otherwise signed-in
+          // website session. Only this feed-specific 404 permits the observed
+          // unfiltered HTML route, whose explicit branch head is verified.
+          try{await response.body?.cancel();}catch{}
+          if(readSignal?.aborted)throw Error('Project loading cancelled.');
+          const headURL='https://github.com/'+repository+'/commits/'+encodeURIComponent(hint.ref)+'/',head=await fetcher(headURL,{credentials:'same-origin',redirect:'error',cache:'no-store',signal:readSignal});
+          if(!head.ok)throw await responseError(head,readSignal);
+          if(head.url&&head.url!==headURL||!/text\/html/i.test(head.headers.get('content-type')||''))throw Error('GitHub returned a different branch history location or format.');
+          if(typeof parser.parseBranchHead!=='function')throw Error('Reload the repository session to enable private branch metadata.');
+          sha=parser.parseBranchHead(htmlObjects(await bounded(head,8*1024*1024,readSignal)),{repository,ref:hint.ref}).sha;
+        }else{
+          if(!response.ok)throw await responseError(response,readSignal);
+          if(response.url&&response.url!==feedURL||!/atom|xml/i.test(response.headers.get('content-type')||''))throw Error('GitHub returned a different branch feed location or format.');
+          const feed=parser.parseAtom(await bounded(response,4*1024*1024,readSignal,false,'GITHUB_HISTORY_TOO_LARGE'),{repository,ref:hint.ref});sha=feed.commits[0]?.sha;
+        }
+        if(!SHA.test(sha||''))throw Error('GitHub branch HEAD metadata is unavailable.');
+      }
       const pinnedURL='https://github.com/'+repository+'/tree/'+sha,pinned=await fetcher(pinnedURL,{credentials:'same-origin',redirect:'error',cache:'no-store',signal:readSignal});
-      if(!pinned.ok)throw websiteError(pinned.status,await bounded(pinned,1024*1024,readSignal));
+      if(!pinned.ok)throw await responseError(pinned,readSignal);
       if(pinned.url&&pinned.url!==pinnedURL||!/text\/html/i.test(pinned.headers.get('content-type')||''))throw Error('GitHub returned a different pinned tree location or format.');
       return treeData(parseHTML(await bounded(pinned,8*1024*1024,readSignal),pinnedURL),sha,'',policyRequired);
     }
@@ -151,15 +204,15 @@
           // fork or historical) page or a project-buffer cache. Only a fresh,
           // complete default-branch root proves that a policy is absent.
           const url='https://github.com/'+repository,response=await fetcher(url,{credentials:'same-origin',redirect:'error',cache:'no-store',signal:controller.signal});
-          if(!response.ok)throw websiteError(response.status,await bounded(response,1024*1024,controller.signal));
-          if(response.url&&response.url!==url||!/text\/html/i.test(response.headers.get('content-type')||''))throw Error('Repository policy root location or format changed.');
+          if(!response.ok)throw await responseError(response,controller.signal);
+          if(response.url&&response.url!==url||!/text\/html/i.test(response.headers.get('content-type')||''))throw Object.assign(Error('Repository policy root location or format changed.'),{code:'GITHUB_POLICY_LOCATION'});
           const objects=parseHTML(await bounded(response,8*1024*1024,controller.signal),url),accounts=[...new Set(objects.filter(item=>typeof item?.githubWebsiteAccount==='string').map(item=>item.githubWebsiteAccount))];
-          if(accounts.length!==1)throw Error('The website account for repository policy could not be verified.');
+          if(accounts.length!==1)throw Object.assign(Error('The website account for repository policy could not be verified.'),{code:'GITHUB_POLICY_ACCOUNT'});
           const snapshot=await treeWithFeed(objects,repository,'HEAD','',controller.signal,true),account=accounts[0];
           const entry=snapshot.items.find(item=>item.path==='.kicad-review-policy.json');
           if(!entry)return {sha:snapshot.sha,source:'default',account};
           if(entry.type!=='file')throw Error('Repository comment policy must be a regular saved file.');
-          const saved=await read({repository,ref:snapshot.sha,action:'file',path:entry.path,limit:128*1024});
+          const saved=await read({repository,ref:snapshot.sha,action:'file',path:entry.path,limit:128*1024}).catch(error=>{if(error?.code==='GITHUB_SOURCE_TOO_LARGE')error.code='GITHUB_POLICY_TOO_LARGE';throw error;});
           if(!saved)throw Error('Repository comment policy was listed but could not be read.');
           return {sha:snapshot.sha,source:'repository',content:saved.content,account};
         }
@@ -167,7 +220,7 @@
           if(ref!=='HEAD'||!safePath(path,true)||path&&(!path.startsWith('tree/')||path.split('/').length<2)||/[?#%]/.test(path))throw Error('Invalid GitHub session context.');
           const url='https://github.com/'+repository+(path?'/'+path.split('/').map(encodeURIComponent).join('/'):''),current=here.origin+here.pathname.replace(/\/$/,'');
           const pageObjects=async target=>{if(controller.signal.aborted)throw Error('Project loading cancelled.');const response=await fetcher(target,{credentials:'same-origin',redirect:'error',cache:'no-store',signal:controller.signal});
-            if(!response.ok)throw websiteError(response.status,await bounded(response,1024*1024,controller.signal));if(response.url&&response.url!==target)throw Error('GitHub session context returned a different repository location.');
+            if(!response.ok)throw await responseError(response,controller.signal);if(response.url&&response.url!==target)throw Error('GitHub session context returned a different repository location.');
             return parseHTML(await bounded(response,8*1024*1024,controller.signal),target);};
           const resolveContext=async objects=>{try{return contextData(objects,repository,path);}catch(error){if(/unsafe|different|incomplete|conflicting|Invalid/.test(error.message))throw error;}
             // A classic nested table identifies a branch and folder, but its
@@ -189,14 +242,14 @@
           const parser=root.KiCadGitHubWebsitePulls||(typeof require==='function'?require('./github-website-pulls.js'):null),url='https://github.com/'+repository+(action==='pull'?'/pull/'+path:'/pulls');
           if(!parser)throw Error('Reload the repository session to enable PR discovery.');
           const response=await fetcher(url,{credentials:'same-origin',redirect:'error',cache:'no-store',signal:controller.signal});
-          if(!response.ok)throw websiteError(response.status,await bounded(response,1024*1024,controller.signal));
+          if(!response.ok)throw await responseError(response,controller.signal);
           if(response.url&&response.url!==url||!/text\/html/i.test(response.headers.get('content-type')||''))throw Error('GitHub returned a different PR location or format.');
           const doc=parsePullHTML(await bounded(response,8*1024*1024,controller.signal));return action==='pull'?parser.fromDocument(doc,{repository,number:Number(path),url}):parser.listFromDocument(doc,{repository});
         }
         if(action==='branches'||action==='commit'){
           const parser=root.KiCadGitHubWebsiteHistory||(typeof require==='function'?require('./github-website-history.js'):null);if(!parser)throw Error('Reload the repository session to enable branch history.');
           const url=`https://github.com/${repository}/${action==='branches'?'branches/all':'commit/'+ref}`,response=await fetcher(url,{credentials:'same-origin',redirect:'error',cache:'no-store',signal:controller.signal});
-          if(!response.ok)throw websiteError(response.status,await bounded(response,1024*1024,controller.signal));
+          if(!response.ok)throw await responseError(response,controller.signal);
           if(response.url&&response.url!==url||!/text\/html/i.test(response.headers.get('content-type')||''))throw Error('GitHub website returned a different metadata location or format.');
           const objects=htmlObjects(await bounded(response,8*1024*1024,controller.signal));
           return action==='branches'?parser.parseBranches(objects,{repository}):parser.parseCommit(objects,{repository,ref});
@@ -204,7 +257,7 @@
         if(action==='history'){
           const url=`https://github.com/${repository}/commits/${encodeURIComponent(ref)}.atom`,response=await fetcher(url,{credentials:'same-origin',redirect:'error',cache:'no-store',signal:controller.signal});
           if(!response.ok||response.url&&response.url!==url||!/atom|xml/i.test(response.headers.get('content-type')||''))throw Error('GitHub website commit history is unavailable for this repository.');
-          return {ref,content:await bounded(response,4*1024*1024,controller.signal)};
+          return {ref,content:await bounded(response,4*1024*1024,controller.signal,false,'GITHUB_HISTORY_TOO_LARGE')};
         }
         if(action==='file'||action==='asset') {
           if(!safePath(path)||!Number.isInteger(limit)||limit<1||limit>(action==='asset'?32:64)*1024*1024)throw Error('Invalid GitHub session file.');
@@ -218,11 +271,11 @@
           const lfsAsset=action==='asset'&&final.origin==='https://media.githubusercontent.com'&&final.pathname==='/media'+suffix;
           if(!response.ok||final.username||final.password||final.hash||!(final.origin==='https://raw.githubusercontent.com'&&final.pathname===suffix||final.origin==='https://github.com'&&final.pathname===`/${repository}/raw/${ref}/${path.split('/').map(encodeURIComponent).join('/')}`||lfsAsset)||/html/i.test(response.headers.get('content-type')||''))throw Error('GitHub session could not download this file. Open this repository on GitHub and complete website sign-in or organization access.');
           if(action==='asset') {
-            const bytes=await bounded(response,limit,controller.signal,true),pieces=[];
+            const bytes=await bounded(response,limit,controller.signal,true,'GITHUB_ASSET_TOO_LARGE'),pieces=[];
             for(let i=0;i<bytes.length;i+=8192)pieces.push(String.fromCharCode(...bytes.subarray(i,i+8192)));
             return {base64:btoa(pieces.join('')),sha:ref.toLowerCase()};
           }
-          return {content:rawText(await bounded(response,limit,controller.signal),path),sha:ref.toLowerCase()};
+          return {content:rawText(await bounded(response,limit,controller.signal,false,'GITHUB_SOURCE_TOO_LARGE'),path),sha:ref.toLowerCase()};
         }
         const directory=action==='resolve'?'':path;
         // Reuse the repository page already downloaded by Chrome before fetching
@@ -231,7 +284,7 @@
         if(ref!=='HEAD'||rootPage){try{return treeData(parseDocument(),ref,directory);}catch{}}
         const url=ref==='HEAD'?`https://github.com/${repository}`:`https://github.com/${repository}/tree/${encodeURIComponent(ref)}${directory?'/'+directory.split('/').map(encodeURIComponent).join('/'):''}`;
         const response=await fetcher(url,{credentials:'same-origin',redirect:'error',cache:'no-store',signal:controller.signal});
-        if(!response.ok)throw websiteError(response.status,await bounded(response,1024*1024,controller.signal));
+        if(!response.ok)throw await responseError(response,controller.signal);
         return await treeWithFeed(parseHTML(await bounded(response,8*1024*1024,controller.signal),url),repository,ref,directory,controller.signal);
       } catch(error) {
         // Only fixed diagnostic codes cross the session bridge. Raw HTML,

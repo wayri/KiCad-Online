@@ -20,6 +20,32 @@ test('unknown parents remain unknown, missing tab is explicit, and policy blocks
 });
 
 const parser=require('../github-website-history.js'),fixture=name=>require('./fixtures/github-history/'+name+'.json'),liveRepository='wayri/KiCad-Online';
+test('observed first commits-page metadata supplies only its explicit matching branch head',()=>{
+ const value=fixture('github-branch-head-observed'),repository='wayri/KERO',oid=value.payload.commitsRefRoute.refInfo.currentOid;
+ assert.deepEqual(parser.parseBranchHead([value],{repository,ref:'main'}),{repository,ref:'main',sha:oid});
+ const edited=structuredClone(value),route=edited.payload.commitsRefRoute;route.refInfo.name='release/hardware';route.repo.ownerLogin='WAYRI';route.repo.name='kero';route.sessionToken='must-not-leave-parser';route.commitGroups=[{commits:[{oid:other}]}];
+ assert.deepEqual(parser.parseBranchHead([{},edited],{repository,ref:'release/hardware'}),{repository,ref:'release/hardware',sha:oid});
+ for(const offset of [0,99]){route.filters.pagination.endCursor=oid+' '+offset;assert.equal(parser.parseBranchHead([edited],{repository,ref:'release/hardware'}).sha,oid);}
+});
+
+test('branch-head metadata rejects absent, duplicate, conflicting, foreign and malformed identities',()=>{
+ const value=fixture('github-branch-head-observed'),args={repository:'wayri/KERO',ref:'main'};
+ for(const objects of [null,{},[],[{}],[{payload:{commitsRefRoute:null}}],[value,value],Array(101).fill({})])assert.throws(()=>parser.parseBranchHead(objects,args));
+ const conflicting=structuredClone(value);conflicting.payload.commitsRefRoute.refInfo.currentOid=other;assert.throws(()=>parser.parseBranchHead([value,conflicting],args),/conflicting/);
+ for(const args of [{repository:'foreign/KERO',ref:'main'},{repository:'wayri/other',ref:'main'},{repository:'wayri/KERO',ref:'other'},{repository:'../KERO',ref:'main'},{repository:'wayri/KERO',ref:'../main'},{repository:'wayri/KERO',ref:'main?author=x'}])assert.throws(()=>parser.parseBranchHead([value],args));
+ const patches=[route=>{delete route.repo;},route=>{route.repo.ownerLogin='foreign';},route=>{route.repo.name='other';},route=>{route.repo.ownerLogin=null;},route=>{delete route.refInfo;},route=>{route.refInfo.name='other';},route=>{route.refInfo.refType='tag';},route=>{delete route.refInfo.refType;},route=>{route.refInfo.currentOid='short';},route=>{route.refInfo.currentOid=null;},route=>{route.refInfo.currentOid=[sha];},route=>{delete route.currentCommit;},route=>{route.currentCommit.oid=other;},route=>{route.currentCommit.oid='short';},route=>{route.currentCommit.oid=[sha];}];
+ for(const patch of patches){const edited=structuredClone(value);patch(edited.payload.commitsRefRoute);assert.throws(()=>parser.parseBranchHead([edited],args));}
+});
+
+test('branch-head metadata requires all observed filters to be null and exact bounded first-page cursors',()=>{
+ const value=fixture('github-branch-head-observed'),args={repository:'wayri/KERO',ref:'main'},oid=value.payload.commitsRefRoute.refInfo.currentOid;
+ const patches=[route=>{delete route.filters;},route=>{route.filters={};},route=>{route.filters=[];},route=>{route.filters.unknownFilter='filtered';},route=>{delete route.filters.pagination;},route=>{route.filters.pagination.hasPreviousPage=true;},route=>{delete route.filters.pagination.hasPreviousPage;},route=>{route.filters.pagination.hasNextPage='false';},route=>{delete route.filters.pagination.hasNextPage;}];
+ for(const key of ['since','until','author','newPath','originalBranch','currentBlobPath']){patches.push(route=>{route.filters[key]='filtered';},route=>{delete route.filters[key];});}
+ for(const startCursor of [undefined,null,oid+' 1',oid+' 00',other+' 0',oid+' 0 ',[oid+' 0']])patches.push(route=>{route.filters.pagination.startCursor=startCursor;});
+ for(const endCursor of [undefined,null,other+' 34',oid+' 100',oid+' -1',oid+' 01',oid+' 1.5',oid+' 1e2',oid+' 34\n',[oid+' 34']])patches.push(route=>{route.filters.pagination.endCursor=endCursor;});
+ for(const patch of patches){const edited=structuredClone(value);patch(edited.payload.commitsRefRoute);assert.throws(()=>parser.parseBranchHead([edited],args));}
+});
+
 test('observed public website branch contracts preserve names and default flags without inventing tips',()=>{
  for(const name of ['github-branches-observed','github-all-branches-observed']){
   const value=parser.parseBranches([fixture(name)],{repository:liveRepository});assert.equal(value.branches[0].name,'main');assert.equal(value.branches[0].isDefault,true);assert.equal(value.branches.some(branch=>branch.name==='codex/release-0-12-85'),true);assert.equal(value.partial,true);assert.equal(value.branches.some(branch=>Object.hasOwn(branch,'sha')),false);assert.deepEqual(parser.validateBranches(value,liveRepository),value);

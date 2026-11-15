@@ -345,3 +345,5 @@ test('unlabelled UUID networks have honest readable display names and keep pin c
  assert.equal(displayName({kind:'schematic',name:`Unnamed network (${uuid})`}), 'Unnamed network');
  assert.equal(displayName({kind:'pcb',name:uuid}),uuid,'a saved PCB name must not be guessed away simply because it resembles an ID');
 });
+
+ test('selected trace totals sum saved segment and arc centerlines once, omitting invalid geometry',()=>{const api=require('../net-model.js'),line={kind:'segment',path:'board.kicad_pcb',uuid:'a',saved:{tree:['segment',['start',0,0],['end',3,4]]}},arc={kind:'arc',path:line.path,uuid:'b',saved:{tree:['arc',['start',1,0],['mid',0,1],['end',-1,0]]}};const total=api.selectedTrackLength([line,line,arc,{kind:'via',uuid:'v'},{kind:'segment',uuid:'bad',saved:{tree:['segment']}}]);assert.equal(total.count,2);assert.equal(total.omitted,1);assert.ok(Math.abs(total.lengthMm-(5+Math.PI))<1e-9);});

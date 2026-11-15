@@ -1,5 +1,12 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const api=require('../github-session-review.js');
+test('website 404 distinguishes unavailable Issues and Discussions without claiming a successful post',async()=>{
+ for(const [kind,action,label]of [['issue','list','Issues'],['discussion','list','Discussions'],['discussion','categories','Discussions']]){
+  let requests=0;const reader=api.create({location:{href:'https://github.com/owner/repo'},fetch:async()=>{requests++;return new Response('private provider details',{status:404,headers:{'Content-Type':'text/html'}});}});
+  await assert.rejects(reader.dispatch({repository:'owner/repo',kind,action}),error=>error.code==='WEBSITE_REVIEW_UNAVAILABLE'&&error.message.includes('HTTP 404 for '+label)&&error.message.includes('Nothing was posted; your draft is kept.')&&!error.message.includes('private provider details'));
+  assert.equal(requests,1);
+ }
+});
 test('website reviews require exact repository session and reject unsafe scopes',()=>{
  for(const repository of ['owner/repo.evil','other/repo','owner/../repo','../repo','owner/repo?x'])assert.throws(()=>api.scope(repository,{href:'https://github.com/owner/repo/issues/1'}));
  for(const href of ['http://github.com/owner/repo','https://evil.test/owner/repo','https://github.com/owner/repository','https://name@github.com/owner/repo'])assert.throws(()=>api.scope('owner/repo',{href}));
@@ -95,6 +102,18 @@ test('new-Issue React controls require matching title/body and explicit verified
  freshAccount='another-account';await assert.rejects(reader.dispatch({repository:message.repository,action:'verify-create',ticket:next.ticket}),/account/);assert.equal(clicks,0);freshAccount='reviewer';
  await reader.dispatch({repository:message.repository,action:'verify-create',ticket:next.ticket});assert.equal((await reader.dispatch({repository:message.repository,action:'commit-create',ticket:next.ticket})).attempted,true);assert.equal(clicks,1);
 });
+test('new-conversation verification reports only fixed changed-field tags before and after account refresh',async t=>{
+ const oldInput=global.HTMLInputElement,oldText=global.HTMLTextAreaElement;t.after(()=>{global.HTMLInputElement=oldInput;global.HTMLTextAreaElement=oldText;});
+ class Input{constructor(value=''){this._value=value;this.isConnected=true;}set value(value){this._value=value;}get value(){return this._value;}getClientRects(){return [{}];}closest(){return null;}dispatchEvent(){}}
+ class Textarea extends Input{}Object.defineProperty(Textarea.prototype,'value',Object.getOwnPropertyDescriptor(Input.prototype,'value'));global.HTMLInputElement=Input;global.HTMLTextAreaElement=Textarea;
+ for(const afterRefresh of [false,true])for(const tag of ['title-element','title-value','body-element','body-value','button-disabled']){
+  let title=new Input(),box=new Textarea(),clicks=0;const button={...new Input(),textContent:'Create',getClientRects:()=>[{}],closest:()=>null,click:()=>{clicks++;}},message={repository:'owner/repo',title:'PRIVATE title',body:'PRIVATE body https://private.example/secret'};
+  const doc={querySelector:()=>({getAttribute:()=> 'reviewer'}),querySelectorAll:query=>query.includes('input[')?[title]:query.includes('textarea[')?[box]:query==='main button'?[button]:[]},change=()=>{if(tag==='title-element')title=new Input(message.title);if(tag==='title-value')title.value='PRIVATE changed';if(tag==='body-element')box=new Textarea(message.body);if(tag==='body-value')box.value='PRIVATE changed';if(tag==='button-disabled')button.disabled=true;};
+  const reader=api.create({location:{href:'https://github.com/owner/repo/issues/new'},document:doc,delay:async()=>{},parseHTML:()=>({querySelector:()=>({getAttribute:()=> 'reviewer'})}),fetch:async()=>{if(afterRefresh)change();return new Response('<html></html>',{headers:{'content-type':'text/html'}});}}),draft=await reader.dispatch({...message,action:'prepare-create'});
+  if(!afterRefresh)change();await assert.rejects(reader.dispatch({repository:message.repository,action:'verify-create',ticket:draft.ticket}),error=>{assert.equal(error.code,'WEBSITE_REVIEW_UNAVAILABLE');assert.ok(error.message.endsWith('Checks: '+tag+'.'));assert.doesNotMatch(error.message,/PRIVATE|private\.example|secret/);return true;});assert.equal(clicks,0);
+ }
+});
+
 test('native screenshot paste accepts bounded PNG dimensions and rejects mismatched or non-PNG data',()=>{
  const dataUrl='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a+XcAAAAASUVORK5CYII=';
  assert.ok(api.screenshotBytes({mime:'image/png',dataUrl,width:1,height:1}).length>24);

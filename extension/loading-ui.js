@@ -2,14 +2,16 @@
 ((root)=>{
   'use strict';
   const workerURL=new URL('load-worker.js',document.currentScript?.src||location.href).href;
-  const logoURL=new URL('app-logo.png',document.currentScript?.src||location.href).href;
+  const logoURL=new URL(root.KiCadAndroidRuntime?'app-logo.png':'icons/icon48.png',document.currentScript?.src||location.href).href;
+  if(document.head){const style=document.createElement('link');style.rel='stylesheet';style.href=new URL('loading-ui.css',document.currentScript?.src||location.href).href;document.head.append(style);}
   const cancelled=()=>Object.assign(new Error('Loading stopped.'),{name:'AbortError'});
   function duration(ms){const seconds=Math.floor(ms/1000);return seconds>=3600?`${Math.floor(seconds/3600)} h ${Math.floor(seconds%3600/60)} min`:seconds>=60?`${Math.floor(seconds/60)} min ${seconds%60} s`:`${seconds} s`;}
-  function indicator(host,{onStop}={}){
+  function indicator(host,{onStop,fullscreen=false}={}){
     const pane=document.createElement('div');pane.className='loading-surface';pane.hidden=true;pane.setAttribute('role','status');pane.setAttribute('aria-live','polite');
     if(typeof pane.showPopover==='function')pane.setAttribute('popover','manual');
+    if(fullscreen)pane.classList.add('loading-fullscreen');
     const bar=document.createElement('progress');bar.className='loading-bar';bar.setAttribute('aria-label','Loading');
-    const copy=document.createElement('div'),title=document.createElement('strong'),detail=document.createElement('p');title.textContent='Loading';copy.append(title,detail);pane.append(bar,copy);if(root.KiCadAndroidRuntime||document.body?.classList?.contains('android-home')){const logo=document.createElement('img');logo.className='loading-logo';logo.src=logoURL;logo.alt='';logo.width=36;logo.height=36;logo.setAttribute('aria-hidden','true');pane.append(logo);pane.classList.add('loading-branded');}host.append(pane);
+    const copy=document.createElement('div'),title=document.createElement('strong'),detail=document.createElement('p');title.textContent=fullscreen?'Opening your project':'Loading';copy.append(title,detail);pane.append(bar,copy);if(fullscreen||root.KiCadAndroidRuntime||document.body?.classList?.contains('android-home')){const logo=document.createElement('img');logo.className='loading-logo';logo.src=logoURL;logo.alt='';logo.width=36;logo.height=36;logo.setAttribute('aria-hidden','true');pane.append(logo);pane.classList.add('loading-branded');}host.append(pane);
     let started=0,timer=null,delay=null,active=false,stopping=false,stopAction=onStop;
     const elapsed=document.createElement('small');copy.append(elapsed);
     const stop=document.createElement('button');stop.type='button';stop.className='loading-stop';stop.textContent='Stop';stop.hidden=typeof stopAction!=='function';stop.setAttribute('aria-label','Stop loading');pane.append(stop);
@@ -20,9 +22,9 @@
       if(Number.isFinite(progress)){bar.max=1;bar.value=Math.max(0,Math.min(1,progress));}else bar.removeAttribute?.('value');
       host.setAttribute('aria-busy','true');
       if(active)return;active=true;started=Date.now();elapsed.textContent='';
-      delay=setTimeout(()=>{delay=null;if(!active)return;pane.hidden=false;try{pane.showPopover?.();}catch{}
+      const reveal=()=>{delay=null;if(!active)return;pane.hidden=false;try{pane.showPopover?.();}catch{}
         const tick=()=>{elapsed.textContent=duration(Date.now()-started);};tick();timer=setInterval(tick,1000);
-      },300);
+      };if(fullscreen)reveal();else delay=setTimeout(reveal,300);
     },hide(){active=false;stopping=false;stop.disabled=false;try{pane.hidePopover?.();}catch{}pane.hidden=true;host.setAttribute('aria-busy','false');clearTimeout(delay);delay=null;clearInterval(timer);timer=null;},dispose(){this.hide();pane.remove();}};
   }
   const activities=new Map();let activityUI=null;

@@ -61,7 +61,25 @@
         }
         Object.defineProperty(sources,'recentSnapshotRef',{value:sha});return sources;
       }
-      const scopedModels=type==='repo-model-index'&&file!==undefined&&typeof buffer.modelInventory==='function',rawInventory=scopedModels?await buffer.modelInventory(repository,sha,file,signal):await buffer.inventory(repository,sha,signal,['project-inventory','drawing-files','project-search-files'].includes(type)?{directory:file.split('/').slice(0,-1).join('/'),scoped:true}:{}),normalize=root.KiCadGitHubProjectBuffer?.normalizeInventory||(typeof require==='function'?require('./github-project-buffer.js').normalizeInventory:null),inventory=normalize?normalize(rawInventory,sha):rawInventory,warnings=[...(inventory.warnings||[])];
+      const scopedModels=type==='repo-model-index'&&file!==undefined&&typeof buffer.modelInventory==='function';
+      let rawInventory;
+      try{
+        rawInventory=scopedModels?await buffer.modelInventory(repository,sha,file,signal):await buffer.inventory(repository,sha,signal,['project-inventory','drawing-files','project-search-files'].includes(type)?{directory:file.split('/').slice(0,-1).join('/'),scoped:true}:{});
+      }catch(error){
+        // A known project can open without folder HTML. Probe only its exact
+        // same-stem companions, at the already resolved commit, through the same
+        // bounded session transport. Never turn an access denial into discovery.
+        if(signal?.aborted||type!=='project-inventory'||!/(?:\.kicad_pro|\.pro)$/i.test(file)||!['GITHUB_PAGE_TOO_LARGE','GITHUB_TREE_UNAVAILABLE','GITHUB_TREE_INCOMPLETE','GITHUB_JSON_PAYLOAD_LIMIT'].includes(error?.code))throw error;
+        if(await get(file)===null)throw Error('Project file is unavailable at this commit.');
+        const verified=[{path:file,size:0}],modern=/\.kicad_pro$/i.test(file),stem=file.replace(modern?/\.kicad_pro$/i:/\.pro$/i,'');
+        for(const suffix of modern?['.kicad_sch','.kicad_pcb']:['.sch','.brd']){
+          if(signal?.aborted)throw Object.assign(Error('Project loading cancelled.'),{name:'AbortError'});
+          const path=stem+suffix;
+          if(await get(path)!==null)verified.push({path,size:0});
+        }
+        rawInventory={snapshotRef:sha,files:verified,warnings:['Project inventory is incomplete because GitHub folder metadata is unavailable. Only the project and verified same-name drawings are listed; saved subsheet references are followed when opening the schematic.']};
+      }
+      const normalize=root.KiCadGitHubProjectBuffer?.normalizeInventory||(typeof require==='function'?require('./github-project-buffer.js').normalizeInventory:null),inventory=normalize?normalize(rawInventory,sha):rawInventory,warnings=[...(inventory.warnings||[])];
       const files=inventory.files.filter(item=>paths.filePath(item.path));
       if(type==='project-inventory')return {files,snapshotRef:sha,warnings};
       const incomplete=warnings.some(warning=>/incomplete|limited|limit reached/i.test(warning));

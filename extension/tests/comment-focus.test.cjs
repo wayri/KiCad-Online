@@ -13,6 +13,15 @@ test('area projection preserves four rotated corners and uses saved point before
  assert.equal(focus.projectArea(area,p=>({...p,visible:false})),null);
 });
 
+test('area hit testing follows projected polygons and accepts their visible boundary',()=>{
+ const area={x:0,y:0,width:20,height:10},project=p=>({x:100+p.x-p.y,y:50+p.x+p.y});
+ assert.equal(focus.hitArea(area,project,{x:105,y:65}),true);
+ assert.equal(focus.hitArea(area,project,{x:100,y:50}),true);
+ assert.equal(focus.hitArea(area,project,{x:80,y:90}),false);
+ assert.equal(focus.hitArea(area,()=>null,{x:105,y:65}),false);
+ assert.equal(focus.hitArea(area,project,{x:NaN,y:50}),false);
+});
+
 test('comment camera centers the saved point at phone and desktop aspect ratios', () => {
   for (const [width, height] of [[360, 720], [1600, 800], [720, 360], [1, 1]]) {
     for (const pcb of [true, false]) {

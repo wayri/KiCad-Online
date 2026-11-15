@@ -31,7 +31,7 @@
   const frame=node('iframe');frame.title='Read-only analysis: '+active;frame.src=url;host.replaceChildren(frame);
  }
  let loadController=null,retryLoad=()=>discover();
- const loading=globalThis.KiCadLoading?.indicator(document.body,{onStop:()=>{epoch++;loadController?.abort(Object.assign(Error('Loading stopped.'),{name:'AbortError'}));loading.hide();status('Loading stopped. ');$('projectStatus').append(button('Retry loading',()=>retryLoad()));}});
+ const loading=globalThis.KiCadLoading?.indicator(document.body,{fullscreen:true,onStop:()=>{epoch++;loadController?.abort(Object.assign(Error('Loading stopped.'),{name:'AbortError'}));loading.hide();status('Loading stopped. ');$('projectStatus').append(button('Retry loading',()=>retryLoad()));}});
  const renderedSettings=new Map(),parsedSettings=new Map();let parsedBytes=0;
  const folderState=new Map(),collapsedSheets=new Set();let hierarchy=null,previewFrame=null,homeVisible=false;
  function renderTree(){

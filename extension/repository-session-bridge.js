@@ -14,10 +14,21 @@
   GITHUB_REVISION_MISMATCH:'GitHub returned metadata for a different revision or folder. Reload the repository page and try again.',
   GITHUB_TREE_INCOMPLETE:'GitHub returned an incomplete directory listing. Open the smaller project folder and try again.',
   GITHUB_READ_TOO_LARGE:'The GitHub website response exceeds the bounded reader limit. Open the smaller project folder and try again.',
+  GITHUB_PAGE_TOO_LARGE:'GitHub repository page metadata exceeds the website reader limit. The repository page could not be verified.',
+  GITHUB_SOURCE_TOO_LARGE:'The saved source file exceeds this read request\'s byte limit.',
+  GITHUB_ASSET_TOO_LARGE:'The saved binary asset exceeds this read request\'s byte limit.',
+  GITHUB_HISTORY_TOO_LARGE:'The GitHub commit history feed exceeds the website reader limit.',
+  GITHUB_JSON_PAYLOAD_LIMIT:'The GitHub metadata page contains too many JSON payloads for the bounded reader.',
+  GITHUB_POLICY_TOO_LARGE:'The repository comment policy file exceeds its byte limit. Nothing was posted.',
   GITHUB_READ_FORMAT:'The repository response could not be decoded as the expected saved data. Reload its website tab and retry.',
   GITHUB_READ_TIMEOUT:'The repository-tab read timed out. Keep that tab open and retry.',
-  GITHUB_READ_CANCELLED:'Repository loading was cancelled.'};
- function failure(error){const code=Object.hasOwn(failures,error?.code||'')?error.code:null;return{ok:false,error:code?failures[code]:'Repository website read failed. Open this project tab and complete any sign-in/SSO requirement; browser policy may restrict access.',...(code?{code}:{})};}
+  GITHUB_READ_CANCELLED:'Repository loading was cancelled.',
+  GITHUB_POLICY_ACCOUNT:'The signed-in website account could not be verified for comment policy. Open this repository in the same browser profile and retry.',
+  GITHUB_POLICY_LOCATION:'GitHub returned a different page while checking comment policy. Open the repository root in the same browser profile and retry.',
+  GITHUB_POLICY_ROWS:'Comment policy could not be checked because the repository file table contains unsupported rows. Nothing was posted.'};
+ const sizeCeilings={GITHUB_PAGE_TOO_LARGE:8*1024*1024,GITHUB_SOURCE_TOO_LARGE:64*1024*1024,GITHUB_ASSET_TOO_LARGE:32*1024*1024,GITHUB_HISTORY_TOO_LARGE:4*1024*1024,GITHUB_POLICY_TOO_LARGE:128*1024};
+ const rowIssueLabels={'header':'unsupported header','no-name-link':'missing filename link','link-origin':'link origin','link-query-hash':'link query or fragment','link-repository':'link repository','link-route':'link route','link-ref':'link revision','link-path':'unsafe link path','link-nesting':'link directory nesting','link-label':'filename label','link-format':'malformed link','row-footer-marker':'known footer marker','row-no-footer-marker':'no footer marker','row-last':'last row','row-not-last':'nonterminal row','row-single-cell':'one cell','row-multiple-cells':'multiple cells','row-empty-first-cell':'blank first cell','row-text-first-cell':'first cell has text','row-later-file-link':'file link in later cell','row-button-none':'no button','row-button-one':'one button','row-button-many':'multiple buttons','footer-no-mobile':'footer lacks mobile class','footer-multiple-markers':'multiple footer markers','footer-bad-colspan':'footer colspan differs','footer-button-not-link':'footer button kind differs','footer-bad-label':'footer label differs','footer-bad-wrapper':'footer wrapper differs','footer-extra-elements':'footer has extra elements','footer-extra-controls':'footer has extra controls','footer-no-files':'footer precedes file data'};
+ function failure(error){const code=Object.hasOwn(failures,error?.code||'')?error.code:null,limit=error?.limit,suffix=code&&Object.hasOwn(sizeCeilings,code)&&Number.isSafeInteger(limit)&&limit>=1&&limit<=sizeCeilings[code]?' Limit: '+limit+' bytes.':'',issues=code==='GITHUB_POLICY_ROWS'&&Array.isArray(error?.policyRowIssues)&&error.policyRowIssues.length<=Object.keys(rowIssueLabels).length?[...new Set(error.policyRowIssues.filter(issue=>typeof issue==='string'&&Object.hasOwn(rowIssueLabels,issue)).map(issue=>rowIssueLabels[issue]))]:[];return{ok:false,error:code?failures[code]+suffix+(issues.length?' Row checks: '+issues.join(', ')+'.':''):'Repository website read failed. Open this project tab and complete any sign-in/SSO requirement; browser policy may restrict access.',...(code?{code}:{})};}
 
  root.chrome.runtime.onMessage.addListener((message,sender,reply)=>{
   if(sender?.id!==root.chrome.runtime.id||sender.tab||!message||typeof message!=='object')return false;
@@ -31,7 +42,7 @@
    if(['prepare','verify','commit','prepare-create','verify-create','commit-create','update-prepared'].includes(message.action)&&![root.chrome.runtime.getURL('background.js'),root.chrome.runtime.getURL('_generated_background_page.html')].includes(sender.url))return false;
    if(!root.KiCadGitHubSessionReview){reply({ok:false,error:'Reload this repository tab and invoke the extension again.'});return false;}
    if(reviewLoads>=2){reply({ok:false,error:'Wait for the current website review request.'});return false;}reviewLoads++;
-   Promise.resolve().then(()=>root.KiCadGitHubSessionReview.create().dispatch(message)).then(result=>reply({ok:true,result}),error=>reply({ok:false,error:error?.code==='WEBSITE_REVIEW_UNAVAILABLE'||error?.code==='WEBSITE_REVIEW_UNCERTAIN'?String(error.message).slice(0,500):'GitHub website review access is unavailable. Keep the matching signed-in repository tab open.'})).finally(()=>{reviewLoads--;});return true;
+   Promise.resolve().then(()=>root.KiCadGitHubSessionReview.create().dispatch(message)).then(result=>reply({ok:true,result}),error=>{const known=['WEBSITE_REVIEW_UNAVAILABLE','WEBSITE_REVIEW_UNCERTAIN'].includes(error?.code);reply({ok:false,error:known?String(error.message).slice(0,500):'GitHub website review access is unavailable. Keep the matching signed-in repository tab open.',...(known?{code:error.code}:{})});}).finally(()=>{reviewLoads--;});return true;
   }
   const reader=message.type==='github-session-read'&&location.origin==='https://github.com'?root.KiCadGitHubSessionReader:message.type==='gitlab-session-read'&&location.origin!=='https://github.com'?root.KiCadGitLabSessionReader:null;
   if(!reader)return false;const id=message.requestId,bytes=message.limit??8*1024*1024;

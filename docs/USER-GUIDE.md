@@ -8,6 +8,12 @@ Start with the [installation guide](INSTALL.md) for Android, Windows, Linux and 
 
 ## 1. Open a project
 
+### Extension updates
+
+Store-installed extensions receive updates through the browser’s normal update system. In **About** or **Settings → About KiCad Online**, choose **Check for updates** for an on-demand check where the browser supports it. If an update is ready, save your drafts and close KiCad Online tabs, or restart the browser. The viewer never forces a reload while you work. Store review, staged rollout and organization policies can delay an update’s availability.
+
+A **Development build** loaded with **Load unpacked** is a separate installation. Store updates do not replace it: update the local source folder and reload that extension, or use the store edition. Avoid keeping both editions enabled if you want one unambiguous toolbar entry. Firefox temporary installations also need manual replacement; use Mozilla Add-ons for permanent store-managed updates.
+
 ### Android
 
 1. Choose **Open a file** for a drawing or project ZIP, or use the Android document picker for an available storage provider.
@@ -403,3 +409,13 @@ In 3D, **X**, **Y** and **Z** select the positive axis views (right, back and to
 ### Draftsman documentation
 
 Open **Draftsman** in the drawing toolbar for customizable multi-sheet documentation, automatic outline dimensions, snapped manual dimensions, notes and a BoM. Export PDF/SVG or an editable document, save to a selected folder, or confirm a new GitHub/GitLab documentation branch. [Draftsman workflow, source provenance and export limits](DRAFTSMAN.md).
+
+## Saved variables, tables and selection totals
+
+The schematic explorer opens on Sheets on desktop. The Variables viewer distinguishes the effective value from shadowed project or ancestor-sheet definitions. Object fields resolve in their own context, then saved sheet and ancestor fields, then project variables. Repeated sheet instances require an unambiguous saved instance; missing context preserves the expression instead of borrowing a sibling value.
+
+Numeric KiCad `@{...}` expressions support bounded arithmetic and the documented numeric functions implemented by the viewer. Unsupported units, strings and functions remain literal with a console diagnostic; native numeric formatting is not reproduced exactly. Horizontal saved schematic tables support merged cells, text and borders. Rotated tables remain unsupported, and font wrapping is approximate.
+
+Click a native BoM value to cross-select its part, or its reference group in grouped mode. Shift/Ctrl-selected saved PCB segments and arcs show their total centerline length in Properties; vias and zones do not contribute. BoM parser diagnostics go to the browser console rather than filling the status banner.
+
+**Save draft** is local only. **Send** reviews the destination and attempts provider publication. Website-session rejection retains the draft and shows the provider error. A lost response remains uncertain and duplicate-protected until recovered; it is not treated as a successful post. Organization policy and website access still apply.

@@ -17,6 +17,18 @@ const KiCadCommentFocus = (() => {
     const pixels=corners.map(project);return pixels.every(p=>p&&Number.isFinite(p.x)&&Number.isFinite(p.y)&&p.visible!==false)?pixels:null;
   }
 
+  function hitArea(area, project, pixel) {
+    const corners=projectArea(area,project);if(!corners||!point(pixel))return false;
+    let inside=false;
+    for(let i=0,j=corners.length-1;i<corners.length;j=i++){
+      const a=corners[i],b=corners[j],dx=b.x-a.x,dy=b.y-a.y,length=dx*dx+dy*dy;
+      const t=length?Math.max(0,Math.min(1,((pixel.x-a.x)*dx+(pixel.y-a.y)*dy)/length)):0;
+      if(Math.hypot(pixel.x-a.x-t*dx,pixel.y-a.y-t*dy)<=3)return true;
+      if((a.y>pixel.y)!==(b.y>pixel.y)&&pixel.x<(b.x-a.x)*(pixel.y-a.y)/(b.y-a.y)+a.x)inside=!inside;
+    }
+    return inside;
+  }
+
   function viewBox(position, bounds, options = {}) {
     const {width, height, pcb = false} = options || {};
     if (!point(position) || !coordinate(width) || !coordinate(height) || width <= 0 || height <= 0) return null;
@@ -110,7 +122,7 @@ const KiCadCommentFocus = (() => {
     }
     return {show, refresh, hide, dispose};
   }
-  return {viewBox, create,areaCorners,anchorPosition,projectArea};
+  return {viewBox, create,areaCorners,anchorPosition,projectArea,hitArea};
 })();
 if (typeof globalThis === 'object') globalThis.KiCadCommentFocus = KiCadCommentFocus;
 if (typeof module === 'object' && module.exports) module.exports = KiCadCommentFocus;

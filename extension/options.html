@@ -17,7 +17,10 @@
     body .github-account-tools button { display:inline-flex; align-items:center; justify-content:center; gap:.35rem; width:auto; min-height:34px; margin:0; padding:.4rem .7rem; border:1px solid #8886; border-radius:.35rem; font-size:.875rem; line-height:1.3; }
     body .github-account-tools button[hidden] { display:none; }
     @media(max-width:600px){body .github-account-tools button{min-height:40px}body label.check-option{min-height:36px}}
-    button { font: inherit; padding: .5rem .85rem; margin: .75rem .5rem .25rem 0; cursor: pointer; }
+    button { display:inline-flex; align-items:center; justify-content:center; gap:.4rem; box-sizing:border-box; min-height:34px; max-width:100%; font:500 14px/1.35 system-ui,sans-serif; padding:6px 10px; margin:.5rem .4rem .25rem 0; border:1px solid #8886; border-radius:6px; color:CanvasText; background:Canvas; cursor:pointer; white-space:normal; overflow-wrap:anywhere; }
+    button:hover:not(:disabled) { border-color:currentColor; }
+    button:focus-visible { outline:2px solid Highlight; outline-offset:2px; }
+    body .github-account-tools button { font:500 14px/1.35 system-ui,sans-serif; border-radius:6px; }
     #connectGitHub { background: #238636; border: 1px solid #238636; color: white; border-radius: .35rem; font-weight: 600; }
     #connectGitHub[data-connected="true"] { background: #b42318; border-color: #b42318; }
     details { margin-top: 1.2rem; border-top: 1px solid #8886; padding-top: 1rem; } summary { cursor: pointer; font-weight: 600; }
@@ -105,7 +108,7 @@
     <p><a id="viewerDiagnosticsLocal" href="local-viewer.html" target="_blank" rel="noopener">Open local files</a> — inspect a saved project folder without repository requests, if your organization permits local review. If the extension or file picker itself is blocked, ask your administrator for an approved workflow.</p>
     <p>For managed Chrome or Edge, ask your administrator to inspect <code>chrome://policy</code> or <code>edge://policy</code>, ExtensionSettings, runtime blocked hosts, proxy and firewall rules. Granted site access does not prove network access. A generic fetch error or HTTP 403 does not identify the blocking rule. The extension cannot override organizational policy.</p>
   </section>
-  <section aria-label="About KiCad Online"><h2>About KiCad Online</h2><p data-product-version>Development checkout</p><button type="button" data-product-about>About &amp; release notes</button></section>
+  <section aria-label="About KiCad Online"><h2>About KiCad Online</h2><p data-product-version>Development checkout</p><button type="button" data-product-about>About &amp; release notes</button><div data-product-updates></div></section>
   <section aria-label="Software license"><h2>Software license</h2><p>Copyright (c) 2026 Yawar B (wayri). <a href="LICENSE.txt" target="_blank" rel="noopener">Source-available license</a> · <a href="terms.html" target="_blank" rel="noopener">Terms</a>. Paid software distribution or monetized hosting requires written permission. Third-party licenses remain applicable.</p></section>
   <script src="startup-health.js"></script><script src="product-version.js"></script><script src="product-info.js"></script><script src="ui-icons.js"></script><script src="responsive-controls.js"></script><script src="section-pages.js"></script><script src="review-comments.js"></script>
   <script src="review-file-store.js"></script>

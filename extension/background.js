@@ -87,7 +87,13 @@ async function githubSessionRead(repository,ref,action,path='',limit=8*1024*1024
       if(!tab.bound||!await repositorySessions().recover(tab.id,'github','https://github.com',repository))continue;
       checkLoad(signal);try{reply=await read();}catch{checkLoad(signal);continue;}
     }
-    if(!reply?.ok){if(typeof reply?.error==='string')accessError=Error(reply.error.slice(0,1000));continue;}
+    if(!reply?.ok){if(typeof reply?.error==='string'){
+      accessError=Error(reply.error.slice(0,1000));
+      // Retain only bridge-defined diagnostic codes, never arbitrary fields
+      // supplied by a repository page. Discovery uses these to distinguish
+      // oversized folder metadata from access failures and source limits.
+      if(['GITHUB_PAGE_TOO_LARGE','GITHUB_TREE_UNAVAILABLE','GITHUB_TREE_INCOMPLETE','GITHUB_JSON_PAYLOAD_LIMIT','GITHUB_WEBSITE_NOT_FOUND','GITHUB_WEBSITE_DENIED','GITHUB_SOURCE_TOO_LARGE','GITHUB_READ_CANCELLED','GITHUB_READ_TIMEOUT','GITHUB_REVISION_MISMATCH'].includes(reply.code))accessError.code=reply.code;
+    }continue;}
     const result=reply.result;
     if(action==='policy') {
       if(ref!=='HEAD'||path!==''||!SHA.test(result?.sha||'')||!['default','repository'].includes(result?.source)||result.source==='default'&&result.content!==undefined||result.source==='repository'&&(typeof result.content!=='string'||new TextEncoder().encode(result.content).length>128*1024))throw Error('Invalid default-branch comment policy response.');
@@ -1108,7 +1114,7 @@ async function presentActionWorkspace(url) {
   }
 }
 async function openFromAction(tab) {
-  const open=params=>presentActionWorkspace(chrome.runtime.getURL('project-launcher.html')+'?'+new URLSearchParams(params));
+  const open=params=>presentActionWorkspace(Object.keys(params).length?chrome.runtime.getURL('project-launcher.html')+'?'+new URLSearchParams(params):chrome.runtime.getURL('dashboard.html'));
   if(!Number.isInteger(tab?.id)||typeof tab.url!=='string')return open({});
   let page;try{page=new URL(tab.url);}catch{return open({});}
   if(page.protocol!=='https:'||page.origin!=='https://github.com'&&!(await globalThis.KiCadGitLabHosts?.allowed(page.origin)))return open({});

@@ -241,7 +241,7 @@
         const start = point(node, "start"), mid = point(node, "mid"), end = point(node, "end");
         if (!start || !mid || !end) { warn("Legacy or incomplete arc without start/mid/end was skipped."); return; }
         emit({ type: "arc", start: map(start), mid: map(mid), end: map(end), color, width, ...(fill ? { fill } : {}), ...owner });
-      } else if (kind === "text_box") {
+      } else if (kind === "text_box" || kind === "table_cell") {
         if (isHidden(node)) return;
         const at = point(node, "at") || point(node, "start"), size = point(node, "size"), savedEnd = point(node, "end");
         const end = savedEnd || (at && size ? { x: at.x + size.x, y: at.y + size.y } : null);
@@ -282,6 +282,35 @@
         text(origin, value(node[1]), fontSize(node), Math.atan2(axis.y - origin.y, axis.x - origin.x) * 180 / Math.PI, color,
           { ...owner, ...fontStyle(node) });
       } else warn(`Unsupported graphic ${kind} was skipped.`);
+    }
+    function renderTable(node,owner) {
+      // Saved format: KiCad SCH_WRITER_V10::saveTable/saveTextBox. Borders
+      // follow SCH_TABLE::DrawBorders, using saved cell geometry and spans.
+      const columns=scalar(node,"column_count"),widths=form(node,"column_widths")?.slice(1).map(value),heights=form(node,"row_heights")?.slice(1).map(value),cells=forms(form(node,"cells"),"table_cell");
+      if(!Number.isInteger(columns)||columns<1||columns>100||!widths||widths.length!==columns||!heights?.length||heights.length>100||columns*heights.length>1000||cells.length!==columns*heights.length||[...widths,...heights].some(n=>!finite(n)||n<=0)) {warn("Schematic table has invalid dimensions or exceeds the 1000-cell preview limit; it was skipped.");return;}
+      const boxes=[],covered=new Set();let characters=0;
+      for(let i=0;i<cells.length;i++){
+        const cell=cells[i],at=point(cell,"at"),size=point(cell,"size"),span=form(cell,"span")?.slice(1).map(value)||[1,1],angle=value(form(cell,"at")?.[3])||0,row=Math.floor(i/columns),col=i%columns;
+        if(angle!==0){warn("Rotated schematic tables are not rendered; open KiCad for their native layout.");return;}
+        if(span.length!==2||span.some(n=>!Number.isInteger(n)||n<0)||row+span[1]>heights.length||col+span[0]>columns||!at||!size||!finite(at.x+size.x)||!finite(at.y+size.y)||(characters+=String(value(cell[1])??'').length)>262144){warn("Schematic table has invalid cell geometry/spans or exceeds its text budget; it was skipped.");return;}
+        if(span[0]===0||span[1]===0){if(!covered.has(i)){warn("Schematic table contains an unbound merged cell; it was skipped.");return;}boxes.push(null);continue;}
+        if(size.x<=0||size.y<=0){warn("Schematic table has invalid cell bounds; it was skipped.");return;}
+        for(let r=row;r<row+span[1];r++)for(let c=col;c<col+span[0];c++){const index=r*columns+c;if(covered.has(index)){warn("Schematic table has overlapping spans; it was skipped.");return;}covered.add(index);}
+        boxes.push({at,end:{x:at.x+size.x,y:at.y+size.y},span,row,col,cell});
+      }
+      const active=boxes.filter(Boolean),border=form(node,"border"),separators=form(node,"separators"),identity=p=>p;
+      for(const box of active)drawGraphic([...box.cell.filter(item=>typeOf(item)!=='stroke'),["stroke",["width",-1]]],identity,{...owner,uuid:ownId(box.cell)||owner.uuid,ownerUuid:owner.uuid,kind:"table-cell"},COLOR.text);
+      const edge=(a,b,style)=>{if((scalar(form(style,"stroke"),"width")??0)<0)return;line(a,b,COLOR.text,lineWidth(style),{...owner,kind:"table-border",...graphicStyle(style)});};
+      for(const {at,end,span,row,col} of active){
+        const columnStyle=row===0&&hasFlag(border,"header")?border:hasFlag(separators,"cols")?separators:null;
+        const rowStyle=row===0&&hasFlag(border,"header")?border:hasFlag(separators,"rows")?separators:null;
+        if(columnStyle&&col+span[0]<columns)edge({x:end.x,y:at.y},end,columnStyle);
+        if(rowStyle&&row+span[1]<heights.length)edge(end,{x:at.x,y:end.y},rowStyle);
+      }
+      if(hasFlag(border,"external")){
+        const left=Math.min(...active.map(b=>b.at.x)),top=Math.min(...active.map(b=>b.at.y)),right=Math.max(...active.map(b=>b.end.x)),bottom=Math.max(...active.map(b=>b.end.y));
+        const corners=[{x:left,y:top},{x:right,y:top},{x:right,y:bottom},{x:left,y:bottom}];for(let i=0;i<4;i++)edge(corners[i],corners[(i+1)%4],border);
+      }
     }
     const library = form(rootAST, "lib_symbols"), definitions = new Map();
     for (const definition of forms(library, "symbol")) {
@@ -479,7 +508,7 @@
       for (const property of forms(node, "property")) {
         if (isHidden(property)) continue;
         const position = point(property, "at");
-        text(position, value(property[2]), fontSize(property), value(form(property, "at")?.[3]) || 0,
+        text(position, value(property[2]), fontSize(property), -(value(form(property, "at")?.[3]) || 0),
           COLOR.symbol, { ...owner, kind: "sheet-property", property: value(property[1]), ...fontStyle(property) });
       }
       for (const pin of forms(node, "pin")) {
@@ -492,6 +521,7 @@
       const kind = typeOf(node), owner = { uuid: ownId(node), kind };
       if (kind === "symbol") renderSymbol(node);
       else if (kind === "sheet") renderSheet(node);
+      else if (kind === "table") renderTable(node,owner);
       else if (kind === "wire" || kind === "bus") drawGraphic(node, identity, owner,
         kind === "bus" ? COLOR.bus : COLOR.wire);
       else if (["polyline", "rectangle", "circle", "arc", "bezier", "text_box"].includes(kind)) drawGraphic(node, identity, owner, "#0000c2");
@@ -510,7 +540,7 @@
         if (isHidden(node)) continue;
         const at = point(node, "at");
         if (kind === "global_label" || kind === "hierarchical_label") renderLabel(node, owner);
-        else text(at, value(node[1]), fontSize(node), -(value(form(node, "at")?.[3]) || 0),
+        else text(at, value(node[1]), fontSize(node), kind==='label'?-(((value(form(node,"at")?.[3])||0)%180+180)%180):-(value(form(node, "at")?.[3]) || 0),
           kind === "text" ? COLOR.text : COLOR.label, { ...owner, ...fontStyle(node) });
       } else if (kind === "bus_entry") {
         const at = point(node, "at"), size = point(node, "size");

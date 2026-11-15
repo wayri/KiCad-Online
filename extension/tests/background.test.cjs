@@ -557,10 +557,10 @@ test('toolbar opens a standalone drawing or repository launcher without navigati
  assert.equal(new URL(calls.created[2].url).pathname,'/project-launcher.html');assert.equal(calls.updated.length,0);assert.ok(calls.messages.every(c=>c.message.type==='projectLaunchContext'));assert.equal(typeof actionListener,'function');
 });
 
-test('toolbar always opens visible feedback even when content scripts or URLs are unavailable',async t=>{
+test('toolbar opens the project dashboard outside a supported repository',async t=>{
  const before=chrome.tabs.sendMessage;t.after(()=>{chrome.tabs.sendMessage=before;});chrome.tabs.sendMessage=async()=>{throw Error('No receiving content script');};calls.created.length=0;
  for(const tab of [undefined,{id:3},{id:3,url:'not a URL'},{id:3,url:'chrome://newtab/'},{id:3,url:'https://example.com/'}])await background.openFromAction(tab);
- assert.equal(calls.created.length,5);assert.ok(calls.created.every(c=>new URL(c.url).pathname==='/project-launcher.html'));
+ assert.equal(calls.created.length,5);assert.ok(calls.created.every(c=>new URL(c.url).pathname==='/dashboard.html'));
  await background.openFromAction({id:3,url:'https://github.com/owner/repo'});assert.equal(new URL(calls.created[5].url).searchParams.get('ref'),'HEAD');
 });
 
@@ -1133,6 +1133,24 @@ test('private schematic projects open through the existing repository tab withou
  const result=await message({type:'project',repository:'owner/private',ref:'main',file:'design/root.kicad_sch'});
  assert.equal(result.ok,true,result.error);assert.deepEqual(result.result.map(f=>f.path),['design/root.kicad_sch','shared/leaf.kicad_sch']);
  assert.ok(seen.some(r=>r.action==='file'&&r.path==='shared/leaf.kicad_sch'));assert.ok(seen.every(r=>!r.token&&!r.cookie&&!r.url));
+});
+
+test('worker retains typed metadata failures for verified project recovery without anonymous reads',async t=>{
+ const sources=new Map([['design/board.kicad_pro','{}'],['design/board.kicad_sch','(kicad_sch)']]),reads=[];
+ const fixture=withWebsite(t,'owner/metadata-recovery',{}, {readSession:async request=>{
+  reads.push(request);
+  if(request.action==='directory')return {ok:false,code:'GITHUB_PAGE_TOO_LARGE',error:'Metadata too large'};
+  assert.equal(request.action,'file');return {ok:true,result:sources.has(request.path)?{sha:sha('a'),content:sources.get(request.path)}:null};
+ }});
+ const result=await message({type:'project-inventory',repository:'owner/metadata-recovery',ref:sha('a'),file:'design/board.kicad_pro'});
+ assert.equal(result.ok,true,result.error);assert.deepEqual(result.result.files.map(item=>item.path),[...sources.keys()]);assert.match(result.result.warnings.join(' '),/incomplete/);
+ assert.deepEqual(reads.filter(read=>read.action==='file').map(read=>read.path),['design/board.kicad_pro','design/board.kicad_sch','design/board.kicad_pcb']);assert.ok(reads.every(read=>read.ref===sha('a')));assert.equal(fixture.raw.length,0);
+});
+
+test('worker never recovers project inventory from a website access denial',async t=>{
+ const reads=[];withWebsite(t,'owner/metadata-denied',{}, {readSession:async request=>{reads.push(request);return {ok:false,code:'GITHUB_WEBSITE_DENIED',error:'Website access denied'};}});
+ const result=await message({type:'project-inventory',repository:'owner/metadata-denied',ref:sha('a'),file:'board.kicad_pro'});
+ assert.equal(result.ok,false);assert.match(result.error,/access denied/);assert.ok(reads.every(read=>read.action==='directory'));
 });
 
 test('website session fallback rejects tabs belonging to a different repository',async t=>{

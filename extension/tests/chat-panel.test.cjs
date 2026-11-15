@@ -188,6 +188,40 @@ test('source cards link to their validated saved revision even when Locate refus
  const h=harness({onLocate:()=>false}),note=comments.validateComment({id:'source-note',text:'Source note',createdAt:'2026-10-27T04:00:00.000Z',anchor:{repository:'owner/board',ref:'b'.repeat(40),file:'design/power.kicad_sch',reference:'U3'}});
  h.api.render(thread(1,{body:comments.toMarkdown(note)}));const link=h.find('chat-source-link');assert.equal(link.href,'https://github.com/owner/board/blob/'+('b'.repeat(40))+'/design/power.kicad_sch');assert.equal(link.rel,'noopener noreferrer');h.find('chat-locate').onclick();assert.match(h.find('chat-status').textContent,/another drawing or revision/);
 });
+test('each anchored comment locates its own source from the card and accessible compact action',()=>{
+ const located=[],h=harness({onLocate:anchor=>located.push(anchor)}),note=(id,uuid)=>comments.validateComment({id,text:'Review '+uuid,createdAt:'2026-10-27T04:00:00.000Z',anchor:{repository:'owner/board',ref:'a'.repeat(40),file:'board.kicad_pcb',uuid,reference:uuid}});
+ const notes=[note('first-note','U1'),note('second-note','U2')],value=thread(1,{comments:notes.map((n,i)=>({id:String(i),author:'reviewer',body:comments.toMarkdown(n),createdAt:'2026-10-27T04:10:00.000Z'}))});h.api.render(value);
+ const cards=walk(h.container).filter(n=>n.className?.split(' ').includes('chat-message-anchored'));assert.equal(cards.length,2);assert.equal(h.find('chat-design-context'),undefined);
+ cards.forEach(card=>card.onclick({target:walk(card).find(n=>n.className==='chat-rich-content'),button:0}));assert.deepEqual(located.map(a=>a.uuid),['U1','U2']);
+ const icons=walk(h.container).filter(n=>n.className?.split(' ').includes('chat-message-goto'));assert.equal(icons.length,2);assert.ok(icons.every(n=>n.tagName==='BUTTON'&&n.type==='button'&&n.textContent==='↗'&&/Go to U/.test(n.attributes['aria-label'])));icons[1].onclick();assert.equal(located.at(-1).uuid,'U2');
+ assert.ok(h.find('chat-source-link').parentElement.className==='chat-message-menu');assert.deepEqual(value.comments.map(row=>row.body),notes.map(n=>comments.toMarkdown(n)));h.api.dispose();
+});
+test('anchored card clicks preserve links, nested controls, selected text and modified clicks',()=>{
+ const located=[],h=harness({onLocate:anchor=>located.push(anchor)}),note={id:'context-note',text:'See [details](https://example.com)',createdAt:'2026-10-27T04:00:00.000Z',anchor:{repository:'owner/board',ref:'main',file:'board.kicad_pcb',uuid:'U1'}};h.api.render(thread(1,{body:comments.toMarkdown(note)}));
+ const card=h.find('chat-message-anchored'),content=h.find('chat-rich-content'),link=walk(content).find(n=>n.tagName==='A');
+ for(const extra of [{button:1},{ctrlKey:true},{metaKey:true},{shiftKey:true},{altKey:true},{defaultPrevented:true}])card.onclick({target:content,...extra});
+ card.onclick({target:link});card.onclick({target:h.find('chat-message-goto')});
+ for(const tag of ['button','input','textarea','select','summary','label']){const control=h.doc.createElement(tag),child=h.doc.createElement('span');control.append(child);content.append(control);card.onclick({target:child});}
+ const custom=h.doc.createElement('span');custom.setAttribute('role','button');content.append(custom);card.onclick({target:custom});custom.remove();
+ h.doc.getSelection=()=>({isCollapsed:false});card.onclick({target:content});assert.equal(located.length,0);h.doc.getSelection=()=>({isCollapsed:true});card.onclick({target:content});assert.equal(located.length,1);h.api.dispose();
+});
+test('canonical website receipt UUID is hidden only in rendered text, never Edit or code examples',()=>{
+ const marker='<!-- pocket-kiview-session:12345678-1234-1234-1234-123456789abc -->',h=harness(),body='Visible review\n\n'+marker,value=thread(1,{comments:[{id:'edit',author:'reviewer',body,createdAt:'2026-10-27T04:10:00.000Z',canEdit:true}]});h.api.render(value);
+ assert.doesNotMatch(h.container.textContent,/pocket-kiview-session/);assert.equal(value.comments[0].body,body);h.find('chat-edit-action').onclick();assert.equal(h.byId('chatMessageText').value,body);h.api.discard();
+ for(const literal of ['```html\n\n'+marker,'~~~html\n\n'+marker,'Example `'+marker+'`','Text\n\n<!-- pocket-kiview-session:not-a-uuid -->','Text\n\n'+marker+'\nFollowing text']){
+  h.api.render(thread(1,{comments:[{id:'example',author:'reviewer',body:literal,createdAt:'2026-10-27T04:10:00.000Z'}]}));assert.match(h.container.textContent,/pocket-kiview-session/);
+ }
+ h.api.dispose();
+});
+test('focusMessage targets the exact issue or discussion reply URL without focusing or changing the composer',()=>{
+ for(const kind of ['issue','discussion']){
+  const h=harness(),url='https://github.com/owner/board/'+(kind==='issue'?'issues':'discussions')+'/1',fragment=kind==='issue'?'#issuecomment-':'#discussioncomment-',value=thread(1,{kind,url,comments:[1,2].map(id=>({id:String(id),url:url+fragment+id,author:'reviewer',body:'Message '+id,createdAt:'2026-10-27T04:10:00.000Z'}))});h.api.render(value);h.type('Keep this draft');
+  const cards=walk(h.container).filter(n=>n.messageKey),target=cards.find(n=>n.messageKey==='message:2');let scrolled;target.scrollIntoView=options=>{scrolled=options;};
+  assert.equal(h.api.focusMessage(url+fragment+'2'),true);assert.equal(h.doc.activeElement,target);assert.equal(target.tabIndex,-1);assert.deepEqual(scrolled,{block:'center'});assert.equal(h.byId('chatMessageText').value,'Keep this draft');assert.equal(h.requests.length,0);
+  assert.equal(h.api.focusMessage(url+fragment+'999'),false);assert.equal(h.doc.activeElement,target);assert.equal(h.api.focusMessage('javascript:alert(1)'),false);
+  assert.equal(h.api.focusMessage(url),true);assert.equal(h.doc.activeElement.messageKey,'root:1');h.api.dispose();assert.equal(h.api.focusMessage(url),false);
+ }
+});
 test('cancelling an edit restores its previous draft and UTF-8 size bounds are enforced before confirmation',async()=>{
  const h=harness();h.api.render(thread(1,{comments:[{...thread().comments[0],canEdit:true}]}));h.type('Existing unsent draft');messageAction(h,'chat-edit-action');h.type('Edit content');h.find('chat-cancel-target').onclick();assert.equal(h.byId('chatMessageText').value,'Existing unsent draft');
  h.type('😀'.repeat(16000));await h.find('chat-send').onclick();assert.equal(h.requests.length,0);assert.match(h.find('chat-status').textContent,/60,000 UTF-8 bytes/);

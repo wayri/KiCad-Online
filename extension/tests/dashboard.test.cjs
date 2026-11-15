@@ -20,3 +20,5 @@ test('offline deployment leaves local reopening and history controls usable whil
  const f=fixture({networkEnabled:false,entries:[remote,local]});await tick();const cards=f.get('recentProjects').children;assert.equal(cards[0].children.at(-1).children.at(-1).disabled,true);assert.equal(cards[1].children.at(-1).children.at(-1).disabled,false);assert.equal(f.get('openOnline').disabled,true);assert.equal(f.get('clearHistory').disabled,false);assert.match(f.get('dashboardStatus').textContent,/administrator policy/);
  const failed=fixture({failure:true});await tick();assert.match(failed.get('dashboardStatus').textContent,/Storage is unavailable/);assert.equal(failed.get('clearHistory').disabled,false,'explicit clear can recover invalid metadata');
 });
+
+test('landing page has one local-file action and passive capability/version badges',()=>{const html=fs.readFileSync(path.join(__dirname,'../dashboard.html'),'utf8');assert.equal((html.match(/href="local-viewer.html"/g)||[]).length,1);assert.match(html,/class="capability-badges"/);assert.match(html,/class="version-badge" data-product-version/);});

@@ -3,6 +3,19 @@ const {create,treeData}=require('../github-session-reader.js');
 const sha='a'.repeat(40),repo='owner/private';
 const tree=(path='',items=[])=>[{payload:{codeViewTreeRoute:{path:path||'/',refInfo:{name:'feature/board',currentOid:sha},tree:{items,totalCount:items.length}}}}];
 const response=(text,url,type='text/plain')=>{const r=new Response(text,{headers:{'content-type':type}});Object.defineProperty(r,'url',{value:url});return r;};
+test('oversized GitHub error pages preserve HTTP access failures instead of reporting source or metadata size errors',async()=>{
+ for(const action of ['commit','policy'])for(const [status,code]of [[401,'GITHUB_WEBSITE_DENIED'],[403,'GITHUB_WEBSITE_DENIED'],[404,'GITHUB_WEBSITE_NOT_FOUND'],[429,'GITHUB_WEBSITE_RATE_LIMIT'],[500,'GITHUB_WEBSITE_UNREADABLE']]){
+  let cancelled=0,parsed=0;const reader=create({location:{href:'https://github.com/'+repo},parseHTML:()=>{parsed++;throw Error('An error page must not establish policy absence');},fetch:async()=>new Response(new ReadableStream({cancel(){cancelled++;}}),{status,headers:{'content-type':'text/html','content-length':String(2*1024*1024)}})});
+  await assert.rejects(reader.read({repository:repo,ref:action==='policy'?'HEAD':sha,action}),error=>error.code===code);
+  assert.equal(cancelled,1);assert.equal(parsed,0);
+ }
+});
+test('failed-page classification preserves cancellation and body network failures',async()=>{
+ const controller=new AbortController(),cancelled=create({location:{href:'https://github.com/'+repo},signal:controller.signal,fetch:async()=>new Response(new ReadableStream({cancel(){controller.abort();}}),{status:404})});
+ await assert.rejects(cancelled.read({repository:repo,ref:sha,action:'commit'}),error=>error.code==='GITHUB_READ_CANCELLED');
+ const network=create({location:{href:'https://github.com/'+repo},fetch:async()=>new Response(new ReadableStream({start(stream){stream.error(new TypeError('network failure'));}}),{status:500})});
+ await assert.rejects(network.read({repository:repo,ref:sha,action:'commit'}),error=>error.code==='GITHUB_WEBSITE_NETWORK');
+});
 test('history feed stays on exact repository website with no API and supports explicit branch',async()=>{
  let called=0;const api=create({location:{href:'https://github.com/'+repo},fetch:async(url,options)=>{called++;assert.equal(url,'https://github.com/'+repo+'/commits/feature%2Fboard.atom');assert.equal(options.credentials,'same-origin');assert.equal(options.redirect,'error');return response('<feed/>',url,'application/atom+xml');}});
  assert.deepEqual(await api.read({repository:repo,ref:'feature/board',action:'history'}),{ref:'feature/board',content:'<feed/>'});assert.equal(called,1);
@@ -19,6 +32,38 @@ test('commit metadata rejects oversized responses and Stop cancels a stalled bod
  const make=fetch=>create({location:{href:'https://github.com/'+repo},fetch});
  const huge=make(async url=>{const value=response('',url,'text/html');value.headers.set('content-length',String(8*1024*1024+1));return value;});await assert.rejects(huge.read({repository:repo,ref:sha,action:'commit'}),/size limit/);
  const controller=new AbortController();let cancelled=0;const stalled=create({location:{href:'https://github.com/'+repo},signal:controller.signal,fetch:async url=>response(new ReadableStream({cancel(){cancelled++;}}),url,'text/html')});const pending=stalled.read({repository:repo,ref:sha,action:'commit'});await new Promise(resolve=>setImmediate(resolve));controller.abort();await assert.rejects(pending,/cancelled/);assert.equal(cancelled,1);
+});
+
+test('size diagnostics distinguish stages and cancel declared or streamed overflow without retaining stream locks',async()=>{
+ const cases=[['commit','GITHUB_PAGE_TOO_LARGE',8*1024*1024],['file','GITHUB_SOURCE_TOO_LARGE',1024],['asset','GITHUB_ASSET_TOO_LARGE',1024],['history','GITHUB_HISTORY_TOO_LARGE',4*1024*1024],['policy','GITHUB_POLICY_TOO_LARGE',128*1024]];
+ for(const [action,code,limit]of cases)for(const declared of [true,false]){
+  let cancelled=0,pulls=0,overflowResponse;const chunk=new Uint8Array(1024),policyTree=tree('',[{path:'.kicad-review-policy.json',contentType:'file'}]);
+  const api=create({location:{href:'https://github.com/'+repo},parseHTML:()=>[...policyTree,{githubWebsiteAccount:'reviewer'}],fetch:async url=>{
+   if(action==='policy'&&url==='https://github.com/'+repo)return response('html',url,'text/html');
+   const body=new ReadableStream({pull(controller){pulls++;if(!declared)controller.enqueue(chunk);},cancel(){cancelled++;}});
+   overflowResponse=response(body,url,action==='history'?'application/atom+xml':action==='commit'?'text/html':'text/plain');
+   overflowResponse.headers.set('content-length',String(declared?limit+1:1));return overflowResponse;
+  }});
+  await assert.rejects(api.read({repository:repo,ref:action==='policy'?'HEAD':sha,action,...(['file','asset'].includes(action)?{path:'board.kicad_pcb',limit}:{})}),error=>error.code===code&&error.limit===limit);
+  assert.equal(cancelled,1,action+' cancellation');assert.equal(overflowResponse.body.locked,false,action+' released lock');
+  if(!declared)assert.ok(pulls>1,'streamed bytes, not the small declared length, enforce the cap');
+ }
+});
+
+test('source reads accept the exact byte limit and preserve overflow diagnostics when cancellation fails',async()=>{
+ let fetched;const api=create({location:{href:'https://github.com/'+repo},fetch:async url=>{fetched=response('ok',url);return fetched;}});
+ assert.equal((await api.read({repository:repo,ref:sha,action:'file',path:'board.kicad_pcb',limit:2})).content,'ok');assert.equal(fetched.body.locked,false);
+ for(const declared of [true,false]){
+  const failed=create({location:{href:'https://github.com/'+repo},fetch:async url=>{fetched=response(new ReadableStream({pull(controller){if(!declared)controller.enqueue(new Uint8Array(3));},cancel(){throw Error('PRIVATE cancellation payload');}}),url);if(declared)fetched.headers.set('content-length','3');return fetched;}});
+  await assert.rejects(failed.read({repository:repo,ref:sha,action:'file',path:'board.kicad_pcb',limit:2}),error=>error.code==='GITHUB_SOURCE_TOO_LARGE'&&error.limit===2&&!error.message.includes('PRIVATE'));assert.equal(fetched.body.locked,false);
+ }
+});
+
+test('JSON payload-count exhaustion has its own code and keeps the existing count cap',async()=>{
+ const {htmlObjects}=require('../github-session-reader.js'),script='<script type="application/json">{}</script>';
+ assert.equal(htmlObjects(script.repeat(100)).length,100);
+ const api=create({location:{href:'https://github.com/'+repo},fetch:async url=>response(script.repeat(101),url,'text/html')});
+ await assert.rejects(api.read({repository:repo,ref:sha,action:'commit'}),error=>error.code==='GITHUB_JSON_PAYLOAD_LIMIT'&&error.limit===undefined);
 });
 test('session reads stay in the repository tab, pin branch revisions and strip page metadata',async()=>{
  const calls=[],api=create({location:{href:'https://github.com/owner/private/blob/feature/board/main.kicad_pcb'},parseHTML:()=>tree(),fetch:async(url,init)=>{calls.push({url,init});return response('html',url);}});
@@ -256,6 +301,85 @@ test('policy enforcement always fetches the fresh default root and pins its poli
  assert.deepEqual(calls,['https://github.com/'+repo,'https://github.com/'+repo+'/raw/'+sha+'/.kicad-review-policy.json']);
  for(const ref of ['main',sha])await assert.rejects(api.read({repository:repo,ref,action:'policy'}),/current default/);
 });
+
+const branchHeadPage=(ref='main')=>'<script type="application/json">'+JSON.stringify({payload:{commitsRefRoute:{repo:{ownerLogin:'owner',name:'private'},refInfo:{name:ref,refType:'branch',currentOid:sha},currentCommit:{oid:sha},filters:{since:null,until:null,author:null,newPath:null,originalBranch:null,currentBlobPath:null,pagination:{startCursor:sha+' 0',endCursor:sha+' 34',hasNextPage:true,hasPreviousPage:false}}}}})+'</script>';
+
+test('private Atom 404 resolves the explicit HTML branch head before complete pinned policy verification',async()=>{
+ for(const ref of ['main','feature/board'])for(const present of [false,true]){
+  const calls=[],fresh=[{githubFileTableContext:{repository:repo,ref,directory:''}},{githubWebsiteAccount:'reviewer'}],pinned=tree('',present?[{path:'.kicad-review-policy.json',contentType:'file'}]:[]);
+  const api=create({location:{href:'https://github.com/'+repo+'/tree/old'},parseDocument:()=>{throw Error('Displayed history cannot authorize policy');},parseHTML:text=>text==='fresh'?fresh:pinned,fetch:async(url,init)=>{
+   calls.push(url);assert.equal(init.credentials,'same-origin');assert.equal(init.cache,'no-store');if(!url.endsWith('.json'))assert.equal(init.redirect,'error');
+   if(url.endsWith('.atom'))return new Response('Not Found',{status:404});
+   return response(url.includes('/commits/')?branchHeadPage(ref):url.endsWith('.json')?'{}':calls.length===1?'fresh':'pinned',url,url.endsWith('.json')?'text/plain':'text/html');
+  }});
+  assert.deepEqual(await api.read({repository:repo,ref:'HEAD',action:'policy'}),present?{sha,source:'repository',content:'{}',account:'reviewer'}:{sha,source:'default',account:'reviewer'});
+  assert.deepEqual(calls,['https://github.com/'+repo,'https://github.com/'+repo+'/commits/'+encodeURIComponent(ref)+'.atom','https://github.com/'+repo+'/commits/'+encodeURIComponent(ref)+'/','https://github.com/'+repo+'/tree/'+sha,...(present?['https://github.com/'+repo+'/raw/'+sha+'/.kicad-review-policy.json']:[])]);
+ }
+});
+
+test('private branch-head HTML fallback preserves denials and rejects redirected, oversized or incomplete policy evidence',async()=>{
+ for(const mode of ['denied','rate','head-denied','redirect','oversized','incomplete','wrong-sha','cancel']){
+  const calls=[],controller=new AbortController(),pinned=tree('',[]);if(mode==='incomplete')pinned[0].payload.codeViewTreeRoute.tree.totalCount=1;if(mode==='wrong-sha')pinned[0].payload.codeViewTreeRoute.refInfo.currentOid='b'.repeat(40);
+  const api=create({location:{href:'https://github.com/'+repo},signal:controller.signal,parseHTML:text=>text==='fresh'?[...deferredRoot,{githubWebsiteAccount:'reviewer'}]:pinned,fetch:async(url)=>{
+   calls.push(url);
+   if(url.endsWith('.atom')){if(mode==='cancel')controller.abort();return new Response('No access',{status:mode==='denied'?403:mode==='rate'?429:404});}
+   if(url.includes('/commits/')){if(mode==='head-denied')return new Response('No access',{status:403});const value=response(branchHeadPage(),mode==='redirect'?'https://github.com/login':url,'text/html');if(mode==='oversized')value.headers.set('content-length',String(8*1024*1024+1));return value;}
+   return response(calls.length===1?'fresh':'pinned',url,'text/html');
+  }});
+  await assert.rejects(api.read({repository:repo,ref:'HEAD',action:'policy'}));assert.equal(calls.length,['denied','rate','cancel'].includes(mode)?2:['incomplete','wrong-sha'].includes(mode)?4:3);
+ }
+});
+
+test('fresh default-root route head can verify policy without a private Atom feed',async()=>{
+ for(const present of [false,true]){
+  const calls=[],shell={payload:{codeViewTreeRoute:{path:'/',refInfo:{name:'main',currentOid:sha}}}},pinned=tree('',present?[{path:'.kicad-review-policy.json',contentType:'file'}]:[]);
+  const api=create({location:{href:'https://github.com/'+repo+'/tree/old'},parseDocument:()=>{throw Error('Historical DOM must not verify policy');},parseHTML:text=>text==='fresh'?[shell,...deferredRoot,{githubWebsiteAccount:'reviewer'}]:pinned,fetch:async(url,init)=>{calls.push(url);assert.equal(init.credentials,'same-origin');assert.equal(init.cache,'no-store');assert.equal(init.redirect,url.endsWith('.json')?'follow':'error');assert.ok(!url.endsWith('.atom'),'explicit root head avoids Atom');return response(url.endsWith('.json')?'{}':url==='https://github.com/'+repo?'fresh':'pinned',url,url.endsWith('.json')?'text/plain':'text/html');}});
+  assert.deepEqual(await api.read({repository:repo,ref:'HEAD',action:'policy'}),present?{sha,source:'repository',content:'{}',account:'reviewer'}:{sha,source:'default',account:'reviewer'});
+  assert.deepEqual(calls,['https://github.com/'+repo,'https://github.com/'+repo+'/tree/'+sha,...(present?['https://github.com/'+repo+'/raw/'+sha+'/.kicad-review-policy.json']:[])]);
+ }
+});
+
+test('root-head shell recovery rejects conflicting branches, malformed heads and incomplete pinned policy trees',async()=>{
+ for(const mode of ['branch','invalid','conflict','incomplete','cancel']){
+  const controller=new AbortController(),calls=[],shell={payload:{codeViewTreeRoute:{path:'/',refInfo:{name:mode==='branch'?'other':'main',currentOid:mode==='invalid'?'bad':sha}}}},pinned=tree('',[]);if(mode==='incomplete')pinned[0].payload.codeViewTreeRoute.tree.totalCount=1;
+  const fresh=[shell,...deferredRoot,{githubWebsiteAccount:'reviewer'},...(mode==='conflict'?[{payload:{codeViewRepoRoute:{path:'/',refInfo:{name:'main',currentOid:'b'.repeat(40)}}}}]:[])];
+  const api=create({location:{href:'https://github.com/'+repo},signal:controller.signal,parseHTML:text=>text==='fresh'?fresh:pinned,fetch:async(url)=>{calls.push(url);if(mode==='cancel'&&calls.length===2){controller.abort();throw Error('Project loading cancelled.');}return response(calls.length===1?'fresh':'pinned',url,'text/html');}});
+  await assert.rejects(api.read({repository:repo,ref:'HEAD',action:'policy'}));assert.equal(calls.length,['incomplete','cancel'].includes(mode)?2:1);
+ }
+});
+test('policy verification reports fixed diagnostic codes without exposing provider content',async()=>{
+ for(const [mode,code]of [['account','GITHUB_POLICY_ACCOUNT'],['location','GITHUB_POLICY_LOCATION'],['rows','GITHUB_POLICY_ROWS']]){
+  const objects=tree('',[]);if(mode==='rows')objects[0].payload.codeViewTreeRoute.tree.policyTableComplete=false;
+  const api=create({location:{href:'https://github.com/'+repo},parseHTML:()=>[...objects,...(mode==='account'?[]:[{githubWebsiteAccount:'reviewer'}])],fetch:async url=>response('html',mode==='location'?url+'/login':url,'text/html')});
+  await assert.rejects(api.read({repository:repo,ref:'HEAD',action:'policy'}),error=>error.code===code);
+ }
+});
+test('policy row diagnostics contain only bounded structural enums and preserve fail-closed enforcement',()=>{
+ const allowed=['header','no-name-link','link-origin','link-query-hash','link-repository','link-route','link-ref','link-path','link-nesting','link-label','link-format'];
+ for(const details of [allowed,['header','SECRET URL','link-label',null,{}],['header','header'],'SECRET',Array(64).fill('header'),null]){
+  const objects=tree('',[]);Object.assign(objects[0].payload.codeViewTreeRoute.tree,{policyTableComplete:false,policyRowIssues:details});
+  assert.throws(()=>treeData(objects,sha,'',true),error=>{assert.equal(error.code,'GITHUB_POLICY_ROWS');assert.ok(Array.isArray(error.policyRowIssues));assert.ok(error.policyRowIssues.length<=allowed.length);assert.ok(error.policyRowIssues.every(value=>allowed.includes(value)));assert.doesNotMatch(JSON.stringify(error),/SECRET/);if(details===allowed)assert.deepEqual(error.policyRowIssues,allowed);return true;});
+  assert.deepEqual(treeData(objects,sha,'').items,[]);
+ }
+});
+test('native table policy diagnostics distinguish headers, filename cells and link identity without names',()=>{
+ const {documentObjects}=require('../github-session-reader.js'),href='https://github.com/'+repo+'/tree/'+sha,source='/'+repo+'/blob/'+sha+'/README.md',link=(url,text='README.md')=>({textContent:text,getAttribute:()=>url});
+ const row=links=>({querySelector:()=>({querySelectorAll:()=>links}),querySelectorAll:s=>s==='a[href]'?links:[]}),valid=row([link(source)]);
+ const cases=[['header',{querySelector:()=>null,querySelectorAll:s=>s==='th'?[{textContent:'NameName'},{textContent:'PRIVATE HEADER'}]:[]}],['no-name-link',row([])],['link-origin',row([link('https://foreign.test'+source)])],['link-query-hash',row([link(source+'?private=SECRET')])],['link-repository',row([link(source.replace(repo,'foreign/repo'))])],['link-route',row([link(source.replace('/blob/','/issues/'))])],['link-ref',row([link(source.replace(sha,'b'.repeat(40)))])],['link-nesting',row([link(source.replace('/README.md','/sub/README.md'))])],['link-label',row([link(source,'SECRET filename')])]];
+ for(const [issue,bad]of cases){const table={textContent:'Files',querySelectorAll:()=>[valid,bad]},doc={querySelectorAll:()=>[],querySelector:s=>s.startsWith('table[')?table:s.includes('ref-picker')?{textContent:'main'}:null};
+  const objects=documentObjects(doc,href);assert.throws(()=>treeData(objects,sha,'',true),error=>{if(issue==='no-name-link')assert.ok(error.policyRowIssues.includes(issue));else assert.deepEqual(error.policyRowIssues,[issue]);assert.doesNotMatch(JSON.stringify(error),/SECRET|PRIVATE|README|foreign\.test/);return error.code==='GITHUB_POLICY_ROWS';});
+ }
+});
+test('missing-name diagnostics distinguish a blank icon cell from a changed footer without private content',()=>{
+ const {documentObjects}=require('../github-session-reader.js'),href='https://github.com/'+repo+'/tree/'+sha,link={textContent:'PRIVATE.kicad_pro',getAttribute:()=>'/'+repo+'/blob/'+sha+'/PRIVATE.kicad_pro'};
+ const cell=(text,links=[])=>({textContent:text,querySelectorAll:()=>links}),validCell=cell('PRIVATE.kicad_pro',[link]),valid={querySelector:()=>validCell,querySelectorAll:s=>s==='td'?[validCell]:s==='a[href]'?[link]:[]};
+ for(const footer of [false,true]){
+  const button={textContent:'View all files',getAttribute:()=> 'Link'},wrapper={tagName:'SPAN',children:[button]},first=cell(footer?'View all files':''),second=cell('PRIVATE.kicad_pro',[link]);first.children=[wrapper];first.getAttribute=()=> '3';
+  const cells=footer?[first]:[first,second],bad={children:cells,textContent:footer?'View all files':'PRIVATE.kicad_pro',classList:{contains:()=>true},getAttribute:()=>footer?'view-all-files-row':null,querySelector:()=>first,querySelectorAll:s=>s==='td'?cells:s==='button'&&footer?[button]:s==='a[href]'&&!footer?[link]:[]};
+  const table={textContent:'Files',querySelectorAll:()=>[valid,bad]},doc={querySelectorAll:()=>[],querySelector:s=>s.startsWith('table[')?table:s.includes('ref-picker')?{textContent:'main'}:null};
+  assert.throws(()=>treeData(documentObjects(doc,href),sha,'',true),error=>{assert.equal(error.code,'GITHUB_POLICY_ROWS');for(const issue of footer?['no-name-link','row-footer-marker','row-last','row-single-cell','row-button-one','footer-bad-wrapper']:['no-name-link','row-no-footer-marker','row-multiple-cells','row-empty-first-cell','row-later-file-link'])assert.ok(error.policyRowIssues.includes(issue),issue);assert.doesNotMatch(JSON.stringify(error),/PRIVATE|github\.com|kicad_pro/);return true;});
+ }
+});
 test('only a complete fresh root proves a missing website policy; listed unreadable files and links fail closed',async()=>{
  for(const mode of ['absent','incomplete','symlink','missing','denied']){const rows=mode==='absent'?[]:[{path:'.kicad-review-policy.json',contentType:mode==='symlink'?'symlink':'file'}],objects=tree('',rows);if(mode==='incomplete')objects[0].payload.codeViewTreeRoute.tree.totalCount=2;
  const api=create({location:{href:'https://github.com/'+repo},parseDocument:()=>tree(),parseHTML:()=>[...objects,{githubWebsiteAccount:'reviewer'}],fetch:async url=>{if(mode==='denied'||url.endsWith('.json')){const r=response('Not Found',url,'text/html');Object.defineProperty(r,'status',{value:404});Object.defineProperty(r,'ok',{value:false});return r;}return response('html',url,'text/html');}});
@@ -269,4 +393,23 @@ test('policy absence rejects unsupported native table rows even if unrelated fil
  const row=a=>({querySelector:s=>s==='td'?{querySelectorAll:()=>[a]}:null,querySelectorAll:s=>s==='a[href]'?[a]:[]});
  for(const malformed of [false,true]){const rows=[header,row(ok),...(malformed?[row(bad)]:[])],table={textContent:'Name README.md',querySelectorAll:()=>rows},doc={querySelectorAll:()=>[],querySelector:s=>s.startsWith('table[')?table:s.includes('ref-picker')?{textContent:'main'}:null};const data=documentObjects(doc,href);
  if(malformed)assert.throws(()=>treeData(data,sha,'',true),/unverified file rows/);else assert.equal(treeData(data,sha,'',true).items.length,1);}
+});
+test('policy completeness recognizes only the exact terminal disclosure with or without mobile CSS',async()=>{
+ const {documentObjects}=require('../github-session-reader.js'),href='https://github.com/'+repo+'/tree/'+sha;
+ const link={textContent:'README.md',getAttribute:()=>'/'+repo+'/blob/'+sha+'/README.md'};
+ const file={querySelector:()=>({querySelectorAll:()=>[link]}),querySelectorAll:s=>s==='a[href]'?[link]:s==='td'?[{}]:[]};
+ for(const mobile of [true,false])for(const mode of ['valid','valid-policy','unknown-before','unknown','hidden-policy','extra-cell','extra-button','wrong-label','wrong-colspan','wrong-wrapper','wrong-button-kind','extra-input','duplicate','nonterminal','no-files']){
+  const label=mode==='wrong-label'?'Load more files':'View all files',control={textContent:label,getAttribute:()=>mode==='wrong-button-kind'?'Button':'Link'},wrapper={tagName:mode==='wrong-wrapper'?'SPAN':'DIV',children:[control]},cell={children:[wrapper],getAttribute:()=>mode==='wrong-colspan'?'4':'3'};
+  const badLink={textContent:'.kicad-review-policy.json',getAttribute:()=>'/foreign/repo/blob/'+sha+'/.kicad-review-policy.json'};
+  const disclosure={children:[cell],classList:{contains:()=>mobile},textContent:label,getAttribute:()=>mode==='unknown'?'unknown-row':'view-all-files-row',querySelector:()=>({querySelectorAll:()=>[]}),querySelectorAll:s=>s==='td'?(mode==='extra-cell'?[cell,cell]:[cell]):s==='button'?(mode==='extra-button'?[control,control]:[control]):s==='a[href]'&&mode==='hidden-policy'?[badLink]:s==='a[href],input,select,textarea'&&['hidden-policy','extra-input'].includes(mode)?[badLink]:[]};
+  const policyLink={textContent:'.kicad-review-policy.json',getAttribute:()=>'/'+repo+'/blob/'+sha+'/.kicad-review-policy.json'},policyRow={hidden:true,querySelector:()=>({querySelectorAll:()=>[policyLink]}),querySelectorAll:s=>s==='a[href]'?[policyLink]:s==='td'?[{}]:[]},unknownRow={querySelector:()=>({querySelectorAll:()=>[]}),querySelectorAll:s=>s==='td'?[{}]:[]};
+  const rows=mode==='duplicate'?[file,disclosure,disclosure]:mode==='nonterminal'?[disclosure,file]:mode==='no-files'?[disclosure]:mode==='valid-policy'?[file,policyRow,disclosure]:mode==='unknown-before'?[file,unknownRow,disclosure]:[file,disclosure];
+  const table={textContent:'README.md '+label,querySelectorAll:()=>rows},doc={querySelectorAll:()=>[],querySelector:s=>s.startsWith('table[')?table:s.includes('ref-picker')?{textContent:'main'}:null};
+  const data=documentObjects(doc,href);if(mode==='valid')assert.equal(treeData(data,sha,'',true).items.length,1);else if(mode==='valid-policy'){
+   assert.ok(treeData(data,sha,'',true).items.some(item=>item.path==='.kicad-review-policy.json'));
+   const calls=[],content=JSON.stringify({schemaVersion:1,commenting:{mode:'disabled'}}),api=create({location:{href:'https://github.com/'+repo},parseHTML:()=>[...data,{githubWebsiteAccount:'reviewer'}],fetch:async url=>{calls.push(url);return response(url.endsWith('.json')?content:'html',url,url.endsWith('.json')?'text/plain':'text/html');}});
+   assert.equal((await api.read({repository:repo,ref:'HEAD',action:'policy'})).content,content);
+   assert.deepEqual(calls,['https://github.com/'+repo,'https://github.com/'+repo+'/raw/'+sha+'/.kicad-review-policy.json']);
+  }else assert.throws(()=>treeData(data,sha,'',true),mode==='no-files'?/readable repository tree/:/unverified file rows/);
+ }
 });
