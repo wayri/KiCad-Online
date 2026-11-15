@@ -27,7 +27,7 @@
   function textWidth(string, width) {
     return Array.from(overbarText(string).text).reduce((total, c) => total + (TEXT_ADVANCES[c.charCodeAt(0) - 32] ?? 21) * width / 21, 0) + width * 0.16;
   }
-  const MAX_PRIMITIVES = 150000;
+  const MAX_PRIMITIVES = root.KiCadDesignDiff?.MAX_RENDER_PRIMITIVES || (typeof require==='function'?require('./design-diff.js').MAX_RENDER_PRIMITIVES:1500000);
   const value = (item) => item && typeof item === "object" && !Array.isArray(item) ? item.quoted : item;
   const typeOf = (form) => Array.isArray(form) ? String(value(form[0])) : "";
   const forms = (node, type) => Array.isArray(node) ? node.filter((item) => Array.isArray(item) && typeOf(item) === type) : [];

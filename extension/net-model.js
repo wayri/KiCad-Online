@@ -277,7 +277,7 @@
       const ast=parsedFiles.get(file.path), records=recordsByPath.get(file.path) || [];
       const design=designs instanceof Map ? designs.get(file.path) : designs?.[file.path];
       const primitives=Array.isArray(design?.primitives) ? design.primitives : [];
-      if (primitives.length>250000) throw new Error("Too many render primitives for net selection.");
+      if (primitives.length>diff.MAX_RENDER_PRIMITIVES) throw new Error("Too many render primitives for net selection.");
       nets.push(...(kind(ast)==="kicad_pcb" ? pcb(file.path,ast,records,primitives,warn) : schematic(file.path,ast,records,primitives,warn)));
     }
     for (const net of nets) {net.objectIds=[...new Set(net.objectIds)];net.uuids=[...new Set(net.uuids)];net.primitives=[...new Set(net.primitives)];}
@@ -346,7 +346,7 @@
     let primitiveIds=new WeakMap(), nextPrimitiveId=0;
     const CACHE_LIMIT=96*1024*1024;
     function primitiveSignature(primitives) {
-      if(primitives.length>250000)throw new Error("Too many render primitives for net selection.");
+      if(primitives.length>diff.MAX_RENDER_PRIMITIVES)throw new Error("Too many render primitives for net selection.");
       const chunks=[];let chars=0;
       for(const p of primitives) {
         let entry;
@@ -375,9 +375,9 @@
         paths.add(file.path);
         const previous=cache.get(file.path),size=previous?.content===file.content?previous.sourceBytes:encoder.encode(file.content).length;
         sourceBytes+=size;
-        if(size>(/\.kicad_pcb$/i.test(file.path)?64:8)*1024*1024||sourceBytes>CACHE_LIMIT)throw new Error("KiCad project exceeds browser comparison size limits.");
+        if(size>diff.sourceByteLimit(file.path)||sourceBytes>diff.MAX_PROJECT)throw new Error("KiCad project exceeds browser comparison size limits.");
         const design=designs instanceof Map?designs.get(file.path):designs?.[file.path],primitives=Array.isArray(design?.primitives)?design.primitives:[];
-        if(primitives.length>250000)throw new Error("Too many render primitives for net selection.");
+        if(primitives.length>diff.MAX_RENDER_PRIMITIVES)throw new Error("Too many render primitives for net selection.");
         inputs.push({file,sourceBytes:size,primitives,design});
       }
       for(const path of cache.keys())if(!paths.has(path))cache.delete(path);

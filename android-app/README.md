@@ -42,6 +42,13 @@ The export uses the imported project snapshot, not an alternate comparison revis
 
 ## Touch workflow
 
+The development drawing toolbar keeps **Search**, **Inspect**, **Fit** and
+**Tools** directly reachable with captions and touch targets. Tools opens the
+existing grouped tool sheet; secondary actions remain there instead of
+duplicating the primary strip. Reopening the same drawing preserves its current
+workspace. These changes have focused JavaScript coverage; installation and
+physical-device acceptance of this update are pending.
+
 The bottom tabs switch between Project, Schematic and Layout. Views/compare controls open from the header. The drawing toolbar provides Search, Fit, group Highlight, Comments and More. Drag pans; pinch zooms; double-tap enters a sheet; hold opens contextual actions. Phone panels slide up. Tablet panels support pinning and resizing. Back dismisses overlays before exiting and protects unsaved comment drafts.
 
 Controls retain accessible labels with compact phone controls and larger tablet spacing. The native host handles system/keyboard insets, font scaling and modern Android Back callbacks. Light/dark themes and reduced-motion preferences are respected. Locally bundled SVG icons use short captions. Settings load on demand, file lists are bounded and searchable, and parsing uses workers with a safe fallback. No measured large-project speedup is claimed.

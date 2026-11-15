@@ -59,6 +59,8 @@ test('untrusted requests and revision/path injection are rejected with no fallba
  assert.throws(()=>createGitHistoryReader({gitPath:'git',rootPath:directory,isTrusted:()=>true}),/trusted local/);
  await assert.rejects(reader.tree({sha:blob}),/must identify a Git commit/);
  await assert.rejects(reader.read({sha:first,path:'board.kicad_pcb',maxBytes:3}),/read limit/);
+ assert.equal((await reader.read({sha:first,path:'board.kicad_pcb',maxBytes:256*1024*1024})).bytes.toString(),'saved first board');
+ await assert.rejects(reader.read({sha:first,path:'board.kicad_pcb',maxBytes:256*1024*1024+1}),/Invalid saved Git file/);
  for(const page of [0,51,1.2])await assert.rejects(reader.tree({sha:first,page}),/Invalid saved Git tree/);
 });
 test('entry limits and paging are bounded against actual Git trees',async()=>{

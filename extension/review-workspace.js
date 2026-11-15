@@ -1,6 +1,7 @@
 /* Dedicated schematic/PCB review workspace. Source drawings are never edited. */
 ((root) => {
   "use strict";
+ const runtimeSend=message=>globalThis.KiCadChunkedReplies?globalThis.KiCadChunkedReplies.send(chrome.runtime,message):chrome.runtime.sendMessage(message);
   const netDisplayName=net=>root.KiCadNetModel?.displayName?.(net)||net?.displayName||net?.name||'Unnamed network';
   function mountNavigationHelp(document, toolbar, content) {
     if(!content||!toolbar)return null;
@@ -348,7 +349,7 @@
     const KiCadReviewComments=collaboration?.provider==='gitlab'?root.KiCadReviewComments.forWorkspace({repository,ref,file:rootFile},{...collaboration,file:collaboration.prefix?collaboration.prefix+'/'+rootFile:rootFile}):root.KiCadReviewComments;
     const provider=collaboration?.provider||options.provider||'github',providerName=provider==='gitlab'?'GitLab':'GitHub',host=provider==='gitlab'?KiCadReviewComments.normalizeScope({provider:'gitlab',host:collaboration?.host||options.host||'https://gitlab.com',repository,ref,file:rootFile}).host:'https://github.com',providerContext=provider==='gitlab'?{provider,host}:{}, remoteAvailable=['github','gitlab'].includes(provider)&&(root.KiCadAndroidRuntime?root.KiCadAndroidOnline===true:Boolean(collaboration)||!root.KiCadVSCodeContext&&!root.KiCadLocalRuntime);
     const browserReviewTransport=provider==='github'&&!root.KiCadVSCodeContext&&!root.KiCadAndroidRuntime&&!root.KiCadLocalRuntime?{reviewTransport:'website-session'}:{};
-    const request = async (type, extra = {}) => { const reply = await chrome.runtime.sendMessage({type,...browserReviewTransport, ...extra,...providerContext}); if(reply?.accessIssue)root.KiCadStartupHealth?.showAccessIssue(reply.accessIssue); if (!reply?.ok) throw new Error(reply?.error || "The extension could not complete this request."); return reply.result; };
+    const request = async (type, extra = {}) => { const reply = await runtimeSend({type,...browserReviewTransport, ...extra,...providerContext}); if(reply?.accessIssue)root.KiCadStartupHealth?.showAccessIssue(reply.accessIssue); if (!reply?.ok) throw new Error(reply?.error || "The extension could not complete this request."); return reply.result; };
     let config = null, model = options.initialModel||KiCadDesignModel.buildProject(files), objects = KiCadDesignModel.applyVariant(model, "default");
     let pointerWorld=null,bomManager=null,bomSelectedId=null;
     const bomReferenceButtons=new Map();
@@ -948,10 +949,10 @@
       if(!nets.length)list.append(make("p","No networks match this search."));
       const warnings=netModel.warnings.filter(message=>message.startsWith(path+": "));$("netWarnings").hidden=!warnings.length;$("netWarningCount").textContent=`${warnings.length} connectivity note${warnings.length===1?"":"s"}`;$("netWarningList").replaceChildren();for(const warning of warnings.slice(0,20))$("netWarningList").append(make("p",warning.slice(path.length+2)));if(warnings.length>20)$("netWarningList").append(make("p",`First 20 of ${warnings.length} notes shown.`));
     }
-    function focusSceneGeometry(primitives,position){
+    function focusSceneGeometry(primitives,position,reference){
       if(!scene?.focusPosition)return false;const available=new Set(getCanvas()?.primitives||getCanvas()?.design?.primitives||[]),geometry=(primitives||[]).filter(p=>available.has(p)&&(!p.path||p.path===currentFile())&&!p.hidden&&!p.frame&&p.type!=='text'&&p.kind!=='footprint-hit'),bounds=root.KiCadOwnedCanvas?.bounds(geometry)||null;
       const at=bounds?{x:bounds.x+bounds.w/2,y:bounds.y+bounds.h/2}:position;if(!at||![at.x,at.y].every(Number.isFinite))return false;
-      const layers=geometry.map(p=>p.layer).filter(Boolean),side=layers.length&&layers.every(layer=>layer.startsWith('B.'))?'back':'front';return Boolean(scene.focusPosition(at,{bounds,side}));
+      const layers=geometry.map(p=>p.layer).filter(Boolean),side=layers.length&&layers.every(layer=>layer.startsWith('B.'))?'back':'front',layer=layers.length&&layers.every(value=>value===layers[0])?layers[0]:undefined;return Boolean(scene.focusPosition(at,{bounds,side,layer,...(reference?{reference}:{})}));
     }
     function focusNet(net){if(scene){if(!focusSceneGeometry(net.primitives,net.members?.find(member=>member.position)?.position))$('selectionStatus').textContent=`${netDisplayName(net)} · no saved geometry to locate`;return;}const canvas=getCanvas();canvas.resize();const visible=net.primitives.filter(p=>!p.hole&&canvas.geometryVisible?.(p)!==false&&(!p.layer||canvas.visibleLayers.has(p.layer))),box=root.KiCadOwnedCanvas?.bounds(visible);if(!box){$("selectionStatus").textContent=`${netDisplayName(net)} · no geometry on visible layers`;return;}const margin=Math.max(3,Math.max(box.w,box.h)*.1);canvas.viewport.camera.bbox={x:box.x-margin,y:box.y-margin,w:box.w+2*margin,h:box.h+2*margin};canvas.draw();}
     function highlightedNets(){const path=currentFile(),result=new Map([...pinnedNets.values()].filter(n=>n.path===path).map(n=>[n.id,n]));if(classConfig)for(const net of netModel.nets){if(net.path!==path)continue;if([...pinnedClasses.values()].some(c=>c.path===path&&root.KiCadProjectSearch.netClasses(net.name,classConfig).includes(c.name))&&result.size<200)result.set(net.id,net);}if(selectedNet&&!result.has(selectedNet.id)&&result.size<200)result.set(selectedNet.id,selectedNet);return [...result.values()];}
@@ -1094,7 +1095,7 @@
       if (object.path !== currentFile()) {
         openSheet(object.path, object.position);return;
       }
-      if (scene) {if (!fromScene&&!scene.setSelection&&object.reference)scene.selectReference?.(object.reference);if(move){const geometry=(getCanvas()?.primitives||getCanvas()?.design?.primitives||[]).filter(p=>object.uuid&&(p.uuid===object.uuid||p.ownerUuid===object.uuid));focusSceneGeometry(geometry,object.position);}}
+      if (scene) {if (!fromScene&&!scene.setSelection&&object.reference)scene.selectReference?.(object.reference);if(move){const geometry=(getCanvas()?.primitives||getCanvas()?.design?.primitives||[]).filter(p=>object.uuid&&(p.uuid===object.uuid||p.ownerUuid===object.uuid));focusSceneGeometry(geometry,object.position,object.reference);}}
       else {
         const canvas = getCanvas();
         if (native && object.position && canvas?.layers?.query_point) {

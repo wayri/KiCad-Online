@@ -3,9 +3,9 @@
   "use strict";
   const repositoryPattern = /^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+$/;
   const filePattern = /(?:\.kicad_(?:sch|pcb)|\.(?:sch|brd))$/i;
-  const PROJECT_MAX_BYTES = 96 * 1024 * 1024;
+  const PROJECT_MAX_BYTES = 512 * 1024 * 1024;
   const PROJECT_MAX_FILES = 128, PARENT_MAX_CANDIDATES = 128, READ_CONCURRENCY = 4;
-  const fileByteLimit = (path) => /\.(wbk|raw|csv|tsv|json|html?|txt)$/i.test(path) ? 64 * 1024 * 1024 : (/\.kicad_pcb$/i.test(path) ? 64 : 8) * 1024 * 1024;
+  const fileByteLimit = (path) => /\.(wbk|raw|csv|tsv|json|html?|txt)$/i.test(path) ? 64 * 1024 * 1024 : (/\.kicad_(pcb|sch)$/i.test(path) ? 256 : 8) * 1024 * 1024;
 
   function validRepository(value, provider = "github") {
     return typeof value === 'string' && value.length <= 500 && repositoryPattern.test(value) &&
@@ -102,7 +102,7 @@
     }
     const cache = new Map(), sizes = new Map(), inFlight = new Map(), sheetCache = new Map(), encoder = new TextEncoder();
     let totalBytes = 0, readCount = 0;
-    async function read(path) {
+    async function read(path, budget = PROJECT_MAX_BYTES) {
       if (cache.has(path)) return cache.get(path);
       if (inFlight.has(path)) return inFlight.get(path);
       if (readCount >= PROJECT_MAX_FILES + PARENT_MAX_CANDIDATES) throw new Error("Project discovery exceeds the bounded KiCad file count.");
@@ -112,7 +112,7 @@
       if (content !== null && typeof content !== "string") throw new Error("GitHub returned invalid KiCad file contents.");
       if (content !== null) {
         const size = encoder.encode(content).length;
-        if (size > fileByteLimit(path) || totalBytes + size > PROJECT_MAX_BYTES) {
+        if (size > fileByteLimit(path) || totalBytes + size > budget) {
           throw new Error("Project discovery exceeds the browser preview size limit.");
         }
         totalBytes += size;
@@ -129,12 +129,12 @@
         sheetFiles(content).map(name => childPath(path, name)).filter(Boolean));
       return sheetCache.get(path);
     }
-    async function readBatch(paths) {
+    async function readBatch(paths, budget = PROJECT_MAX_BYTES) {
       let next = 0, failure = null;
       await Promise.all(Array.from({ length: Math.min(READ_CONCURRENCY, paths.length) }, async () => {
         while (next < paths.length && !failure) {
           const path = paths[next++];
-          try { await read(path); } catch (error) { failure ||= error; }
+          try { await read(path, budget); } catch (error) { failure ||= error; }
         }
       }));
       if (failure) throw failure;
@@ -179,7 +179,7 @@
         }
       }
       }
-      await readBatch([...candidates]);
+      await readBatch([...candidates], Math.max(totalBytes, 96 * 1024 * 1024));
       for (const path of candidates) if (cache.get(path) === null) throw new Error(`Parent-sheet source unavailable: ${path}`);
       const edges = new Map();
       for (const path of candidates) {

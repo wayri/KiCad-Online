@@ -1,6 +1,6 @@
 "use strict";
 
-importScripts("gerber-renderer.js", "repository-sessions.js", "github-website-reviews.js", "github-website-history.js", "github-website-pulls.js", "github-session-reader.js", "github-project-buffer.js", "github-project-view.js", "draftsman-model.js", "draftsman-export.js", "draftsman-repository.js", "managed-policy.js", "parsing.js", "project-launch.js", "legacy-kicad.js", "browser-data.js", "review-comments.js", "review-file-store.js", "credential-vault.js", "provider-oauth.js", "revision-fork.js", "github-review-api.js", "gitlab-provider.js", "gitlab-review-api.js", "gitlab-hosts.js", "mention-users.js", "environment-diagnostics.js", "project-recents.js", "native-kicad.js");
+importScripts("chunked-replies.js", "gerber-renderer.js", "repository-sessions.js", "github-website-reviews.js", "github-website-history.js", "github-website-pulls.js", "github-session-reader.js", "github-project-buffer.js", "github-project-view.js", "draftsman-model.js", "draftsman-export.js", "draftsman-repository.js", "managed-policy.js", "parsing.js", "project-launch.js", "legacy-kicad.js", "browser-data.js", "review-comments.js", "review-file-store.js", "credential-vault.js", "provider-oauth.js", "revision-fork.js", "github-review-api.js", "gitlab-provider.js", "gitlab-review-api.js", "gitlab-hosts.js", "mention-users.js", "environment-diagnostics.js", "project-recents.js", "native-kicad.js");
 globalThis.KiCadManagedPolicy?.installFetch();
 
 let mentionService=null;
@@ -59,7 +59,9 @@ function linkedReadController(signal){
   signal?.addEventListener('abort',abort,{once:true});
   return {controller,dispose:()=>signal?.removeEventListener('abort',abort)};
 }
-let githubProjectBuffer=null,githubProjectView=null,repositorySessionStore=null;
+let githubProjectBuffer=null,githubProjectView=null,repositorySessionStore=null,chunkReplyStore=null;
+function replyChunks(){return chunkReplyStore||=(globalThis.KiCadChunkedReplies||(typeof require==='function'?require('./chunked-replies.js'):null)).createStore();}
+const chunkOwner=sender=>JSON.stringify([sender.id,sender.tab?.id??null,sender.frameId??0,sender.documentId||sender.url]);
 function repositorySessions(){const api=globalThis.KiCadRepositorySessions||(typeof require==='function'?require('./repository-sessions.js'):null);return repositorySessionStore||=api.create(chrome);}
 async function viewerPreferences(){const value=await chrome.storage.local.get('project-viewer-mode');return {mode:value['project-viewer-mode']==='inline'?'inline':'tab'};}
 function projectBuffer(){return githubProjectBuffer||=(KiCadGitHubProjectBuffer.create({foregroundOnly:true,readSession:(...args)=>githubSessionRead(...args),fetch:(...args)=>fetch(...args),assertNetwork:()=>globalThis.KiCadManagedPolicy?.assertNetwork()}));}
@@ -72,7 +74,7 @@ async function sessionLoadMessage(tabId,message,signal){
  checkLoad(signal);const requestId='load-'+crypto.randomUUID().replaceAll('-','');
  const abort=()=>{chrome.tabs.sendMessage(tabId,{type:'repository-session-cancel',requestId},{frameId:0}).catch(()=>{});};
  signal?.addEventListener('abort',abort,{once:true});
- try{const result=await chrome.tabs.sendMessage(tabId,{...message,...(signal?{requestId}:{})},{frameId:0});checkLoad(signal);return result;}
+ try{const result=await chrome.tabs.sendMessage(tabId,{...message,...(signal?{requestId}:{})},{frameId:0});return await (globalThis.KiCadChunkedReplies||(typeof require==='function'?require('./chunked-replies.js'):null)).decode(result,async request=>{const reply=await chrome.tabs.sendMessage(tabId,{...request,action:request.type,type:'repository-session-chunk'},{frameId:0});if(!reply?.ok)throw Error(reply?.error||'Source transfer unavailable.');return reply.result;},{signal});}
  finally{signal?.removeEventListener('abort',abort);}
 }
 async function githubSessionRead(repository,ref,action,path='',limit=8*1024*1024,signal) {
@@ -81,7 +83,7 @@ async function githubSessionRead(repository,ref,action,path='',limit=8*1024*1024
   let accessError=null;
   for(const tab of tabs) {
     if(!tab.bound){let url;try{url=new URL(tab.url);}catch{continue;}if(url.origin!=='https://github.com'||url.pathname.split('/').slice(1,3).join('/').toLowerCase()!==repository.toLowerCase())continue;}
-    const read=()=>sessionLoadMessage(tab.id,{type:'github-session-read',repository,ref,action,path,limit:Math.min(limit,action==='file'?64*1024*1024:32*1024*1024)},signal);
+    const read=()=>sessionLoadMessage(tab.id,{type:'github-session-read',repository,ref,action,path,limit:Math.min(limit,action==='file'?256*1024*1024:32*1024*1024)},signal);
     let reply;try{reply=await read();}catch{
       checkLoad(signal);
       if(!tab.bound||!await repositorySessions().recover(tab.id,'github','https://github.com',repository))continue;
@@ -477,7 +479,7 @@ async function projectSearchFiles(repository, ref, file) {
   const files=[];let total=0;
   for(const item of candidates.slice(0,32)) {
     if(Number(item.size)>KiCadBrowserData.fileByteLimit(item.path)){warnings.push(`${item.path}: exceeds the ${KiCadBrowserData.fileByteLimit(item.path)/1024/1024} MiB drawing limit.`);continue;}
-    if(total+Number(item.size||0)>KiCadBrowserData.PROJECT_MAX_BYTES){warnings.push("Project search reached its 96 MiB source limit.");break;}
+    if(total+Number(item.size||0)>KiCadBrowserData.PROJECT_MAX_BYTES){warnings.push("Project search reached its 512 MiB source limit.");break;}
     try {const content=await githubFile(repository,commit.sha,item.path);if(content===null){warnings.push(`${item.path}: source unavailable.`);continue;}
       const bytes=new TextEncoder().encode(content).byteLength;if(bytes>KiCadBrowserData.fileByteLimit(item.path)||total+bytes>KiCadBrowserData.PROJECT_MAX_BYTES){warnings.push(`${item.path}: source size limit reached.`);continue;}
       total+=bytes;files.push({path:item.path,content});
@@ -1119,7 +1121,7 @@ async function openFromAction(tab) {
   let page;try{page=new URL(tab.url);}catch{return open({});}
   if(page.protocol!=='https:'||page.origin!=='https://github.com'&&!(await globalThis.KiCadGitLabHosts?.allowed(page.origin)))return open({});
   if(chrome.scripting?.executeScript){
-    try{const firefox=chrome.runtime.getManifest?.()?.browser_specific_settings?.gecko;await chrome.scripting.executeScript({target:{tabId:tab.id},files:[...(firefox?['firefox/browser-api.js']:[]),'parsing.js','github-website-history.js','github-website-pulls.js','github-session-reader.js','github-session-review.js','gitlab-session-reader.js','repository-session-bridge.js']});}
+    try{const firefox=chrome.runtime.getManifest?.()?.browser_specific_settings?.gecko;await chrome.scripting.executeScript({target:{tabId:tab.id},files:[...(firefox?['firefox/browser-api.js']:[]),'chunked-replies.js','parsing.js','github-website-history.js','github-website-pulls.js','github-session-reader.js','github-session-review.js','gitlab-session-reader.js','repository-session-bridge.js']});}
     catch{return open({error:'Browser site access was not granted or is blocked by policy. Click the extension on the repository tab again, or use Open local files.'});}
   }
   let hint;try{hint=await chrome.tabs.sendMessage(tab.id,{type:'projectLaunchContext'},{frameId:0});}catch{}
@@ -1183,7 +1185,7 @@ async function gitlabSessionResponse(host,contextRepository,url,limit,signal) {
   const project=decodeURIComponent(match[1]),repository=/^[1-9][0-9]*$/.test(project)?contextRepository:project;
   if(!globalThis.KiCadGitLabProvider.forHost(host).validRepository(repository))return null;
   const tabs=await repositorySessions().candidates('gitlab',host,repository);
-  limit=Math.min(limit,64*1024*1024);
+  limit=Math.min(limit,256*1024*1024);
   let sessionError=null;
   for(const tab of tabs) {
     if(!tab.bound){let page;try{page=new URL(tab.url);}catch{continue;}if(page.origin!==host||!(page.pathname===`/${repository}`||page.pathname.startsWith(`/${repository}/-/`)))continue;}
@@ -1372,6 +1374,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!(senderAllowed(sender) || comparisonSender(sender) || pdfSender(sender) || analysisSender(sender) || fabricationSender(sender) || bomSender(sender) || optionsSender(sender)||dashboardSender(sender)||localWorkspaceSender(sender)||launcherSender(sender)||sessionReviewSender(sender)||customHostSender||sender?.id===chrome.runtime.id&&message?.type==='inline-project-open-tab') || !message || typeof message !== "object") return false;
   (async () => {
     await repositorySessions().ready;
+    if(message.type==='reply-chunk'){const owner=chunkOwner(sender);return message.action==='chunk-drop'?replyChunks().drop(message.token,owner):replyChunks().read(message.token,message.index,owner);}
     if (comparisonSender(sender)) return comparisonRead(message, sender);
     if(message.type==='github-session-review')return websiteReview(message,sender);
     if(sessionReviewSender(sender))throw Error('This page only uses website review operations.');
@@ -1426,7 +1429,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if(!viewerSender(sender)||!loadIdValid(message.loadId)||!['project','revision-resolve','project-inventory','project-file'].includes(message.type))throw Error('Invalid cancellable project read.');
       const key=loadKey(sender,message.loadId);if(projectLoads.has(key))throw Error('Project load identifier is already active.');
       if(projectLoads.size>=32)throw Error('Too many active project loads.');
-      const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),120000);projectLoads.set(key,{controller});
+      const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),300000);projectLoads.set(key,{controller});
       try{const result=await (message.provider==='gitlab'?gitlabDispatch(message,sender,controller.signal):cancellableProject(message,controller.signal));checkLoad(controller.signal);return result;}
       catch(error){checkLoad(controller.signal);throw error;}
       finally{clearTimeout(timer);projectLoads.delete(key);}
@@ -1668,7 +1671,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                    devicePollTimer = null;
                  }
                }
-               sendResponse({ ok: true, result });
+               try{sendResponse(message.type==='reply-chunk'||message.acceptChunkedReply!==true?{ok:true,result}:replyChunks().encode({ok:true,result},chunkOwner(sender)));}catch(error){sendResponse({ok:false,error:error.message||'The source response exceeds its transfer budget.'});}
              },
              (error) => {
                const accessIssue=error?.accessIssue||globalThis.KiCadEnvironmentDiagnostics?.classifyAccessError?.(error);

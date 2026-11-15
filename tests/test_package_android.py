@@ -6,6 +6,12 @@ ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('android_package',ROOT/'scripts/package_android.py')
 builder=importlib.util.module_from_spec(spec);spec.loader.exec_module(builder)
 class AndroidPackageTests(unittest.TestCase):
+    def test_mobile_source_profile_does_not_inherit_desktop_256_mib_ceiling(self):
+        assets=builder.payload()
+        self.assertIn(b'const MAX_MODERN_FILE = 64 * 1024 * 1024;',assets['design-diff.js'])
+        self.assertIn(b'modern ? 6000000',assets['design-diff.js'])
+        self.assertIn(b'const MAX_RENDER_PRIMITIVES = 250000;',assets['design-diff.js'])
+        self.assertIn(b'(pcb|sch)$/i.test(path) ? 64 : 8',assets['browser-data.js'])
     def test_source_archive_excludes_local_signing_material(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)

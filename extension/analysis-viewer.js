@@ -1,5 +1,6 @@
 /* Saved result presentation: local text only, no HTML execution or solver calls. */
 (()=>{'use strict';
+ const runtimeSend=message=>globalThis.KiCadChunkedReplies?globalThis.KiCadChunkedReplies.send(chrome.runtime,message):chrome.runtime.sendMessage(message);
  const nativeEditor=Boolean(globalThis.KiCadVSCodeContext&&!globalThis.KiCadAndroidRuntime);if(!nativeEditor&&!globalThis.KiCadAndroidRuntime)document.body.dataset.uiTheme=document.body.classList.contains('dark')?'dark':'light';
  const $=id=>document.getElementById(id),make=(tag,text)=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=String(text);return n;};
  const query=new URLSearchParams((globalThis.KiCadVSCodeContext&&!globalThis.KiCadAndroidRuntime?globalThis.KiCadVSCodeContext.search:location.search)),context=Object.fromEntries(['repository','ref','provider','host'].map(k=>[k,query.get(k)]).filter(([,v])=>v));
@@ -37,7 +38,7 @@
  function probeAt(event){if(!chartMap?.probe)return null;const rect=$('chart').getBoundingClientRect();return chartMap.probe(event.clientX-rect.left,event.clientY-rect.top);}
  $('chart').addEventListener('click',event=>acceptProbe(probeAt(event)));
  function drawProbes(ctx,sx,sy){for(const [name,p]of [['A',probeA],['B',probeB]]){if(!p||p.value===null)continue;const x=sx(p.x),y=sy(p.y===undefined?p.value:p.y);if(!Number.isFinite(x)||!Number.isFinite(y))continue;ctx.fillStyle='#d56142';ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.beginPath();ctx.arc(x,y,5,0,Math.PI*2);ctx.fill();ctx.stroke();ctx.font='bold 12px system-ui';ctx.textAlign='left';ctx.fillText(name,x+8,y-7);}}
- async function request(type,extra={}){const response=await chrome.runtime.sendMessage({type,...context,...extra});if(!response?.ok)throw Error(response?.error||'Unable to read saved results.');return response.result;}
+ async function request(type,extra={}){const response=await runtimeSend({type,...context,...extra});if(!response?.ok)throw Error(response?.error||'Unable to read saved results.');return response.result;}
  function option(select,label,value){const n=make('option',label);n.value=value;select.append(n);}
  async function load(path){const generation=++ticket;$('status').textContent='Loading '+path+'…';try{
   const result=await request('project-file',{file:path});if(disposed||generation!==ticket)return;source=typeof result==='string'?result:result.content;

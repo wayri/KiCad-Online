@@ -14,6 +14,6 @@ VENDOR_ASSETS = ('spike-board3d.bundle.js', 'SPIKE-ENGINE-NOTICE.md',
 RENDERER_ASSETS += ('ui-foundation.css','analysis-simulation.js','analysis-simulation.css','revision-actions.js','overview-routing.js')
 RENDERER_ASSETS += ('pdf-tools.js','pdf-viewer.html','pdf-viewer.css','pdf-viewer.js')
 VENDOR_ASSETS += _PDF_VENDOR
-RENDERER_ASSETS += ('product-version.js', 'product-info.js')
+RENDERER_ASSETS += ('product-version.js', 'product-info.js', 'chunked-replies.js')
 PUBLIC_ASSETS = (frozenset({'VERSION.txt'}) | frozenset(VIEWER_PAGES) | frozenset(RENDERER_ASSETS) |
                  frozenset('vendor/'+name for name in VENDOR_ASSETS))

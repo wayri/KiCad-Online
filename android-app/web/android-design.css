@@ -118,7 +118,14 @@ body.android-design[data-size] #androidRailToggle{right:8px;top:8px;width:40px;h
 
 body.android-design[data-size] #androidViewToolbar>button{width:40px;min-width:40px!important;height:40px;min-height:40px!important;flex:0 0 40px!important;padding:8px!important}
 
-body.android-design[data-size] #androidViewToolbar #androidRailProperties{display:none!important}
+/* Four primary actions remain reachable without expanding the old rail. */
+body.android-design[data-size] #androidViewToolbar.android-drawing-strip{position:fixed!important;inset:calc(8px + var(--android-safe-top,0px)) calc(8px + var(--android-safe-right,0px)) auto auto!important;display:flex!important;flex-direction:row!important;flex-wrap:nowrap!important;align-items:center!important;justify-content:space-between!important;width:min(288px,calc(100vw - 16px - var(--android-safe-left,0px) - var(--android-safe-right,0px)))!important;max-width:none!important;min-height:48px!important;height:48px!important;max-height:none!important;padding:2px!important;gap:2px!important;overflow:visible!important;border:1px solid var(--line);border-radius:10px;background:var(--panel);z-index:40}
+body.android-design[data-size] #androidViewToolbar.android-drawing-strip>button{display:flex!important;flex:1 1 0!important;flex-direction:column;justify-content:center;align-items:center;gap:1px;width:auto!important;min-width:44px!important;max-width:none!important;min-height:44px!important;height:44px!important;padding:2px 4px!important;overflow:visible}
+body.android-design[data-size] #androidViewToolbar.android-drawing-strip .android-primary-caption{display:block!important;font-size:11px;line-height:14px;white-space:nowrap}
+body.android-design[data-size] #androidViewToolbar.android-drawing-strip svg{width:20px;height:20px;flex:0 0 20px}
+body.android-design[data-size] #androidViewToolbar.android-drawing-strip>button[hidden]{display:none!important}
+body.android-design[data-size] #androidRailToggle[hidden],body.android-design[data-size] #androidFitDrawing[hidden]{display:none!important}
+body.android-design[data-size]:has(#androidDrawingViews) #androidViewToolbar.android-drawing-strip{top:calc(48px + var(--android-safe-top,0px))!important}
 
 body.android-design[data-size] .android-selection-field{display:grid;grid-template-columns:minmax(100px,1fr) minmax(100px,1fr);align-items:center;gap:12px;grid-column:1/-1;font-size:14px}
 

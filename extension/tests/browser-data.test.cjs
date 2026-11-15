@@ -94,8 +94,8 @@ test('discovery API failure preserves the requested sheet and its child tree', a
   assert.match(result[0].discoveryWarning, /directory unavailable/);
 });
 
-test('required schematic bytes still enforce the preview size limit', async () => {
-  await assert.rejects(data.loadProject('owner/board', 'main', 'root.kicad_sch',
+test('legacy schematic bytes still enforce the preview size limit', async () => {
+  await assert.rejects(data.loadProject('owner/board', 'main', 'root.sch',
     async () => 'x'.repeat(8 * 1024 * 1024 + 1), async () => []), /size limit/);
 });
 

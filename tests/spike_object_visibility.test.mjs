@@ -31,11 +31,12 @@ test('component visibility restores source matrices and composes population, sid
  const board={components:[{layer:'F.Cu'},{layer:'B.Cu'},{layer:'F.Cu'}]},mesh=new THREE.InstancedMesh(new THREE.BoxGeometry(1,1,1),new THREE.MeshBasicMaterial(),3);
  const matrices=[1,2,3].map(x=>new THREE.Matrix4().makeTranslation(x,0,0));
  const models=new Map([[2,new THREE.Group()]]),loaded=new Set([2]);
- const code=source.slice(source.indexOf('  function updateComponentVisibility()'),source.indexOf('  const modelDiagnostics ='));
- const run=state=>Function('THREE','explode','board','componentMesh','population','loadedModelIndexes','componentMatrices','hiddenMatrix','modelGroups','renderer','invalidate','objectVisibility',code+';updateComponentVisibility();')(THREE,createExplodeView(THREE,{layers:[{name:'F.Cu',z:.8},{name:'B.Cu',z:-.8}]}),board,mesh,[true,true,true],loaded,matrices,new THREE.Matrix4().makeScale(0,0,0),models,{shadowMap:{}},()=>{},state);
+ const code=source.slice(source.indexOf('  function updateComponentVisibility('),source.indexOf('  const modelDiagnostics ='));
+ const run=(state,changedIndex)=>Function('THREE','explode','board','componentMesh','population','loadedModelIndexes','componentMatrices','hiddenMatrix','modelGroups','renderer','invalidate','objectVisibility','changedIndex',code+';updateComponentVisibility(changedIndex);')(THREE,createExplodeView(THREE,{layers:[{name:'F.Cu',z:.8},{name:'B.Cu',z:-.8}]}),board,mesh,[true,true,true],loaded,matrices,new THREE.Matrix4().makeScale(0,0,0),models,{shadowMap:{}},()=>{},state,changedIndex);
  const result=new THREE.Matrix4();run(policy({side:'top'}));mesh.getMatrixAt(0,result);assert.equal(result.elements[12],1);mesh.getMatrixAt(1,result);assert.equal(result.determinant(),0);assert.equal(models.get(2).visible,true);
  run(policy({hiddenTypes:['bodies']}));mesh.getMatrixAt(0,result);assert.equal(result.determinant(),0);assert.equal(models.get(2).visible,false);
  run(policy());mesh.getMatrixAt(1,result);assert.equal(result.elements[12],2);mesh.getMatrixAt(2,result);assert.equal(result.determinant(),0,'resolved model never restores its proxy');assert.equal(models.get(2).visible,true);
+ let recomputes=0;mesh.computeBoundingSphere=()=>{recomputes++;};loaded.add(0);run(policy(),0);mesh.getMatrixAt(0,result);assert.equal(result.determinant(),0);mesh.getMatrixAt(1,result);assert.equal(result.elements[12],2,'loading one model retains other instance transforms');assert.equal(recomputes,0,'hiding a stand-in retains the conservative instance bound');
 });
 
 test('scene filter composes with existing Display groups without changing camera or saved layer toggles',()=>{

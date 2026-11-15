@@ -1,4 +1,5 @@
 "use strict";
+ const runtimeSend=message=>globalThis.KiCadChunkedReplies?globalThis.KiCadChunkedReplies.send(chrome.runtime,message):chrome.runtime.sendMessage(message);
 (() => {
   const params = new URLSearchParams(location.search);
   const viewSession=/^[a-zA-Z0-9_-]{32,128}$/.test(params.get('viewSession')||'')?params.get('viewSession'):globalThis.crypto?.randomUUID?.()||null;
@@ -9,7 +10,7 @@
     head: params.get("head") || params.get("ref"), base: params.get("base"), status: params.get("status") || "modified", pullNumber: Number(params.get("pullNumber")) || null, pullRepository: params.get("pullRepository") || params.get("repository")
   };
   const provider=params.get('provider')||'github',providerContext=provider==='gitlab'?{provider,host:params.get('host')||'https://gitlab.com'}:{};if(!['github','gitlab'].includes(provider))throw new Error('Unsupported Git host.');request.provider=provider;request.host=providerContext.host;
-  const send=message=>chrome.runtime.sendMessage({...message,...providerContext}).then(reply=>{if(reply?.accessIssue)globalThis.KiCadStartupHealth?.showAccessIssue(reply.accessIssue);return reply;});
+  const send=message=>runtimeSend({...message,...providerContext}).then(reply=>{if(reply?.accessIssue)globalThis.KiCadStartupHealth?.showAccessIssue(reply.accessIssue);return reply;});
   const data = globalThis.KiCadBrowserData;
   const $ = (id) => document.getElementById(id);
   const toolbar = $("toolbar"), comparison = $("comparison");

@@ -168,7 +168,7 @@ test('private context may fetch only the exact same repository website with brow
 });
 
 test('private source files permit64MiB reviewed limits while binary assets remain capped at32MiB',async()=>{
- let fetched=0;const api=create({location:{href:'https://github.com/'+repo},fetch:async url=>{fetched++;return response('(kicad_pcb)','https://raw.githubusercontent.com/'+repo+'/'+sha+'/board.kicad_pcb');}});assert.equal((await api.read({repository:repo,ref:sha,action:'file',path:'board.kicad_pcb',limit:64*1024*1024})).content,'(kicad_pcb)');assert.equal(fetched,1);await assert.rejects(api.read({repository:repo,ref:sha,action:'file',path:'board.kicad_pcb',limit:64*1024*1024+1}),/Invalid/);await assert.rejects(api.read({repository:repo,ref:sha,action:'asset',path:'model.wrl',limit:32*1024*1024+1}),/Invalid/);assert.equal(fetched,1);
+ let fetched=0;const api=create({location:{href:'https://github.com/'+repo},fetch:async url=>{fetched++;return response('(kicad_pcb)','https://raw.githubusercontent.com/'+repo+'/'+sha+'/board.kicad_pcb');}});assert.equal((await api.read({repository:repo,ref:sha,action:'file',path:'board.kicad_pcb',limit:64*1024*1024})).content,'(kicad_pcb)');assert.equal(fetched,1);await assert.rejects(api.read({repository:repo,ref:sha,action:'file',path:'board.kicad_pcb',limit:256*1024*1024+1}),/Invalid/);await assert.rejects(api.read({repository:repo,ref:sha,action:'asset',path:'model.wrl',limit:32*1024*1024+1}),/Invalid/);assert.equal(fetched,1);
 });
 
 test('private context cancellation aborts a signed-in website read before returning metadata',async()=>{

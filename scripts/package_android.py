@@ -35,10 +35,12 @@ def payload(root=ROOT):
         if name=='browser-data.js':
             # Disk-backed imports are bounded separately; only the active drawing
             # hierarchy enters WebView memory. Desktop limits remain unchanged.
-            text=content.decode('utf-8').replace('const PROJECT_MAX_BYTES = 96 * 1024 * 1024;', 'const PROJECT_MAX_BYTES = 512 * 1024 * 1024;')
+            text=content.decode('utf-8')
             text=text.replace('const PROJECT_MAX_FILES = 128, PARENT_MAX_CANDIDATES = 128', 'const PROJECT_MAX_FILES = 512, PARENT_MAX_CANDIDATES = 512')
-            text=text.replace('(/\\.kicad_pcb$/i.test(path) ? 64 : 8) * 1024 * 1024', '256 * 1024 * 1024')
+            text=text.replace('(/\\.kicad_(pcb|sch)$/i.test(path) ? 256 : 8) * 1024 * 1024', '(/\\.kicad_(pcb|sch)$/i.test(path) ? 64 : 8) * 1024 * 1024')
             content=text.encode('utf-8')
+        if name=='design-diff.js':
+            content=content.replace(b'const MAX_MODERN_FILE = 256 * 1024 * 1024;', b'const MAX_MODERN_FILE = 64 * 1024 * 1024;').replace(b'modern ? 12000000',b'modern ? 6000000').replace(b'const MAX_RENDER_PRIMITIVES = 1500000;',b'const MAX_RENDER_PRIMITIVES = 250000;')
         if name=='review-workspace.js':
             text=content.decode('utf-8').replace("&&!root.KiCadVSCodeContext","&&(!root.KiCadVSCodeContext||root.KiCadAndroidOnline)")
             text=text.replace("provider!=='github'||!remoteAvailable","!remoteAvailable").replace("!remoteAvailable||provider!=='github'","!remoteAvailable").replace("provider==='github'&&remoteAvailable","remoteAvailable")

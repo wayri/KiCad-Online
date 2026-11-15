@@ -39,11 +39,12 @@ test('GitLab commits and compare use immutable refs with direct comparison',asyn
 });
 
 
-test('GitLab permits larger PCB source but retains schematic and other-file byte caps', async t => {
+test('GitLab modern PCB and schematic sources share the large-source cap; legacy remains bounded', async t => {
   const previous = global.fetch; t.after(() => {global.fetch = previous;});
   global.fetch = async () => new Response('x'.repeat(9 * 1024 * 1024));
   assert.equal((await api.file('group/board', 'main', 'large.kicad_pcb')).length, 9 * 1024 * 1024);
-  await assert.rejects(api.file('group/board', 'main', 'large.kicad_sch'), /size limit/);
+  assert.equal((await api.file('group/board', 'main', 'large.kicad_sch')).length,9*1024*1024);
+  await assert.rejects(api.file('group/board', 'main', 'large.sch'), /size limit/);
 });
 
 test('GitLab schematic inventory requires a pinned commit and rejects incomplete or excessive discoveries',async t=>{
@@ -187,7 +188,7 @@ test('GitLab public reads work without a matching website tab and never send aut
 
 test('GitLab content endpoints reject credentials, foreign projects paths and revision/size abuse before transport',async t=>{
  let calls=0;transport(t,async()=>{calls++;return json([]);});const scoped=api.forHost('https://gitlab.com',{sessionRead:async()=>{calls++;return null;}}),base='https://gitlab.com/api/v4/projects/group%2Fboard';
- for(const [url,limit]of [[base+'/issues',1024],[base+'/repository/tree?private_token=secret',1024],[base+'/repository/tree?ref=a&ref=b',1024],[base+'/repository/tree?ref='+('a'.repeat(201)),1024],[base+'/repository/files/..%2Fsecret/raw?ref=main',1024],[base,65*1024*1024],[base,1.5],['https://evil.test/api/v4/projects/group%2Fboard',1024]])await assert.rejects(scoped.response(url,limit));
+ for(const [url,limit]of [[base+'/issues',1024],[base+'/repository/tree?private_token=secret',1024],[base+'/repository/tree?ref=a&ref=b',1024],[base+'/repository/tree?ref='+('a'.repeat(201)),1024],[base+'/repository/files/..%2Fsecret/raw?ref=main',1024],[base,257*1024*1024],[base,1.5],['https://evil.test/api/v4/projects/group%2Fboard',1024]])await assert.rejects(scoped.response(url,limit));
  assert.equal(calls,0);
 });
 

@@ -1,5 +1,33 @@
 # Viewer performance checks
 
+## Local snapshot reuse (development, November 2026)
+
+Disk-backed local transports coalesce repeated reads within one imported
+snapshot. Successful decoded text is retained in an LRU cache with a 32 MiB
+estimated text budget and 64-entry limit. Oversized or underestimated results
+are not retained; failed reads can be retried. Scope and expiry are checked on
+warm reads too. These limits cover retained entries, not all concurrent requests
+or results held by callers. Android reuses the adapter for the exact snapshot
+object, keeping revisions and separate imports isolated.
+
+Opening the same Android drawing again, including after returning Home, now
+preserves its existing workspace instead of navigating its iframe again.
+Changing the file, project or pinned revision still opens a new workspace.
+
+Reproduce the local-read benchmark with an existing PCB of at most 8 MiB:
+
+```text
+node extension/tests/benchmark-local-read-cache.cjs path/to/board.kicad_pcb
+```
+
+On the development Windows host, a retained 2,131,833-byte public PCB took a
+median 157.32 ms before reuse and 9.14 ms after reuse for 20 sequential reads
+(three rounds). Disk reads fell from 20 to one per snapshot. The benchmark
+compares the checked-out code against HEAD and measures local reading and
+UTF-8 decoding. It does not measure network transfers, rendering, phone frame
+rates or end-to-end project opening. Physical-device acceptance of this update
+is pending.
+
 The Android 1.41 and shared browser viewer changes address repeated parsing
 and offscreen text painting. Drawing preparation now validates and parses each
 source once per job, reusing the AST and collected objects for the design model,

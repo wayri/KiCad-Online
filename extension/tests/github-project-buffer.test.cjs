@@ -1,5 +1,15 @@
 const test=require('node:test'),assert=require('node:assert/strict');
+const sourceTooLarge=()=>Object.assign(Error('Saved source exceeds the requested byte limit.'),{code:'GITHUB_SOURCE_TOO_LARGE'});
 const {create}=require('../github-project-buffer.js'),repo='owner/project',sha='a'.repeat(40),sha2='b'.repeat(40),tick=()=>new Promise(r=>setImmediate(r));
+
+test('256 MiB source reservations run alone without increasing the 128 MiB retained cache',async()=>{
+ const gates=[],api=create({foregroundOnly:true,readSession:async(_repo,_sha,_action,path,limit)=>{if(path==='large.kicad_sch'&&limit===8*1024*1024)throw sourceTooLarge();return new Promise(resolve=>gates.push({path,limit,resolve}));}});
+ const large=api.file(repo,sha,'large.kicad_sch',256*1024*1024);await tick();await tick();
+ const small=api.file(repo,sha,'small.kicad_sch',8*1024*1024);await tick();await tick();
+ assert.equal(gates.length,1);assert.equal(gates[0].limit,256*1024*1024);assert.equal(api.stats().reservedBytes,256*1024*1024);
+ gates[0].resolve({sha,content:'(kicad_sch)'});await large;await tick();await tick();assert.equal(gates.length,2);
+ gates[1].resolve({sha,content:'(kicad_sch)'});await small;assert.ok(api.stats().bytes<=128*1024*1024);api.dispose();
+});
 
 test('foreground folder discovery fills three transport slots, preserves order and reuses the warm inventory',async()=>{
  let release;const gate=new Promise(resolve=>release=resolve),calls=[];let active=0,peak=0;const api=create({foregroundOnly:true,fetch:()=>assert.fail('No background fetch'),readSession:async(_repo,_ref,_action,path)=>{calls.push(path);if(path==='')return{sha,items:['a','b','c','d'].map(path=>({path,type:'directory'}))};active++;peak=Math.max(peak,active);await gate;active--;return{sha,items:[{path:path+'/board.kicad_sch',type:'file'}]};}});
@@ -33,7 +43,7 @@ test('inventory fixes immutable snapshot, excludes symlinks/submodules and never
 test('inventory traversal stops at64 directories and1000entries with explicit warnings',async()=>{const h=setup({session:async(r,ref,action,path)=>({sha,items:path===''?Array.from({length:70},(_,i)=>({path:'d'+i,type:'directory'})):[]})});const result=await h.api.inventory(repo,'main');assert.equal(h.reads.length,64);assert.match(result.warnings.join(' '),/incomplete/);const wide=setup({session:async(r,ref,action,path)=>({sha,items:path===''?[{path:'d',type:'directory'},...Array.from({length:999},(_,i)=>({path:'f'+i,type:'file'}))]:[{path:'d/unread',type:'file'}]})});assert.equal((await wide.api.inventory(repo,sha)).files.length,999);assert.equal(wide.reads.length,1);});
 test('private text and binary fallback stay session-bound and never persist in cache',async()=>{const h=setup({fetcher:async()=>new Response('',{status:404}),session:async(r,ref,action)=>action==='asset'?{sha,base64:'AAEC'}:{sha,content:'private'}});assert.equal(await h.api.file(repo,sha,'private',100),'private');assert.equal(await h.api.file(repo,sha,'private',100),'private');assert.deepEqual(await h.api.asset(repo,sha,'asset',100),{base64:'AAEC'});assert.equal(h.api.stats().entries,0);assert.equal(h.reads.length,3);assert.ok(h.reads.every(r=>r[1]===sha));});
 test('failures, invalidUTF8, byte overruns and mismatched sources never become cache successes',async()=>{let count=0;const h=setup({fetcher:async()=>{count++;return count===1?new Response(new Uint8Array([255])):new Response('okay');}});await assert.rejects(h.api.file(repo,sha,'board',100),/encoded|encoding/i);assert.equal(h.api.stats().entries,0);assert.equal(await h.api.file(repo,sha,'board',100),'okay');await assert.rejects(h.api.file(repo,sha,'board',2),/byte limit/);const large=setup({fetcher:async()=>new Response('ab',{headers:{'content-length':'9999'}})});await assert.rejects(large.api.file(repo,sha,'large',1),/byte limit/);assert.equal(large.api.stats().entries,0);const mismatch=setup({fetcher:async()=>{const r=new Response('x');Object.defineProperty(r,'url',{value:'https://evil.example/file'});return r;}});await assert.rejects(mismatch.api.file(repo,sha,'x',10),/different source/);});
-test('strict scope and immutable download requirements reject before reading',async()=>{const h=setup();for(const args of [['../repo',sha,'a',10],[repo,'main','a',10],[repo,sha,'../secret',10],[repo,sha,'a%2fb',10],[repo,sha,'a',0],[repo,sha,'a',129*1024*1024]])await assert.rejects(h.api.file(...args));assert.equal(h.calls.length,0);assert.equal(h.reads.length,0);});
+test('strict scope and immutable download requirements reject before reading',async()=>{const h=setup();for(const args of [['../repo',sha,'a',10],[repo,'main','a',10],[repo,sha,'../secret',10],[repo,sha,'a%2fb',10],[repo,sha,'a',0],[repo,sha,'a',257*1024*1024]])await assert.rejects(h.api.file(...args));assert.equal(h.calls.length,0);assert.equal(h.reads.length,0);});
 test('combined memory LRU enforces256entries and128MiB and refreshes used entries',async()=>{const h=setup();for(let i=0;i<256;i++)await h.api.file(repo,sha,'f'+i,100);await h.api.file(repo,sha,'f0',100);await h.api.file(repo,sha,'f256',100);assert.equal(h.api.stats().entries,256);const count=h.calls.length;await h.api.file(repo,sha,'f0',100);assert.equal(h.calls.length,count);await h.api.file(repo,sha,'f1',100);assert.equal(h.calls.length,count+1);assert.ok(h.api.stats().bytes<=128*1024*1024);h.api.clear();assert.equal(h.api.stats().bytes,0);});
 
 test('byte budget evicts large immutable files even below entry cap',async()=>{const chunk=new Uint8Array(1024*1024).fill(97);const h=setup({fetcher:async()=>{let n=0;return new Response(new ReadableStream({pull(controller){if(n++<65)controller.enqueue(chunk);else controller.close();}}));}});await h.api.file(repo,sha,'large-a',70*1024*1024);assert.equal(h.api.stats().entries,1);assert.equal(h.api.stats().bytes,65*1024*1024);await h.api.file(repo,sha,'large-b',70*1024*1024);assert.equal(h.api.stats().entries,1);assert.equal(h.api.stats().bytes,65*1024*1024);h.api.clear();});
@@ -160,4 +170,67 @@ test('partial project discovery expires quickly and recovers missing sheets afte
 test('partial model discovery can recover after SSO without waiting for immutable cache expiry',async()=>{
  let time=0,allowed=false,reads=0;const api=create({foregroundOnly:true,now:()=>time,readSession:async(repository,ref,action,path)=>{if(path==='hw/models'){reads++;if(!allowed)throw Error('Complete website SSO');return{sha,items:[{path:'hw/models/part.step',type:'file'}]};}return{sha,items:path==='hw'?[{path:'hw/models',type:'directory'}]:[]};}});
  assert.equal((await api.modelInventory(repo,sha,'hw/board.kicad_pcb')).files.length,0);allowed=true;time=30000;assert.equal((await api.modelInventory(repo,sha,'hw/board.kicad_pcb')).files.length,1);assert.equal(reads,2);api.dispose();
+});
+
+
+test('queued exclusive reads receive a fresh active timeout after waiting',async()=>{
+ let time=0,id=0;const timers=new Map(),gates=[];
+ const api=create({foregroundOnly:true,now:()=>time,setTimer:(callback,delay)=>{const token=++id;timers.set(token,{callback,delay,at:time+delay});return token;},clearTimer:token=>timers.delete(token),readSession:async(_repo,_sha,_action,path,limit,signal)=>{if(limit===8*1024*1024)throw sourceTooLarge();return new Promise(resolve=>gates.push({path,signal,resolve}));}});
+ const first=api.file(repo,sha,'first.kicad_sch',256*1024*1024);await tick();
+ const second=api.file(repo,sha,'second.kicad_sch',256*1024*1024);await tick();
+ assert.equal(gates.length,1);assert.equal([...timers.values()].filter(t=>t.delay===180000).length,1,'waiting requests have no active-read timer');
+ time=25000;gates[0].resolve({sha,content:'(kicad_sch)'});await first;await tick();
+ assert.equal(gates.length,2);const active=[...timers.values()].filter(t=>t.delay===180000);assert.equal(active.length,1);assert.equal(active[0].at,205000);
+ time=45000;assert.equal(gates[1].signal.aborted,false);gates[1].resolve({sha,content:'(kicad_sch)'});await second;await tick();
+ api.dispose();assert.equal(timers.size,0);
+});
+
+test('active timeout aborts its transport, releases exclusive budget and ignores late bytes',async()=>{
+ let id=0;const timers=new Map(),gates=[];
+ const api=create({foregroundOnly:true,setTimer:(callback,delay)=>{const token=++id;timers.set(token,{callback,delay});return token;},clearTimer:token=>timers.delete(token),readSession:async(_repo,_sha,_action,path,limit,signal)=>{if(limit===8*1024*1024)throw sourceTooLarge();return new Promise(resolve=>gates.push({path,signal,resolve}));}});
+ const first=api.file(repo,sha,'slow.kicad_sch',256*1024*1024);const rejected=assert.rejects(first,/timed out/);await tick();
+ const second=api.file(repo,sha,'next.kicad_sch',256*1024*1024);await tick();
+ [...timers.values()].find(t=>t.delay===180000).callback();await rejected;await tick();
+ assert.equal(gates[0].signal.aborted,true);assert.equal(gates.length,2);assert.equal(api.stats().reservedBytes,256*1024*1024);
+ gates[0].resolve({sha,content:'late private bytes'});await tick();assert.equal(api.stats().entries,0);
+ gates[1].resolve({sha,content:'(kicad_sch)'});await second;await tick();assert.equal(api.stats().reservedBytes,0);assert.equal(api.stats().entries,1);
+ api.dispose();assert.equal(timers.size,0);
+});
+
+test('small modern sheets use three concurrent 8 MiB probes despite a 256 MiB ceiling',async()=>{
+ const gates=[],api=create({foregroundOnly:true,readSession:async(repository,ref,action,path,limit)=>{assert.equal(repository,repo);assert.equal(ref,sha);assert.equal(action,'file');assert.equal(limit,8*1024*1024);return new Promise(resolve=>gates.push({path,resolve}));}});
+ const pending=['a','b','c','d'].map(name=>api.file(repo,sha,name+'.kicad_sch',256*1024*1024));await tick();
+ assert.equal(gates.length,3);assert.equal(api.stats().activeDownloads,3);assert.equal(api.stats().reservedBytes,24*1024*1024);
+ gates[0].resolve({sha,content:'(kicad_sch)'});await tick();assert.equal(gates.length,4);
+ for(const gate of gates.slice(1))gate.resolve({sha,content:'(kicad_sch)'});
+ await Promise.all(pending);await tick();assert.equal(api.stats().reservedBytes,0);api.dispose();
+});
+
+test('only an explicit source-size rejection retries the exact source with the full reservation',async()=>{
+ const reads=[],api=create({foregroundOnly:true,readSession:async(repository,ref,action,path,limit,signal)=>{
+  reads.push({repository,ref,action,path,limit});assert.equal(signal.aborted,false);
+  if(path==='large.kicad_sch'&&limit===8*1024*1024)throw sourceTooLarge();
+  if(path==='denied.kicad_sch')throw Object.assign(Error('Denied'),{code:'GITHUB_ACCESS_DENIED'});
+  if(path==='generic.kicad_sch')throw Error('File too large');
+  return{sha,content:'(kicad_sch)'};
+ }});
+ await api.file(repo,sha,'large.kicad_sch',256*1024*1024);
+ assert.deepEqual(reads.map(read=>read.limit),[8*1024*1024,256*1024*1024]);
+ assert.ok(reads.every(read=>read.repository===repo&&read.ref===sha&&read.action==='file'&&read.path==='large.kicad_sch'));
+ for(const name of ['denied','generic']){const before=reads.length;await assert.rejects(api.file(repo,sha,name+'.kicad_sch',256*1024*1024));assert.equal(reads.length,before+1);}
+ await api.file(repo,sha,'unchanged.kicad_sch',64*1024*1024);assert.equal(reads.at(-1).limit,64*1024*1024);
+ api.dispose();
+});
+
+test('cancelled probes do not start a full retry even if a late size rejection arrives',async()=>{
+ let rejectProbe,reads=0;const controller=new AbortController(),api=create({foregroundOnly:true,readSession:async()=>{reads++;return new Promise((_resolve,reject)=>rejectProbe=reject);}});
+ const pending=api.file(repo,sha,'root.kicad_sch',256*1024*1024,controller.signal),rejected=assert.rejects(pending,/cancelled/);
+ await tick();controller.abort();await rejected;rejectProbe(sourceTooLarge());await tick();assert.equal(reads,1);assert.equal(api.stats().reservedBytes,0);api.dispose();
+});
+
+test('headerless source probes may read their prefix again on the single larger retry',async()=>{
+ const limits=[];let streamed=0;const sourceBytes=9*1024*1024;
+ const api=create({foregroundOnly:true,readSession:async(_repo,_sha,_action,_path,limit)=>{limits.push(limit);streamed+=Math.min(sourceBytes,limit);if(sourceBytes>limit)throw sourceTooLarge();return{sha,content:'(kicad_sch)'};}});
+ await api.file(repo,sha,'headerless.kicad_sch',256*1024*1024);
+ assert.deepEqual(limits,[8*1024*1024,256*1024*1024]);assert.equal(streamed,17*1024*1024);api.dispose();
 });

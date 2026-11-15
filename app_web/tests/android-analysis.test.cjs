@@ -17,7 +17,7 @@ test('standalone saved analysis files are read as inert source and stay pinned t
 });
 
 function shell(){
- const nodes=new Map();const get=id=>{if(!nodes.has(id))nodes.set(id,{value:'',hidden:true,children:[],addEventListener(name,fn){this[name]=fn;},removeAttribute(name){delete this[name];},replaceChildren(){this.children=[];this.value='';},append(node){this.children.push(node);if(!this.value)this.value=node.value;}});return nodes.get(id);};
+ const nodes=new Map();const get=id=>{if(!nodes.has(id))nodes.set(id,{value:'',hidden:true,children:[],getAttribute(name){return this[name]??null;},addEventListener(name,fn){this[name]=fn;},removeAttribute(name){delete this[name];},replaceChildren(){this.children=[];this.value='';},append(node){this.children.push(node);if(!this.value)this.value=node.value;}});return nodes.get(id);};
  const loading=[],context={URLSearchParams,Event,KiCadAndroidLocal:local,document:{getElementById:get,createElement:()=>({})},dispatchEvent(){},KiCadAndroidUI:{loading:text=>loading.push(text)}};context.window=context;vm.runInNewContext(fs.readFileSync(require.resolve('../../android-app/web/index.js'),'utf8'),context);return{context,get,loading};
 }
 

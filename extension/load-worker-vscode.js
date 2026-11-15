@@ -87,8 +87,11 @@
 ((root) => {
   "use strict";
   const MAX_FILE = 8 * 1024 * 1024;
-  const MAX_PROJECT = 96 * 1024 * 1024;
+  const MAX_PROJECT = 512 * 1024 * 1024;
+  const MAX_MODERN_FILE = 256 * 1024 * 1024;
+  const sourceByteLimit = path => /\.kicad_(pcb|sch)$/i.test(path) ? MAX_MODERN_FILE : MAX_FILE;
   const MAX_FILES = 128;
+  const MAX_RENDER_PRIMITIVES = 1500000;
   const MAX_DEPTH = 96;
   const MAX_NODES = 1000000;
   const SCHEMATIC = new Set(["symbol", "sheet", "wire", "bus", "bus_entry", "label",
@@ -112,8 +115,9 @@
       return legacy.parse(source,options);
     }
     const board = /^\s*\(kicad_pcb(?:\s|\))/.test(source);
-    if (new TextEncoder().encode(source).length > (board ? 64 * 1024 * 1024 : MAX_FILE)) throw new Error("KiCad file exceeds browser parser size limits.");
-    const nodeLimit = board ? 6000000 : MAX_NODES;
+    const modern = board || /^\s*\(kicad_sch(?:\s|\))/.test(source);
+    if (new TextEncoder().encode(source).length > (modern ? MAX_MODERN_FILE : MAX_FILE)) throw new Error("KiCad file exceeds browser parser size limits.");
+    const nodeLimit = modern ? 12000000 : MAX_NODES;
     const stack = [], roots = [];
     let i = 0, nodes = 0;
     const append = (item) => {
@@ -332,7 +336,7 @@
       paths.add(file.path);
       const size = new TextEncoder().encode(file.content).length;
       total += size;
-      if (size > (/\.kicad_pcb$/i.test(file.path) ? 64 * 1024 * 1024 : MAX_FILE) || total > MAX_PROJECT) throw new Error("KiCad project exceeds browser comparison size limits.");
+      if (size > sourceByteLimit(file.path) || total > MAX_PROJECT) throw new Error("KiCad project exceeds browser comparison size limits.");
       for (const object of collect(file.path, file.content, ast => onParsed?.(file, ast), {libraries:file.legacyLibraries})) objects.push(object);
     }
     return objects;
@@ -373,7 +377,7 @@
     changes.sort((a, b) => a.path.localeCompare(b.path) || a.id.localeCompare(b.id) || a.status.localeCompare(b.status));
     return { changes, counts };
   }
-  root.KiCadDesignDiff = { compareProjects, projectObjects, parse, prepareProject, preparedFile, MAX_FILES };
+  root.KiCadDesignDiff = { compareProjects, projectObjects, parse, prepareProject, preparedFile, MAX_FILES, MAX_PROJECT, MAX_RENDER_PRIMITIVES, sourceByteLimit };
   if (typeof module === "object" && module.exports) module.exports = root.KiCadDesignDiff;
 })(typeof globalThis === "object" ? globalThis : this);
 
@@ -1121,7 +1125,7 @@
   function textWidth(string, width) {
     return Array.from(overbarText(string).text).reduce((total, c) => total + (TEXT_ADVANCES[c.charCodeAt(0) - 32] ?? 21) * width / 21, 0) + width * 0.16;
   }
-  const MAX_PRIMITIVES = 150000;
+  const MAX_PRIMITIVES = root.KiCadDesignDiff?.MAX_RENDER_PRIMITIVES || (typeof require==='function'?require('./design-diff.js').MAX_RENDER_PRIMITIVES:1500000);
   const value = (item) => item && typeof item === "object" && !Array.isArray(item) ? item.quoted : item;
   const typeOf = (form) => Array.isArray(form) ? String(value(form[0])) : "";
   const forms = (node, type) => Array.isArray(node) ? node.filter((item) => Array.isArray(item) && typeOf(item) === type) : [];
@@ -1703,6 +1707,7 @@
   "use strict";
   const Compatibility=root.KiCadFileCompatibility||(typeof module==="object"&&module.exports?require("./file-compatibility.js"):null);
   const Worksheet=root.KiCadWorksheet||(typeof module==="object"&&module.exports?require("./worksheet.js"):null);
+  const MAX_PRIMITIVES = root.KiCadDesignDiff?.MAX_RENDER_PRIMITIVES || (typeof require==='function'?require('./design-diff.js').MAX_RENDER_PRIMITIVES:1500000);
   const value = (item) => item && typeof item === "object" && !Array.isArray(item) ? item.quoted : item;
   const kind = (node) => Array.isArray(node) ? String(value(node[0])) : "";
   const children = (node, name) => Array.isArray(node) ? node.filter((part) => Array.isArray(part) && kind(part) === name) : [];
@@ -1792,7 +1797,7 @@
     // large boards most graphics have no net declaration at all.
     function netMeta(node){const declaration=child(node,'net');if(!declaration)return{};const id=value(declaration[1]);if(typeof id==='number'&&Number.isSafeInteger(id)&&id>=0)return{netId:id,netCode:String(id),netName:String(value(declaration[2])??netNames.get(id)??'')};if(modernNamedNets&&declaration.length===2&&typeof id==='string'&&id)return{netId:id,netCode:'name:'+id,netName:id};return{};}
     const push = (primitive) => {
-      if (primitives.length >= 250000) throw new Error("PCB has too many render primitives.");
+      if (primitives.length >= MAX_PRIMITIVES) throw new Error("PCB has too many render primitives.");
       primitives.push(primitive);
     };
     const warned = new Set();
@@ -2300,7 +2305,7 @@
       const ast=parsedFiles.get(file.path), records=recordsByPath.get(file.path) || [];
       const design=designs instanceof Map ? designs.get(file.path) : designs?.[file.path];
       const primitives=Array.isArray(design?.primitives) ? design.primitives : [];
-      if (primitives.length>250000) throw new Error("Too many render primitives for net selection.");
+      if (primitives.length>diff.MAX_RENDER_PRIMITIVES) throw new Error("Too many render primitives for net selection.");
       nets.push(...(kind(ast)==="kicad_pcb" ? pcb(file.path,ast,records,primitives,warn) : schematic(file.path,ast,records,primitives,warn)));
     }
     for (const net of nets) {net.objectIds=[...new Set(net.objectIds)];net.uuids=[...new Set(net.uuids)];net.primitives=[...new Set(net.primitives)];}
@@ -2369,7 +2374,7 @@
     let primitiveIds=new WeakMap(), nextPrimitiveId=0;
     const CACHE_LIMIT=96*1024*1024;
     function primitiveSignature(primitives) {
-      if(primitives.length>250000)throw new Error("Too many render primitives for net selection.");
+      if(primitives.length>diff.MAX_RENDER_PRIMITIVES)throw new Error("Too many render primitives for net selection.");
       const chunks=[];let chars=0;
       for(const p of primitives) {
         let entry;
@@ -2398,9 +2403,9 @@
         paths.add(file.path);
         const previous=cache.get(file.path),size=previous?.content===file.content?previous.sourceBytes:encoder.encode(file.content).length;
         sourceBytes+=size;
-        if(size>(/\.kicad_pcb$/i.test(file.path)?64:8)*1024*1024||sourceBytes>CACHE_LIMIT)throw new Error("KiCad project exceeds browser comparison size limits.");
+        if(size>diff.sourceByteLimit(file.path)||sourceBytes>diff.MAX_PROJECT)throw new Error("KiCad project exceeds browser comparison size limits.");
         const design=designs instanceof Map?designs.get(file.path):designs?.[file.path],primitives=Array.isArray(design?.primitives)?design.primitives:[];
-        if(primitives.length>250000)throw new Error("Too many render primitives for net selection.");
+        if(primitives.length>diff.MAX_RENDER_PRIMITIVES)throw new Error("Too many render primitives for net selection.");
         inputs.push({file,sourceBytes:size,primitives,design});
       }
       for(const path of cache.keys())if(!paths.has(path))cache.delete(path);

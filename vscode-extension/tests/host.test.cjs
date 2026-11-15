@@ -200,22 +200,30 @@ test("missing child is visible, root errors fail, symlink directories and files 
 });
 
 test("file size is rejected before reading and sheet/cancellation/parser limits fail",async()=> {
-  const h=harness(),large=h.write("large.kicad_pcb","(kicad_pcb)",{size:8*1024*1024+1});
-  await assert.rejects(h.api._test.loadProject(large),/8 MiB/);assert.equal(h.reads.length,0);
+  const h=harness(),large=h.write("large.kicad_pcb","(kicad_pcb)",{size:256*1024*1024+1});
+  await assert.rejects(h.api._test.loadProject(large),/256 MiB/);assert.equal(h.reads.length,0);
+  const modern=h.write('modern.kicad_sch',`(kicad_sch ${' '.repeat(9*1024*1024)})`);
+  assert.equal((await h.api._test.loadProject(modern)).files.length,1);
   const root=h.write("root.kicad_sch",`(kicad_sch ${Array.from({length:32},(_,i)=>`(sheet (property "Sheetfile" "s${i}.kicad_sch"))`).join(" ")})`);
   for(let i=0;i<32;i++)h.write(`s${i}.kicad_sch`);
-  await assert.rejects(h.api._test.loadProject(root),/32-sheet/);
+  assert.equal((await h.api._test.loadProject(root)).files.length,33);
+  h.write('root.kicad_sch',`(kicad_sch ${Array.from({length:128},(_,i)=>`(sheet (property "Sheetfile" "s${i}.kicad_sch"))`).join(' ')})`);
+  for(let i=32;i<128;i++)h.write(`s${i}.kicad_sch`);
+  await assert.rejects(h.api._test.loadProject(root),/128-sheet/);
   await assert.rejects(h.api._test.loadProject(root,h.api._test.projectScope(root),{isCancellationRequested:true}),/cancelled/);
   h.write("root.kicad_sch","(kicad_sch");await assert.rejects(h.api._test.loadProject(root),/Incomplete/);
 });
 
-test("total project bytes are bounded even when each individual sheet fits",async()=> {
+test("project sources above the old 24 MiB limit load, and the 512 MiB search budget blocks before reading",async()=> {
   const h=harness(),padding=" ".repeat(7*1024*1024),root=h.write("root.kicad_sch",`(kicad_sch
     (sheet (property "Sheetfile" "a.kicad_sch")) (sheet (property "Sheetfile" "b.kicad_sch"))
     (sheet (property "Sheetfile" "c.kicad_sch")) ${padding})`);
   for(const name of ["a","b","c"])h.write(`${name}.kicad_sch`,`(kicad_sch ${padding})`);
-  await assert.rejects(h.api._test.loadProject(root),/24 MiB project/);
+  assert.equal((await h.api._test.loadProject(root)).files.length,4);
   assert.equal(h.reads.length,4);
+  const before=h.reads.length;
+  await assert.rejects(h.api._test.loadProject(root,h.api._test.projectScope(root),{isCancellationRequested:false},{files:0,bytes:512*1024*1024-1}),/512 MiB/);
+  assert.equal(h.reads.length,before);
 });
 
 test("without a workspace the opened file directory remains the authorized boundary",async()=> {

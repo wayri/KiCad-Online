@@ -1,4 +1,5 @@
 "use strict";
+ const runtimeSend=message=>globalThis.KiCadChunkedReplies?globalThis.KiCadChunkedReplies.send(chrome.runtime,message):chrome.runtime.sendMessage(message);
 
 /* Native extension entry point: no external 2D visualization engine. */
 
@@ -6,7 +7,7 @@
 
   const params=new URLSearchParams(location.search),repository=params.get('repository'),requestedFile=params.get('file');let rootFile=requestedFile,ref=params.get('ref');
 
-  const provider=params.get('provider')||'github',providerContext=provider==='gitlab'?{provider,host:params.get('host')||'https://gitlab.com'}:{};const send=message=>chrome.runtime.sendMessage({...message,...providerContext}).then(reply=>{if(reply?.accessIssue)globalThis.KiCadStartupHealth?.showAccessIssue(reply.accessIssue);return reply;});
+  const provider=params.get('provider')||'github',providerContext=provider==='gitlab'?{provider,host:params.get('host')||'https://gitlab.com'}:{};const send=message=>runtimeSend({...message,...providerContext}).then(reply=>{if(reply?.accessIssue)globalThis.KiCadStartupHealth?.showAccessIssue(reply.accessIssue);return reply;});
   if(params.get('workspace')==='1')document.body.dataset.workspace='true';
   const bomCompanion=params.get('bomCompanion')==='1';
   if(bomCompanion){document.body.dataset.bomCompanion='true';const style=document.createElement('link');style.rel='stylesheet';style.href=chrome.runtime.getURL('bom-browser.css');document.head.append(style);}

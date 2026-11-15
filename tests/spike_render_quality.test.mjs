@@ -4,13 +4,13 @@ import { viewportPixelRatio,probeViewportPlan,qualityName,qualityViewport,graphi
 
 test('mobile graphics tiers use actual limits instead of treating touch screens as low GPUs',()=>{
  const premium=graphicsProfile({maxTextureSize:16384,maxRenderbufferSize:16384,deviceMemory:8,hardwareConcurrency:8,floatTargets:true,android:true});
- assert.equal(premium.tier,'premium');assert.equal(premium.defaultQuality,'high');
+ assert.equal(premium.tier,'premium');assert.equal(premium.defaultQuality,'sharp');
  const phone=qualityViewport(390,740,3,premium.maxDimension,'high',premium);assert.equal(phone.ratio,3);assert.ok(phone.estimatedBytes<300_000_000);
- const standard=graphicsProfile({maxTextureSize:8192,deviceMemory:4,floatTargets:true,android:true});assert.equal(standard.tier,'standard');assert.equal(standard.defaultQuality,'balanced');
- const low=graphicsProfile({maxTextureSize:16384,deviceMemory:2,floatTargets:true,android:true});assert.equal(low.tier,'constrained');assert.equal(low.defaultQuality,'balanced');
- assert.equal(graphicsProfile({maxTextureSize:16384,deviceMemory:8,floatTargets:false,android:true}).defaultQuality,'balanced');
+ const standard=graphicsProfile({maxTextureSize:8192,deviceMemory:4,floatTargets:true,android:true});assert.equal(standard.tier,'standard');assert.equal(standard.defaultQuality,'sharp');
+ const low=graphicsProfile({maxTextureSize:16384,deviceMemory:2,floatTargets:true,android:true});assert.equal(low.tier,'constrained');assert.equal(low.defaultQuality,'sharp');
+ assert.equal(graphicsProfile({maxTextureSize:16384,deviceMemory:8,floatTargets:false,android:true}).defaultQuality,'sharp');
  assert.equal(graphicsProfile({maxTextureSize:16384,maxRenderbufferSize:4096,deviceMemory:8,floatTargets:true,android:true}).tier,'constrained');
- assert.equal(graphicsProfile({maxTextureSize:16384,deviceMemory:8,floatTargets:true,android:false}).defaultQuality,'balanced');
+ assert.equal(graphicsProfile({maxTextureSize:16384,deviceMemory:8,floatTargets:true,android:false}).defaultQuality,'sharp');
 });
 
 test('tablet high detail remains within reported renderbuffer dimensions and bounded memory',()=>{

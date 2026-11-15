@@ -16,7 +16,7 @@ export function graphicsProfile({maxTextureSize=4096,maxRenderbufferSize=maxText
  const memory=Number.isFinite(deviceMemory)&&deviceMemory>0?deviceMemory:null;
  const constrained=dimension<=4096||memory!==null&&memory<=2;
  const premium=!constrained&&floatTargets&&dimension>=8192&&(memory!==null?memory>=6:dimension>=16384&&hardwareConcurrency>=8);
- return{tier:constrained?'constrained':premium?'premium':'standard',constrained,premium,maxDimension:dimension,defaultQuality:android&&premium?'high':'balanced',highMaxPixels:constrained?1_000_000:premium?3_000_000:2_000_000};
+ return{tier:constrained?'constrained':premium?'premium':'standard',constrained,premium,maxDimension:dimension,defaultQuality:'sharp',highMaxPixels:constrained?1_000_000:premium?3_000_000:2_000_000};
 }
 // Includes HDR ping-pong buffers, G-buffer/depth, AO/denoise, SMAA buffers,
 // canvas and the cached shadow maps. This is a conservative allocation bound,

@@ -4,8 +4,8 @@
 const vscode = require("vscode");
 const projectPaths=require("./media/parsing.js");
 const VIEW = "kicadVisualReview.viewer", CHANNEL = "kicad-vscode:v1";
-const MAX_FILE = 8 * 1024 * 1024, MAX_PROJECT = 24 * 1024 * 1024;
-const MAX_MESSAGE = 1024 * 1024, MAX_FILES = 32;
+const MAX_FILE = 256 * 1024 * 1024, MAX_LEGACY_FILE = 8 * 1024 * 1024, MAX_PROJECT = 512 * 1024 * 1024;
+const MAX_MESSAGE = 1024 * 1024, MAX_FILES = 128, MAX_SOURCE_NODES = 12000000;
 const MAX_SIDECAR=4*1024*1024,liveSessions=new Set(),pairTargets=new Map();
 const pendingSearchTargets=new Map(),MAX_SEARCH_TARGETS=32,SEARCH_TARGET_TTL=30000;
 const OPERATIONS = new Set(["open-analysis-viewer", "close-analysis-viewer", "repository-tree", "repository-history", "repository-branches", "preview-project-html", "project-inventory", "project-file", "open-project-file", "open-project-overview", "rule-report", "project-search-files", "open-project-drawing", "project", "repo-model-index", "repo-asset", "pair-selection", "comments-changed", "comment-list", "comment-save", "comment-delete", "storage-get", "storage-set", "open-comment-draft", "github-annotations"]);
@@ -27,6 +27,7 @@ const safePath = (path) => typeof path === "string" && path.length <= 500 && /\.
 const safeAssetPath=(path)=>typeof path==="string" && path.length>0 && path.length<=500 && /\.(?:wrl|vrml|glb|step|stp)$/i.test(path) &&
   !path.startsWith("/") && path.split("/").every((part)=>part && part!=="." && part!==".." && !/[\\\x00-\x1f\x7f:?#%]/.test(part));
 const clone = (object) => JSON.parse(JSON.stringify(object));
+const sourceLimit=path=>safePath(path)?MAX_FILE:MAX_LEGACY_FILE;
 function escaped(text) { return String(text).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]); }
 function secret() {
   if (!globalThis.crypto?.getRandomValues) throw new Error("This VS Code host lacks secure random tokens; update VS Code.");
@@ -87,13 +88,16 @@ function sheetFiles(source) {
     const c=source[i];if(/\s/.test(c)){i++;continue;}
     if((c==="<"||c===">")&&/^(?:<{7,}|>{7,})(?:\s|$)/.test(source.slice(i,i+120)))throw new Error("Unresolved Git merge conflict at line "+(source.slice(0,i).split("\n").length)+". Resolve the conflict in a separate copy before viewing.");
       if(c===";"){while(i<source.length&&source[i]!=="\n")i++;continue;}
-    if(++nodes>1000000)throw new Error("KiCad source has too many S-expression nodes.");
+    if(c!==")"&&++nodes>MAX_SOURCE_NODES)throw new Error("KiCad source has too many S-expression nodes.");
     if(c==="(") {if(stack.length>=96)throw new Error("KiCad source is too deeply nested.");if(!stack.length)roots++;stack.push([]);i++;continue;}
     if(c===")") {
       if(!stack.length)throw new Error("Unexpected closing KiCad parenthesis.");
       const entry=stack.pop();i++;
       if(entry[0]==="property" && ["Sheetfile","Sheet file"].includes(entry[1]) && typeof entry[2]==="string" &&
-        stack.length===2 && stack[0][0]==="kicad_sch" && stack[1][0]==="sheet")names.push(entry[2]);
+        stack.length===2 && stack[0][0]==="kicad_sch" && stack[1][0]==="sheet"){
+        if(names.length>=MAX_FILES)throw new Error("KiCad source references more than 128 sheets.");
+        names.push(entry[2]);
+      }
       continue;
     }
     if(!stack.length)throw new Error("Expected a KiCad S-expression.");
@@ -117,7 +121,7 @@ async function loadProject(uri,scope=projectScope(uri),cancel={isCancellationReq
   while(queue.length) {
     if(cancel.isCancellationRequested)throw new Error("Drawing load cancelled.");
     const path=queue.shift();if(seen.has(path))continue;
-    if(seen.size>=MAX_FILES)throw new Error("Project exceeds the 32-sheet review limit.");seen.add(path);
+    if(seen.size>=MAX_FILES)throw new Error(`Project exceeds the ${MAX_FILES}-sheet review limit.`);seen.add(path);
     const target=vscode.Uri.joinPath(scope.boundary,...path.split("/"));
     if(!sameScope(target,scope.boundary))throw new Error("Referenced sheet escapes the workspace.");
     let bytes;
@@ -132,15 +136,15 @@ async function loadProject(uri,scope=projectScope(uri),cancel={isCancellationReq
       }
       const stat=await workspaceAccess("stat",target);
       if(stat.type & vscode.FileType.SymbolicLink)throw new Error("Symbolic-link drawings are excluded from bounded workspace review.");
-      if(stat.size>MAX_FILE)throw new Error("Drawing exceeds the 8 MiB file limit.");
-      if(readBudget&&(readBudget.files>=MAX_FILES||readBudget.bytes+stat.size>MAX_PROJECT))throw new Error("Project search reached its 32-read / 24 MiB source limit.");
+      if(stat.size>sourceLimit(path))throw new Error(`Project file exceeds the ${sourceLimit(path)/1048576} MiB file limit.`);
+      if(readBudget&&(readBudget.files>=MAX_FILES||readBudget.bytes+stat.size>MAX_PROJECT))throw new Error(`Project search reached its ${MAX_FILES}-read / ${MAX_PROJECT/1048576} MiB source limit.`);
       bytes=await workspaceAccess("readFile",target);
-      if(readBudget){readBudget.files++;readBudget.bytes+=bytes.byteLength;if(readBudget.bytes>MAX_PROJECT)throw new Error("Project search source grew beyond its 24 MiB read limit.");}
+      if(readBudget){readBudget.files++;readBudget.bytes+=bytes.byteLength;if(readBudget.bytes>MAX_PROJECT)throw new Error(`Project search source grew beyond its ${MAX_PROJECT/1048576} MiB read limit.`);}
     } catch(error) {
       if(path===scope.rootFile || !["FileNotFound","EntryNotFound"].includes(error.code))throw error;
       warnings.push(`Missing referenced sheet: ${path}`);continue;
     }
-    if(bytes.byteLength>MAX_FILE || (total+=bytes.byteLength)>MAX_PROJECT)throw new Error("Project exceeds the 8 MiB file / 24 MiB project limit.");
+    if(bytes.byteLength>sourceLimit(path) || (total+=bytes.byteLength)>MAX_PROJECT)throw new Error(`Project exceeds the ${sourceLimit(path)/1048576} MiB file / ${MAX_PROJECT/1048576} MiB project limit.`);
     const content=new TextDecoder("utf-8",{fatal:true}).decode(bytes);files.push({path,content});
     let children=[];
     if(/\.kicad_sch$/i.test(path))try{children=sheetFiles(content);}catch(error){
@@ -387,7 +391,7 @@ async function loadRepoAsset(request,session) {
   if(request.repository!==session.scope.repository || request.ref!==session.scope.ref)throw new Error("Model asset belongs to another workspace or revision.");
   if(session.assetRequests>=32)throw new Error("Model assets exceed the 32-request session limit.");session.assetRequests++;
   if(!safeAssetPath(request.file))throw new Error("Unsupported or unsafe model asset path.");
-  if(session.history){const bytes=await historicalBytes(session,request.file);session.assetBytes+=bytes.byteLength;if(session.assetBytes>32*1024*1024)throw Error('Model assets exceed the 32 MiB session limit.');return{base64:encodeBase64(bytes),mediaType:/\.(step|stp)$/i.test(request.file)?'model/step':/\.glb$/i.test(request.file)?'model/gltf-binary':'model/vrml'};}
+  if(session.history){const bytes=await historicalBytes(session,request.file,MAX_LEGACY_FILE);session.assetBytes+=bytes.byteLength;if(session.assetBytes>32*1024*1024)throw Error('Model assets exceed the 32 MiB session limit.');return{base64:encodeBase64(bytes),mediaType:/\.(step|stp)$/i.test(request.file)?'model/step':/\.glb$/i.test(request.file)?'model/gltf-binary':'model/vrml'};}
   const parts=request.file.split("/"),target=vscode.Uri.joinPath(session.scope.boundary,...parts);
   if(!sameScope(target,session.scope.boundary))throw new Error("Model asset escapes the workspace.");
   for(let i=1;i<parts.length;i++) {
@@ -398,10 +402,10 @@ async function loadRepoAsset(request,session) {
   const stat=await workspaceAccess("stat",target);
   if(stat.type & vscode.FileType.SymbolicLink)throw new Error("Symbolic-link model assets are excluded from bounded workspace review.");
   if(!(stat.type & vscode.FileType.File))throw new Error("Model asset is not a file.");
-  if(!Number.isSafeInteger(stat.size) || stat.size<0 || stat.size>MAX_FILE)throw new Error("Model asset exceeds the 8 MiB file limit.");
+  if(!Number.isSafeInteger(stat.size) || stat.size<0 || stat.size>MAX_LEGACY_FILE)throw new Error("Model asset exceeds the 8 MiB file limit.");
   if(session.assetBytes+stat.size>32*1024*1024)throw new Error("Model assets exceed the 32 MiB session limit.");
   const bytes=await workspaceAccess("readFile",target);session.assetBytes+=bytes.byteLength;
-  if(bytes.byteLength>MAX_FILE)throw new Error("Model asset exceeds the 8 MiB file limit.");
+  if(bytes.byteLength>MAX_LEGACY_FILE)throw new Error("Model asset exceeds the 8 MiB file limit.");
   if(session.assetBytes>32*1024*1024)throw new Error("Model assets exceed the 32 MiB session limit.");
   return {base64:encodeBase64(bytes),mediaType:/\.(step|stp)$/i.test(request.file)?"model/step":/\.glb$/i.test(request.file)?"model/gltf-binary":"model/vrml"};
 }
@@ -428,23 +432,23 @@ async function repoModelIndex(request,session){
 }
 async function searchProjectFiles(request,session) {
   assertScope(request,session);
-  if(session.history){const tree=await historicalInventory(session),files=[],seen=new Set(),settings=[],warnings=[...tree.warnings],budget={files:0,bytes:0};let bytes=0;const drawings=tree.entries.filter(e=>e.kind==='file'&&safePath(e.path));for(const item of drawings){if(seen.has(item.path))continue;if(files.length>=MAX_FILES||budget.files>=MAX_FILES)break;const project=await loadHistoricalProject({...session.scope,rootFile:item.path},session.history,budget);for(const file of project.files){if(seen.has(file.path))continue;bytes+=new TextEncoder().encode(file.content).byteLength;if(files.length>=MAX_FILES||bytes>MAX_PROJECT)throw Error('Saved project search exceeds the 32-file / 24 MiB limit.');seen.add(file.path);files.push(file);session.paths.add(file.path);}}for(const item of tree.entries.filter(e=>e.kind==='file'&&/\.kicad_pro$/i.test(e.path)).slice(0,8)){const content=new TextDecoder('utf-8',{fatal:true}).decode(await historicalBytes(session,item.path,1024*1024));settings.push({path:item.path,content});}if(drawings.length>files.length)warnings.push('Saved project search is limited to 32 drawings.');return{files,settings,warnings,snapshotRef:session.history.sha,totalDrawings:drawings.length};}
+  if(session.history){const tree=await historicalInventory(session),files=[],seen=new Set(),settings=[],warnings=[...tree.warnings],budget={files:0,bytes:0};let bytes=0;const drawings=tree.entries.filter(e=>e.kind==='file'&&safePath(e.path));for(const item of drawings){if(seen.has(item.path))continue;if(files.length>=MAX_FILES||budget.files>=MAX_FILES)break;const project=await loadHistoricalProject({...session.scope,rootFile:item.path},session.history,budget);for(const file of project.files){if(seen.has(file.path))continue;bytes+=new TextEncoder().encode(file.content).byteLength;if(files.length>=MAX_FILES||bytes>MAX_PROJECT)throw Error(`Saved project search exceeds the ${MAX_FILES}-file / ${MAX_PROJECT/1048576} MiB limit.`);seen.add(file.path);files.push(file);session.paths.add(file.path);}}for(const item of tree.entries.filter(e=>e.kind==='file'&&/\.kicad_pro$/i.test(e.path)).slice(0,8)){const content=new TextDecoder('utf-8',{fatal:true}).decode(await historicalBytes(session,item.path,1024*1024));settings.push({path:item.path,content});}if(drawings.length>files.length)warnings.push(`Saved project search is limited to ${MAX_FILES} drawings.`);return{files,settings,warnings,snapshotRef:session.history.sha,totalDrawings:drawings.length};}
   const candidates=await findSourceFiles({baseUri:session.scope.boundary,pattern:"**/*.{kicad_sch,kicad_pcb}"},"**/{.git,node_modules}/**",201);
   const safe=candidates.filter(uri=>sameScope(uri,session.scope.boundary)).map(uri=>({uri,path:uri.path.slice(session.scope.boundary.path.replace(/\/$/,"").length+1)})).filter(item=>safePath(item.path)).sort((a,b)=>a.path.localeCompare(b.path));
   safe.sort((a,b)=>(b.path===session.scope.rootFile?1:0)-(a.path===session.scope.rootFile?1:0));
   const files=[],seen=new Set(),warnings=[],readBudget={files:0,bytes:0};let total=0;
   if(candidates.length>=201)warnings.push("Workspace drawing discovery reached its 200-file limit; results are incomplete.");
-  for(const item of safe.slice(0,32)) {
+  for(const item of safe.slice(0,MAX_FILES)) {
     if(seen.has(item.path))continue;
     try {const project=await loadProject(item.uri,{...session.scope,rootFile:item.path},{isCancellationRequested:false},readBudget);
       for(const file of project.files) {if(seen.has(file.path))continue;const size=new TextEncoder().encode(file.content).byteLength;
-        if(files.length>=32||total+size>MAX_PROJECT){warnings.push("Project search reached its 32-file / 24 MiB source limit.");break;}
+        if(files.length>=MAX_FILES||total+size>MAX_PROJECT){warnings.push(`Project search reached its ${MAX_FILES}-file / ${MAX_PROJECT/1048576} MiB source limit.`);break;}
         files.push(file);seen.add(file.path);total+=size;session.paths.add(file.path);
       }warnings.push(...project.warnings);
     }catch(error){warnings.push(`${item.path}: ${error.message}`);}
-    if(files.length>=32||total>=MAX_PROJECT||readBudget.files>=MAX_FILES||readBudget.bytes>=MAX_PROJECT)break;
+    if(files.length>=MAX_FILES||total>=MAX_PROJECT||readBudget.files>=MAX_FILES||readBudget.bytes>=MAX_PROJECT)break;
   }
-  if(safe.length>32)warnings.push(`Workspace has ${safe.length} discovered drawings; search loads at most 32.`);
+  if(safe.length>MAX_FILES)warnings.push(`Workspace has ${safe.length} discovered drawings; search loads at most ${MAX_FILES}.`);
   const settings=[],projects=await findSourceFiles({baseUri:session.scope.boundary,pattern:"**/*.kicad_pro"},"**/{.git,node_modules}/**",9);
   for(const uri of projects.slice(0,8)) {
     if(!sameScope(uri,session.scope.boundary))continue;const path=uri.path.slice(session.scope.boundary.path.replace(/\/$/,"").length+1);
@@ -460,8 +464,8 @@ async function readProjectFile(path,session){
   if(!projectPaths.filePath(path))throw new Error('Unsupported project file path.');
   if(session.history)return{path,content:new TextDecoder('utf-8',{fatal:true}).decode(await historicalBytes(session,path))};
   const uri=vscode.Uri.joinPath(session.scope.boundary,...path.split('/'));if(!sameScope(uri,session.scope.boundary))throw new Error('Project file escapes workspace.');
-  const parts=path.split('/');for(let i=1;i<=parts.length;i++){const stat=await workspaceAccess("stat",vscode.Uri.joinPath(session.scope.boundary,...parts.slice(0,i)));if(stat.type&vscode.FileType.SymbolicLink)throw new Error('Symbolic-link project files are excluded.');if(i===parts.length&&stat.size>MAX_FILE)throw new Error('Project file exceeds 8 MiB.');}
-  const bytes=await workspaceAccess("readFile",uri);if(bytes.byteLength>MAX_FILE)throw new Error('Project file exceeds 8 MiB.');return {path,content:new TextDecoder('utf-8',{fatal:true}).decode(bytes)};
+  const parts=path.split('/');for(let i=1;i<=parts.length;i++){const stat=await workspaceAccess("stat",vscode.Uri.joinPath(session.scope.boundary,...parts.slice(0,i)));if(stat.type&vscode.FileType.SymbolicLink)throw new Error('Symbolic-link project files are excluded.');if(i===parts.length&&stat.size>sourceLimit(path))throw new Error(`Project file exceeds ${sourceLimit(path)/1048576} MiB.`);}
+  const bytes=await workspaceAccess("readFile",uri);if(bytes.byteLength>sourceLimit(path))throw new Error(`Project file exceeds ${sourceLimit(path)/1048576} MiB.`);return {path,content:new TextDecoder('utf-8',{fatal:true}).decode(bytes)};
 }
 async function projectInventory(session){
   if(session.history){const tree=await historicalInventory(session),files=tree.entries.filter(e=>e.kind==='file'&&projectPaths.filePath(e.path));return{files:files.slice(0,1000).map(({path,size})=>({path,size})),snapshotRef:session.history.sha,warnings:[...tree.warnings,...(files.length>1000?['First 1000 saved project files shown.']:[])]};}
@@ -545,7 +549,7 @@ async function historyContext(session,sha){
   const reader=require('./git-history-tree.js').createGitHistoryReader({gitPath:git.gitPath,rootPath:git.repo.rootUri.fsPath,isTrusted:()=>vscode.workspace.isTrusted===true});
   return{reader,sha:git.sha,prefix,rootPath:git.repo.rootUri.fsPath,rootUri:git.repo.rootUri};
 }
-async function historicalBytes(session,path,maxBytes=MAX_FILE){
+async function historicalBytes(session,path,maxBytes=sourceLimit(path)){
   if(!browsePath(path))throw Error('Invalid saved file path.');
   const history=session.history;if(!history)throw Error('Saved revision context is missing.');
   return(await history.reader.read({sha:history.sha,path:history.prefix?history.prefix+'/'+path:path,maxBytes})).bytes;
@@ -557,7 +561,7 @@ async function historicalInventory(session){
 }
 async function loadHistoricalProject(scope,history,budget={files:0,bytes:0}){
   const pending=[scope.rootFile],seen=new Set(),files=[],warnings=[],stub={scope,history};let total=0;
-  while(pending.length){const path=pending.shift();if(seen.has(path))continue;if(seen.size>=MAX_FILES||budget.files>=MAX_FILES)throw Error('Saved project exceeds the 32-sheet read limit.');seen.add(path);const bytes=await historicalBytes(stub,path);budget.files++;budget.bytes+=bytes.byteLength;if((total+=bytes.byteLength)>MAX_PROJECT||budget.bytes>MAX_PROJECT)throw Error('Saved project exceeds the 24 MiB source limit.');const content=new TextDecoder('utf-8',{fatal:true}).decode(bytes);files.push({path,content});if(/\.kicad_sch$/i.test(path))for(const name of sheetFiles(content)){const child=childPath(path,name);if(child)pending.push(child);else warnings.push('Excluded an out-of-workspace saved sheet reference.');}}
+  while(pending.length){const path=pending.shift();if(seen.has(path))continue;if(seen.size>=MAX_FILES||budget.files>=MAX_FILES)throw Error(`Saved project exceeds the ${MAX_FILES}-sheet read limit.`);seen.add(path);const bytes=await historicalBytes(stub,path);budget.files++;budget.bytes+=bytes.byteLength;if((total+=bytes.byteLength)>MAX_PROJECT||budget.bytes>MAX_PROJECT)throw Error(`Saved project exceeds the ${MAX_PROJECT/1048576} MiB source limit.`);const content=new TextDecoder('utf-8',{fatal:true}).decode(bytes);files.push({path,content});if(/\.kicad_sch$/i.test(path))for(const name of sheetFiles(content)){const child=childPath(path,name);if(child)pending.push(child);else warnings.push('Excluded an out-of-workspace saved sheet reference.');}}
   return{scope,files,warnings,history};
 }
 async function openHistoricalFile(request,session){
@@ -589,8 +593,8 @@ async function currentDrawing(path,session){
   const stat=await workspaceAccess('stat',target);
   if(stat.type&vscode.FileType.SymbolicLink||!(stat.type&vscode.FileType.File)||stat.size>MAX_FILE)throw Error('Current drawing is not a bounded regular file.');
   let content;
-  if(document){content=document.getText();if(new TextEncoder().encode(content).length>MAX_FILE)throw Error('Current drawing exceeds 8 MiB.');}
-  else{const bytes=await workspaceAccess('readFile',target);if(bytes.length>MAX_FILE)throw Error('Current drawing exceeds 8 MiB.');content=new TextDecoder('utf-8',{fatal:true}).decode(bytes);}
+  if(document){content=document.getText();if(new TextEncoder().encode(content).length>MAX_FILE)throw Error('Current drawing exceeds 256 MiB.');}
+  else{const bytes=await workspaceAccess('readFile',target);if(bytes.length>MAX_FILE)throw Error('Current drawing exceeds 256 MiB.');content=new TextDecoder('utf-8',{fatal:true}).decode(bytes);}
   return{content,unsaved:!!document?.isDirty};
 }
 async function compareCurrentRevision(request,session){

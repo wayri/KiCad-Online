@@ -34,7 +34,7 @@ function createGitHistoryReader({gitPath, rootPath, isTrusted}) {
         '-c', 'core.fsmonitor=false', '-c', 'protocol.allow=never', ...args],
         {cwd, env:environment(), shell:false, windowsHide:true, stdio:['ignore','pipe','pipe']});
       function finish(error, result) {if (settled) return;settled=true;clearTimeout(timer);if(error){child.kill();reject(error);}else resolve(result);}
-      timer = setTimeout(() => finish(Error('Saved Git object read timed out.')), 10000);
+      timer = setTimeout(() => finish(Error('Saved Git object read timed out.')), maxBytes > MAX_OUTPUT ? 60000 : 10000);
       child.stdout.on('data', bytes => {size += bytes.length;if(size > maxBytes)return finish(Error('Saved Git data exceeds the read limit.'));output.push(bytes);});
       // Git error text can include arbitrary names/config; do not return it to UI.
       child.stderr.on('data', () => {});
@@ -86,7 +86,7 @@ function createGitHistoryReader({gitPath, rootPath, isTrusted}) {
         total:entries.length,truncated:false,hasMore:start+PAGE_SIZE<entries.length,nextPage:start+PAGE_SIZE<entries.length?page+1:null,warnings};
     },
     async read({sha,path:file,maxBytes=8*1024*1024}) {
-      if(!validPath(file) || !Number.isSafeInteger(maxBytes) || maxBytes<1 || maxBytes>32*1024*1024)
+      if(!validPath(file) || !Number.isSafeInteger(maxBytes) || maxBytes<1 || maxBytes>256*1024*1024)
         throw Error('Invalid saved Git file request.');
       sha = await commit(sha);
       const slash = file.lastIndexOf('/'), directory = slash<0?'':file.slice(0,slash);

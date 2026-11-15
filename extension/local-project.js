@@ -23,7 +23,23 @@ function validate(value){
 }
 function transport(project,storage,options={}){
  const source=new Map(project.files.map(f=>[f.path,f])),assets=new Map(project.assets.map(f=>[f.path,f])),scope=project.remote?.repository||project.github?.repository||(options.local?'local/':'android/')+project.id,ref=project.remote?.sha||project.github?.sha||options.ref||'a'.repeat(40);
- const readSource=async path=>{const entry=read(path);if(!entry.diskPath)return entry;const response=await root.fetch(entry.diskPath);if(!response.ok)throw Error('Downloaded file unavailable.');return{path:entry.path,content:await response.text()};};
+ // Native imports are immutable snapshots. Reuse bounded decoded text, and
+ // coalesce simultaneous reads (including files too large to retain).
+ const reads=new Map();let readBytes=0;const maxReadBytes=32*1024*1024;
+ const readSource=async path=>{const entry=read(path);if(!entry.diskPath)return{...entry};
+  let cached=reads.get(path);if(cached){reads.delete(path);reads.set(path,cached);return{...await cached.promise};}
+  const bytes=entry.size*2,retain=bytes<=maxReadBytes;
+  if(retain)while(reads.size&&(readBytes+bytes>maxReadBytes||reads.size>=64)){
+   const victim=[...reads].find(([,item])=>item.settled);if(!victim)break;
+   reads.delete(victim[0]);readBytes-=victim[1].bytes;
+  }
+  const keep=retain&&readBytes+bytes<=maxReadBytes&&reads.size<64;
+  cached={bytes:keep?bytes:0,settled:false,promise:null};readBytes+=cached.bytes;
+  cached.promise=(async()=>{const response=await root.fetch(entry.diskPath);if(!response.ok)throw Error('Downloaded file unavailable.');const content=await response.text();if(content.length*2>cached.bytes&&reads.get(path)===cached){reads.delete(path);readBytes-=cached.bytes;}return{path:entry.path,content};})();
+  reads.set(path,cached);
+  try{return{...await cached.promise};}catch(error){if(reads.get(path)===cached){reads.delete(path);readBytes-=cached.bytes;}throw error;}
+  finally{cached.settled=true;if(!keep&&reads.get(path)===cached)reads.delete(path);}
+ };
  const read=path=>{if(!pathOK(path)||!source.has(path))throw Error('File not imported: '+path+'. Open its project folder to include sheets and models.');return source.get(path);};
  const notesKey=file=>(options.local?'local-notes:':'android-notes:')+project.id+':'+file;
  const getNotes=file=>JSON.parse(storage.getItem(notesKey(file))||'[]');

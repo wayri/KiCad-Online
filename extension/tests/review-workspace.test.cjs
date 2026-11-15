@@ -1746,9 +1746,9 @@ test('3D part, net and terminal Locate focus saved source geometry only and ordi
   {type:'circle',kind:'pad',ownerUuid:'fp',path:'foreign.kicad_pcb',x:800,y:800,r:500},
   {type:'circle',uuid:'fp',x:0,y:0,r:1000,frame:true});
  view.workspace.setScene({setPopulation(){},setSelection(){},focusPosition(position,options){calls.push(JSON.parse(JSON.stringify({position,options})));return true;}});
- view.workspace.select3D({uuid:'fp',ref:'R1'});assert.equal(calls.length,0);view.get('focusSelected').click();assert.equal(calls.length,1);assert.deepEqual(calls[0],{position:{x:31,y:40},options:{bounds:{x:30,y:39,w:2,h:2},side:'front'}});
- view.workspace.select3D({net:1});assert.equal(calls.length,1);view.get('focusSelected').click();assert.equal(calls.length,2);assert.deepEqual(calls[1],calls[0]);
- view.get('selectionMode').value='pin';view.workspace.select3D({uuid:'pad',ref:'R1',pinNumber:'1',net:1});assert.equal(calls.length,2);assert.match(view.get('selectionStatus').textContent,/pad 1/);view.get('focusSelected').click();assert.equal(calls.length,3);assert.deepEqual(calls[2],calls[0]);assert.match(view.get('selectionStatus').textContent,/pad 1/);assert.equal(JSON.stringify(view.canvas.viewport.camera.bbox),cameraBefore,'3D Locate does not mutate the hidden2D camera');view.workspace.dispose();
+ view.workspace.select3D({uuid:'fp',ref:'R1'});assert.equal(calls.length,0);view.get('focusSelected').click();assert.equal(calls.length,1);assert.deepEqual(calls[0],{position:{x:31,y:40},options:{bounds:{x:30,y:39,w:2,h:2},side:'front',layer:'F.Cu',reference:'R1'}});
+ view.workspace.select3D({net:1});assert.equal(calls.length,1);view.get('focusSelected').click();assert.equal(calls.length,2);assert.deepEqual(calls[1],{position:calls[0].position,options:{bounds:calls[0].options.bounds,side:'front',layer:'F.Cu'}});
+ view.get('selectionMode').value='pin';view.workspace.select3D({uuid:'pad',ref:'R1',pinNumber:'1',net:1});assert.equal(calls.length,2);assert.match(view.get('selectionStatus').textContent,/pad 1/);view.get('focusSelected').click();assert.equal(calls.length,3);assert.deepEqual(calls[2],calls[1]);assert.match(view.get('selectionStatus').textContent,/pad 1/);assert.equal(JSON.stringify(view.canvas.viewport.camera.bbox),cameraBefore,'3D Locate does not mutate the hidden2D camera');view.workspace.dispose();
 });
 
 

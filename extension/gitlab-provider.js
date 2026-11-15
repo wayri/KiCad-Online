@@ -13,7 +13,7 @@
   const validRef=value=>root.KiCadBrowserData.validRef(value)&&value.split('/').every(part=>part&&part!=='.'&&part!=='..'&&!/[\\:]/.test(part));
   function readURL(url,limit){
     const target=new URL(url),match=target.pathname.match(/^\/api\/v4\/projects\/([^/]+)(.*)$/);
-    if(target.origin!==host||target.username||target.password||target.hash||!match||!Number.isSafeInteger(limit)||limit<1||limit>64*MIB)throw Error('Invalid GitLab content endpoint or byte limit.');
+    if(target.origin!==host||target.username||target.password||target.hash||!match||!Number.isSafeInteger(limit)||limit<1||limit>256*MIB)throw Error('Invalid GitLab content endpoint or byte limit.');
     const project=decodeURIComponent(match[1]),tail=match[2];if(!validRepository(project)&&!(/^[1-9][0-9]{0,11}$/.test(project)&&tail===''))throw Error('Invalid GitLab content project.');
     let keys;
     if(tail==='')keys=[];

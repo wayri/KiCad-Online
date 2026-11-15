@@ -58,5 +58,5 @@ test('website session permits authentic saved HTML reports, but never sign-in fo
 
 test('website read limits are bounded at 64 MiB and do not promise disk-backed transfer',()=>{
  assert.equal(validate(request('/repository/tree',{limit:64*1024*1024}),location),endpoint+'/repository/tree');
- for(const limit of [0,1.5,64*1024*1024+1,256*1024*1024])assert.throws(()=>validate(request('/repository/tree',{limit}),location),/Invalid GitLab session read/);
+ for(const limit of [0,1.5,256*1024*1024+1])assert.throws(()=>validate(request('/repository/tree',{limit}),location),/Invalid GitLab session read/);
 });

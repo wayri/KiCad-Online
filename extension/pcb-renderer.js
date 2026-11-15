@@ -3,6 +3,7 @@
   "use strict";
   const Compatibility=root.KiCadFileCompatibility||(typeof module==="object"&&module.exports?require("./file-compatibility.js"):null);
   const Worksheet=root.KiCadWorksheet||(typeof module==="object"&&module.exports?require("./worksheet.js"):null);
+  const MAX_PRIMITIVES = root.KiCadDesignDiff?.MAX_RENDER_PRIMITIVES || (typeof require==='function'?require('./design-diff.js').MAX_RENDER_PRIMITIVES:1500000);
   const value = (item) => item && typeof item === "object" && !Array.isArray(item) ? item.quoted : item;
   const kind = (node) => Array.isArray(node) ? String(value(node[0])) : "";
   const children = (node, name) => Array.isArray(node) ? node.filter((part) => Array.isArray(part) && kind(part) === name) : [];
@@ -92,7 +93,7 @@
     // large boards most graphics have no net declaration at all.
     function netMeta(node){const declaration=child(node,'net');if(!declaration)return{};const id=value(declaration[1]);if(typeof id==='number'&&Number.isSafeInteger(id)&&id>=0)return{netId:id,netCode:String(id),netName:String(value(declaration[2])??netNames.get(id)??'')};if(modernNamedNets&&declaration.length===2&&typeof id==='string'&&id)return{netId:id,netCode:'name:'+id,netName:id};return{};}
     const push = (primitive) => {
-      if (primitives.length >= 250000) throw new Error("PCB has too many render primitives.");
+      if (primitives.length >= MAX_PRIMITIVES) throw new Error("PCB has too many render primitives.");
       primitives.push(primitive);
     };
     const warned = new Set();
@@ -283,7 +284,7 @@
         const padPrimitives = primitives.slice(firstPrimitive).filter((part) => part.type === "pad");
         const coordinates = padPrimitives.flatMap((part) => part.points || (part.r ? [
           {x:part.x-part.r,y:part.y-part.r},{x:part.x+part.r,y:part.y+part.r}] : []));
-        if (coordinates.length && owner.uuid) {
+        if (coordinates.length && owner.uuid && primitives.length < MAX_PRIMITIVES) {
           const xs = coordinates.map((p) => p.x), ys = coordinates.map((p) => p.y),
             minX = Math.min(...xs)-.3, maxX = Math.max(...xs)+.3,
             minY = Math.min(...ys)-.3, maxY = Math.max(...ys)+.3;

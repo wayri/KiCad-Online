@@ -1,7 +1,9 @@
 /* Installed only after the user invokes the extension on a repository tab. */
 ((root)=>{'use strict';
  if(root.KiCadRepositorySessionBridge)return;root.KiCadRepositorySessionBridge=true;
- const loads=new Map();let reservedBytes=0,reviewLoads=0;
+ const loads=new Map();let reservedBytes=0,reviewLoads=0,chunkStore=null;
+ const chunks=()=>chunkStore||=root.KiCadChunkedReplies.createStore();
+ const owner=sender=>JSON.stringify([sender.id,sender.documentId||sender.url]);
  const failures={GITLAB_SAML_REQUIRED:'GitLab requires SSO/SAML verification in the matching project tab.',GITLAB_LOGIN_REQUIRED:'Sign in to this GitLab project in its website tab.',GITLAB_UNEXPECTED_HTML:'GitLab returned a login or access page instead of project data.',MANAGED_POLICY:'Administrator policy prevents this project read.',
   GITHUB_WEBSITE_RATE_LIMIT:'GitHub temporarily limited website requests. Wait briefly, then retry.',
   GITHUB_WEBSITE_NOT_FOUND:'GitHub returned HTTP 404 for the requested repository location. Check its branch and folder in the same browser profile; private repositories also return 404 when website access is unavailable.',
@@ -26,12 +28,13 @@
   GITHUB_POLICY_ACCOUNT:'The signed-in website account could not be verified for comment policy. Open this repository in the same browser profile and retry.',
   GITHUB_POLICY_LOCATION:'GitHub returned a different page while checking comment policy. Open the repository root in the same browser profile and retry.',
   GITHUB_POLICY_ROWS:'Comment policy could not be checked because the repository file table contains unsupported rows. Nothing was posted.'};
- const sizeCeilings={GITHUB_PAGE_TOO_LARGE:8*1024*1024,GITHUB_SOURCE_TOO_LARGE:64*1024*1024,GITHUB_ASSET_TOO_LARGE:32*1024*1024,GITHUB_HISTORY_TOO_LARGE:4*1024*1024,GITHUB_POLICY_TOO_LARGE:128*1024};
+ const sizeCeilings={GITHUB_PAGE_TOO_LARGE:8*1024*1024,GITHUB_SOURCE_TOO_LARGE:256*1024*1024,GITHUB_ASSET_TOO_LARGE:32*1024*1024,GITHUB_HISTORY_TOO_LARGE:4*1024*1024,GITHUB_POLICY_TOO_LARGE:128*1024};
  const rowIssueLabels={'header':'unsupported header','no-name-link':'missing filename link','link-origin':'link origin','link-query-hash':'link query or fragment','link-repository':'link repository','link-route':'link route','link-ref':'link revision','link-path':'unsafe link path','link-nesting':'link directory nesting','link-label':'filename label','link-format':'malformed link','row-footer-marker':'known footer marker','row-no-footer-marker':'no footer marker','row-last':'last row','row-not-last':'nonterminal row','row-single-cell':'one cell','row-multiple-cells':'multiple cells','row-empty-first-cell':'blank first cell','row-text-first-cell':'first cell has text','row-later-file-link':'file link in later cell','row-button-none':'no button','row-button-one':'one button','row-button-many':'multiple buttons','footer-no-mobile':'footer lacks mobile class','footer-multiple-markers':'multiple footer markers','footer-bad-colspan':'footer colspan differs','footer-button-not-link':'footer button kind differs','footer-bad-label':'footer label differs','footer-bad-wrapper':'footer wrapper differs','footer-extra-elements':'footer has extra elements','footer-extra-controls':'footer has extra controls','footer-no-files':'footer precedes file data'};
  function failure(error){const code=Object.hasOwn(failures,error?.code||'')?error.code:null,limit=error?.limit,suffix=code&&Object.hasOwn(sizeCeilings,code)&&Number.isSafeInteger(limit)&&limit>=1&&limit<=sizeCeilings[code]?' Limit: '+limit+' bytes.':'',issues=code==='GITHUB_POLICY_ROWS'&&Array.isArray(error?.policyRowIssues)&&error.policyRowIssues.length<=Object.keys(rowIssueLabels).length?[...new Set(error.policyRowIssues.filter(issue=>typeof issue==='string'&&Object.hasOwn(rowIssueLabels,issue)).map(issue=>rowIssueLabels[issue]))]:[];return{ok:false,error:code?failures[code]+suffix+(issues.length?' Row checks: '+issues.join(', ')+'.':''):'Repository website read failed. Open this project tab and complete any sign-in/SSO requirement; browser policy may restrict access.',...(code?{code}:{})};}
 
  root.chrome.runtime.onMessage.addListener((message,sender,reply)=>{
   if(sender?.id!==root.chrome.runtime.id||sender.tab||!message||typeof message!=='object')return false;
+  if(message.type==='repository-session-chunk'){try{reply({ok:true,result:message.action==='chunk-drop'?chunks().drop(message.token,owner(sender)):chunks().read(message.token,message.index,owner(sender))});}catch(error){reply({ok:false,error:'Source transfer expired or unavailable.'});}return false;}
   if(message.type==='repository-session-cancel'){if(typeof message.requestId!=='string')return false;loads.get(message.requestId)?.abort();reply({ok:true});return false;}
   if(message.type==='projectLaunchContext'){
    const parse=root.KiCadGitHub,options={gitlabHosts:location.origin!=='https://github.com'?[location.origin]:[]},route=parse?.route(location.href,options),repo=parse?.repositoryRoute(location.href,options);
@@ -46,8 +49,8 @@
   }
   const reader=message.type==='github-session-read'&&location.origin==='https://github.com'?root.KiCadGitHubSessionReader:message.type==='gitlab-session-read'&&location.origin!=='https://github.com'?root.KiCadGitLabSessionReader:null;
   if(!reader)return false;const id=message.requestId,bytes=message.limit??8*1024*1024;
-  if(id!==undefined&&(typeof id!=='string'||!/^load-[a-f0-9]{32}$/.test(id)||loads.has(id))||loads.size>=4||!Number.isInteger(bytes)||bytes<1||bytes>64*1024*1024||reservedBytes+bytes>128*1024*1024){reply({ok:false,error:'Invalid repository read identifier or request budget.'});return false;}
+  if(id!==undefined&&(typeof id!=='string'||!/^load-[a-f0-9]{32}$/.test(id)||loads.has(id))||loads.size>=4||!Number.isInteger(bytes)||bytes<1||bytes>256*1024*1024||(reservedBytes+bytes>128*1024*1024&&!(reservedBytes===0&&bytes<=256*1024*1024))){reply({ok:false,error:'Invalid repository read identifier or request budget.'});return false;}
   const controller=new AbortController(),key=id||Symbol();loads.set(key,controller);reservedBytes+=bytes;
-  Promise.resolve().then(()=>reader.create({signal:controller.signal}).read(message)).then(result=>reply({ok:true,result}),error=>reply(failure(error))).finally(()=>{loads.delete(key);reservedBytes-=bytes;});return true;
+  Promise.resolve().then(()=>reader.create({signal:controller.signal}).read(message)).then(result=>{try{reply(root.KiCadChunkedReplies?chunks().encode({ok:true,result},owner(sender)):{ok:true,result});}catch(error){reply({ok:false,error:'Source response exceeds its transfer budget.'});}},error=>reply(failure(error))).finally(()=>{loads.delete(key);reservedBytes-=bytes;});return true;
  });
 })(globalThis);

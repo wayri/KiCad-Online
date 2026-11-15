@@ -3,7 +3,8 @@
  'use strict';
  window.KiCadAndroidRuntime=true;
  const project=window.top.KiCadAndroidProject;if(!project)return; // Offline tools can open without a project; no project transport is granted.
- const api=KiCadAndroidLocal.transport(project,localStorage);
+ const localAdapters=new WeakMap(),localFor=snapshot=>{let adapter=localAdapters.get(snapshot);if(!adapter){adapter=KiCadAndroidLocal.transport(snapshot,localStorage);localAdapters.set(snapshot,adapter);}return adapter;};
+ const api=localFor(project);
  const online=Boolean(project.github||project.remote);window.KiCadAndroidOnline=online;
  const provider=project.remote?.provider||'github';
  const nativeRequest=(message,options)=>(provider==='gitlab'?window.top.KiCadAndroidGitLab:window.top.KiCadAndroidGitHub).request(message,options);
@@ -39,7 +40,7 @@
     if(!reviewAdapters.has(snapshot.id))reviewAdapters.set(snapshot.id,window.top.KiCadAndroidSession?.owns(snapshot)?window.top.KiCadAndroidSession.remote(snapshot,localStorage):KiCadAndroidRemote.create(snapshot,nativeRequest,window.top.KiCadReviewComments,localStorage));const remote=reviewAdapters.get(snapshot.id);
    const reply=await remote.send(message);if(reply.authExpired)(provider==='gitlab'?window.top.KiCadAndroidGitLab:window.top.KiCadAndroidGitHub).authExpired?.(project.remote?.host);return reply;
   }
-  return KiCadAndroidLocal.transport(snapshot,localStorage).send(message);
+  return localFor(snapshot).send(message);
  }catch(error){if(error.authExpired)(provider==='gitlab'?window.top.KiCadAndroidGitLab:window.top.KiCadAndroidGitHub).authExpired?.(project.remote?.host);return{ok:false,error:error.message,...(error.name==='AbortError'?{cancelled:true}:{})};}finally{if(load&&!--load.users&&loads.get(message.loadId)===load)loads.delete(message.loadId);}};
  window.KiCadVSCodeContext={search:location.search}; // Shared viewer local-source contract.
  window.chrome={runtime:{id:'android-local',getURL:name=>new URL(name,location.href).href,sendMessage:message=>{if(message.type==='open-project-file'){window.top.KiCadAndroid.openDrawing(message.file);return Promise.resolve({ok:true,result:{opened:true}});}if(message.type==='open-project-overview'){window.top.KiCadAndroid.openProject(message.file);return Promise.resolve({ok:true,result:{opened:true}});}return dispatch(message);},onMessage:{addListener(){}}},storage:{local:{async get(key){return{[key]:JSON.parse(localStorage.getItem('android-pref:'+key)||'null')};},async set(values){for(const [key,value]of Object.entries(values))localStorage.setItem('android-pref:'+key,JSON.stringify(value));}}}};

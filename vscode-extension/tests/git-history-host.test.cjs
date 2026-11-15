@@ -38,11 +38,23 @@ test('opening saved source creates an independent SHA-pinned session with saved 
  assert.equal((await saved({type:'repo-model-index'})).result.paths[0],'models/part.step');
  assert.equal((await saved({type:'rule-report',reportPath:'drc.json'})).result.content,'{"saved":true}');
  assert.equal((await saved({type:'project-inventory'})).result.snapshotRef,OLD);
+ assert.ok(h.reads.some(read=>read.path==='hardware/root.kicad_sch'&&read.maxBytes===256*1024*1024));
+ assert.ok(h.reads.some(read=>read.path==='hardware/models/part.step'&&read.maxBytes===8*1024*1024));
  const search=await saved({type:'project-search-files'});assert.equal(search.ok,true);assert.equal(search.result.settings[0].path,'board.kicad_pro');assert.ok(h.reads.every(read=>read.sha===OLD));
  for(const type of ['comment-save','comment-delete','comment-publish']){const denied=await saved({type});assert.equal(denied.ok,false);assert.match(denied.error,/read-only/);}
  assert.equal((await saved({type:'comment-list'})).result.length,0);
  const missing=await saved({type:'project-file',file:'missing.kicad_pcb'});assert.equal(missing.ok,false);assert.match(missing.error,/Missing historical source/);
  panel.dispose();
+});
+test('saved hierarchy loads beyond the former 32-sheet limit at one immutable commit',async()=>{
+ const h=harness();
+ h.data.set('hardware/root.kicad_sch',`(kicad_sch ${Array.from({length:32},(_,i)=>`(sheet (property "Sheetfile" "s${i}.kicad_sch"))`).join(' ')})`);
+ for(let i=0;i<32;i++)h.data.set(`hardware/s${i}.kicad_sch`,'(kicad_sch)');
+ const reply=await h.send({type:'repository-open-file',path:'root.kicad_sch',sha:OLD});
+ assert.equal(reply.ok,true);assert.equal(h.panels.length,1);
+ assert.equal(h.reads.filter(read=>read.path.endsWith('.kicad_sch')).length,33);
+ assert.ok(h.reads.every(read=>read.sha===OLD));
+ h.panels[0].dispose();
 });
 test('historical open rejects traversal, missing sources and unavailable Git without working fallback',async()=>{
  const h=harness();for(const file of ['../outside.kicad_pcb','missing.kicad_pcb'])assert.equal((await h.send({type:'repository-open-file',sha:OLD,path:file})).ok,false);

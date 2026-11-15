@@ -10,6 +10,21 @@ global.fetch=async(url,options)=>{fixture.fetches.push({url:String(url),options}
 require('../background.js');
 const viewer=(name='revision-viewer.html')=>({id:'buffer-test',url:origin+name,tab:{id:80},frameId:0,documentId:name});
 function message(request,sender=viewer()){return new Promise(resolve=>{if(!listener(request,sender,resolve))resolve({ignored:true});});}
+
+test('large saved source is chunked across both repository and viewer message boundaries',async()=>{
+ const chunks=require('../chunked-replies.js'),source='(kicad_sch ;'+'x'.repeat(2*1024*1024)+'\n)',scope=setup('buffer/chunked',{'large.kicad_sch':source}),store=chunks.createStore(),old=chrome.tabs.sendMessage;
+ let sourceChunks=0,viewerChunks=0,maxWire=0;
+ chrome.tabs.sendMessage=async(id,request)=>{
+  let reply;
+  if(request.type==='repository-session-chunk'){sourceChunks++;reply={ok:true,result:request.action==='chunk-drop'?store.drop(request.token,'worker'):store.read(request.token,request.index,'worker')};}
+  else reply=store.encode(await old(id,request),'worker');
+  maxWire=Math.max(maxWire,Buffer.byteLength(JSON.stringify(reply)));return reply;
+ };
+ try{
+  const sender=viewer(),runtime={sendMessage:async request=>{if(request.type==='reply-chunk')viewerChunks++;const reply=await message(request,sender);maxWire=Math.max(maxWire,Buffer.byteLength(JSON.stringify(reply)));return reply;}};
+  const reply=await chunks.send(runtime,{...scope,type:'project-file',file:'large.kicad_sch'});assert.equal(reply.ok,true,reply.error);assert.equal(reply.result.content,source);assert.ok(sourceChunks>=3);assert.ok(viewerChunks>=3);assert.ok(maxWire<7*1024*1024);
+ }finally{chrome.tabs.sendMessage=old;}
+});
 function setup(repository,sources){fixture={repository,sources:new Map(Object.entries(sources)),session:[],fetches:[],tree(directory){const result=new Map();for(const path of this.sources.keys()){const segments=path.split('/'),prefix=directory?directory+'/':'';if(!path.startsWith(prefix))continue;const tail=path.slice(prefix.length),first=tail.split('/')[0],entry=prefix+first;result.set(entry,{path:entry,type:tail.includes('/')?'directory':'file'});}return [...result.values()];}};return {repository,ref:SHA,file:[...fixture.sources.keys()].find(p=>p.endsWith('.kicad_pcb'))||[...fixture.sources.keys()][0]};}
 test('owned viewers share pinned project source bytes across layout, 3D and detached requests with no GitHub API',async t=>{
  await KiCadGitHubReviewApi.setToken('github_pat_'+'z'.repeat(40));t.after(()=>KiCadGitHubReviewApi.clearToken());

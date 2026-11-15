@@ -14,3 +14,18 @@ test('blind via barrel follows its two saved layers and restores the original in
  for(const amount of [100,25,100,0]){view.set(amount);view.barrels(mesh,span);mesh.getMatrixAt(0,matrix);const bottom=new THREE.Vector3(0,0,0).applyMatrix4(matrix),top=new THREE.Vector3(0,0,height).applyMatrix4(matrix);assert.ok(Math.abs(bottom.z-(span.zMin+view.offset('In4.Cu')))<1e-5);assert.ok(Math.abs(top.z-(span.zMax+view.offset('In1.Cu')))<1e-5);assert.equal(bottom.x,3);assert.equal(bottom.y,4);assert.equal(mesh.userData.records[0],record);assert.equal(mesh.geometry,geometry);}
  assert.deepEqual([...mesh.instanceMatrix.array],original);geometry.dispose();material.dispose();
 });
+test('expanded assembly lifts components beyond outer copper and reveals inner layers without changing identities',{skip:!threePath},async()=>{
+ const THREE=await import(pathToFileURL(threePath).href),{createExplodeView}=await import('../spike/explodeView.mjs'),view=createExplodeView(THREE,plan);
+ const front=new THREE.Group(),back=new THREE.Group(),inner=new THREE.Mesh(new THREE.BoxGeometry(1,1,.035),new THREE.MeshBasicMaterial());
+ const record={uuid:'inner-pad',net:'GND'};inner.userData.record=record;inner.userData.layer='In2.Cu';inner.position.z=plan.layers[2].z;
+ const selected=new THREE.Group();selected.add(inner);front.position.z=.7;back.position.z=-.7;
+ for(const amount of [60,100,25,0]){
+  view.set(amount);view.component(front,'front');view.component(back,'back');view.overlay(selected);
+  assert.ok(front.position.z>=.7+view.offset('F.Cu'));
+  assert.ok(back.position.z<=-.7+view.offset('B.Cu'));
+  assert.ok(Math.abs(inner.position.z-plan.layers[2].z-view.offset('In2.Cu'))<1e-9);
+  assert.equal(inner.userData.record,record);assert.equal(view.substrateOpacity(),1-.88*amount/100);
+ }
+ assert.equal(front.position.z,.7);assert.equal(back.position.z,-.7);assert.equal(inner.position.z,plan.layers[2].z);
+ inner.geometry.dispose();inner.material.dispose();
+});

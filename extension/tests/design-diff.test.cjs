@@ -121,16 +121,17 @@ test("fallback identity does not guess a move when an object has no UUID", () =>
 test("malformed, oversized and overly deep source is rejected", () => {
   assert.throws(() => compareProjects([file("a.kicad_sch", `(kicad_sch (label "unterminated))`)], []), /Unterminated/);
   assert.throws(() => compareProjects([file("a.kicad_sch", `(${"(".repeat(100)}${")".repeat(101)}`)], []), /too deep/);
-  assert.throws(() => compareProjects([file("a.kicad_sch", "x".repeat(8 * 1024 * 1024 + 1))], []), /size limits/);
+  assert.throws(() => compareProjects([file("a.sch", "x".repeat(8 * 1024 * 1024 + 1))], []), /size limits/);
   assert.throws(() => compareProjects([file("a.kicad_sch", "(kicad_sch)") , file("a.kicad_sch", "(kicad_sch)")], []), /duplicate/);
 });
 
 
-test('PCB node budget supports saved filled copper while retaining schematic node protection', () => {
+test('modern drawing node budgets support dense designs while retaining non-drawing protection', () => {
   const {parse} = require('../design-diff.js');
   const many = 'x '.repeat(1000001);
   assert.equal(parse('(kicad_pcb ' + many + ')').length, 1000002);
-  assert.throws(() => parse('(kicad_sch ' + many + ')'), /too many/);
+  assert.equal(parse('(kicad_sch ' + many + ')').length,1000002);
+  assert.throws(() => parse('(unknown ' + many + ')'), /too many/);
 });
 
 

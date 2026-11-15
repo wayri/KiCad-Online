@@ -245,7 +245,7 @@ test('global website search discloses bounded drawing count',async t=>{
  const sources=Object.fromEntries(Array.from({length:40},(_,i)=>['p'+String(i).padStart(2,'0')+'.kicad_pcb','(kicad_pcb)']));const fixture=withWebsite(t,'wayri/search',sources);const reply=await message({type:'project-search-files',repository:'wayri/search',ref:'main',file:'p00.kicad_pcb'});assert.equal(reply.ok,true,reply.error);assert.equal(reply.result.files.length,32);assert.equal(fixture.raw.length,32);assert.match(reply.result.warnings.join(' '),/at most 32/);
 });
 test('website search skips an oversized drawing with a visible warning and never allocates its advertised body',async t=>{
- const fixture=withWebsite(t,'owner/oversized-search',{'large.kicad_pcb':'unused','small.kicad_sch':'(kicad_sch)'},{raw:async url=>url.endsWith('/large.kicad_pcb')?new Response('unused',{headers:{'content-length':String(64*1024*1024+1)}}):new Response('(kicad_sch)')});
+ const fixture=withWebsite(t,'owner/oversized-search',{'large.kicad_pcb':'unused','small.kicad_sch':'(kicad_sch)'},{raw:async url=>url.endsWith('/large.kicad_pcb')?new Response('unused',{headers:{'content-length':String(256*1024*1024+1)}}):new Response('(kicad_sch)')});
  const reply=await message({type:'project-search-files',repository:'owner/oversized-search',ref:'main',file:'large.kicad_pcb'});assert.equal(reply.ok,true,reply.error);assert.deepEqual(reply.result.files.map(f=>f.path),['small.kicad_sch']);assert.match(reply.result.warnings.join(' '),/large\.kicad_pcb.*(?:byte limit|size limit)/);assert.equal(fixture.raw.length,2);
 });
 
@@ -1014,11 +1014,11 @@ test('large PCB uses bounded raw Contents media and excludes credentials and red
   assert.equal(await background.githubFile('owner/board', 'main', 'design/large.kicad_pcb'), board);
 });
 
-test('PCB raw byte cap rejects oversized headers; schematics retain their smaller stream cap', async t => {
-  withFetch(t, async () => new Response('tiny', {headers: {'content-length': String(64 * 1024 * 1024 + 1)}}));
+test('PCB raw byte cap rejects oversized headers; legacy schematics retain their smaller stream cap', async t => {
+  withFetch(t, async () => new Response('tiny', {headers: {'content-length': String(256 * 1024 * 1024 + 1)}}));
   await assert.rejects(background.githubFile('owner/board', 'main', 'large.kicad_pcb'), /size limit/);
   global.fetch = async () => new Response('x'.repeat(8 * 1024 * 1024 + 1));
-  await assert.rejects(background.githubFile('owner/board', 'main', 'large.kicad_sch'), /size limit/);
+  await assert.rejects(background.githubFile('owner/board', 'main', 'large.sch'), /size limit/);
   let calls = 0; global.fetch = async () => {calls++; return new Response('');};
   await assert.rejects(background.githubFile('owner/board', 'main', '../large.kicad_pcb'), /Invalid/);
   assert.equal(calls, 0);

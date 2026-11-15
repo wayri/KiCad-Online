@@ -1,7 +1,7 @@
 "use strict";
 (function(root){
   // Read-only GitLab API transport using this matching website tab, not account tokens.
-  const MAX=64*1024*1024;
+  const MAX=256*1024*1024;
   const pathOK=value=>typeof value==='string'&&value.length<=500&&value!==''&&value.split('/').every(p=>p&&p!=='.'&&p!=='..'&&!/[\\:\x00-\x1f\x7f]/.test(p));
   const repoOK=value=>pathOK(value)&&value.length<=300&&/^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+$/.test(value);
   function validate({host,repository,url,limit},location) {
@@ -49,7 +49,7 @@
   function create({fetch:fetcher=root.fetch,location=root.location,signal}={}) {
     async function read(message) {
       if(signal?.aborted)throw Error('Project loading cancelled.');
-      const url=validate(message,location),controller=new AbortController(),abort=()=>controller.abort(),timer=setTimeout(()=>controller.abort(),30000);
+      const url=validate(message,location),controller=new AbortController(),abort=()=>controller.abort(),timer=setTimeout(()=>controller.abort(),Number(message.limit)>64*1024*1024&&/\/repository\/files\//.test(new URL(url).pathname)?180000:30000);
       signal?.addEventListener('abort',abort,{once:true});
       try {
         const response=await fetcher(url,{method:'GET',credentials:'same-origin',cache:'no-store',redirect:'error',signal:controller.signal});

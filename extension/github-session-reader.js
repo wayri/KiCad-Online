@@ -196,7 +196,7 @@
       if(action==='pull'&&(ref!=='HEAD'||! /^[1-9][0-9]{0,9}$/.test(path)||!Number.isSafeInteger(Number(path))))throw Error('Invalid GitHub PR number.');
       if(['history','branches','commit'].includes(action)&&path!=='')throw Error('Invalid GitHub history path.');
       if(signal?.aborted)throw Error('Project loading cancelled.');
-      const controller=new AbortController(),abort=()=>controller.abort(),timer=setTimeout(()=>controller.abort(),30000);
+      const controller=new AbortController(),abort=()=>controller.abort(),timer=setTimeout(()=>controller.abort(),action==='file'&&limit>64*1024*1024?180000:30000);
       signal?.addEventListener('abort',abort,{once:true});
       try {
         if(action==='policy'){
@@ -260,7 +260,7 @@
           return {ref,content:await bounded(response,4*1024*1024,controller.signal,false,'GITHUB_HISTORY_TOO_LARGE')};
         }
         if(action==='file'||action==='asset') {
-          if(!safePath(path)||!Number.isInteger(limit)||limit<1||limit>(action==='asset'?32:64)*1024*1024)throw Error('Invalid GitHub session file.');
+          if(!safePath(path)||!Number.isInteger(limit)||limit<1||limit>(action==='asset'?32:256)*1024*1024)throw Error('Invalid GitHub session file.');
           const suffix=`/${repository}/${ref}/${path.split('/').map(encodeURIComponent).join('/')}`;
           const response=await fetcher(`https://github.com/${repository}/raw/${ref}/${path.split('/').map(encodeURIComponent).join('/')}`,{credentials:'same-origin',redirect:'follow',cache:'no-store',signal:controller.signal});
           if(response.status===404)return null;

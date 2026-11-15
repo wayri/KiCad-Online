@@ -26,7 +26,45 @@
 
  }
 
- if(typeof module==='object'&&module.exports)module.exports={viewEntries,activateView};
+ // Reuse the adaptive shell's live controls; only their placement and captions change.
+ function prepareDrawingStrip(doc){
+  const rail=doc.getElementById('androidViewToolbar'),content=doc.querySelector('#androidToolsSheet>.android-sheet-content');
+  if(!rail||!content)return false;
+  const find=label=>[...rail.children].find(node=>node.getAttribute?.('aria-label')===label);
+  const search=doc.getElementById('androidPrimarySearch')||find('Search');
+  const inspect=doc.getElementById('androidRailProperties');
+  const tools=doc.getElementById('androidPrimaryTools')||find('More drawing tools');
+  const originalFit=doc.getElementById('androidFitDrawing');
+  if(!search||!inspect||!tools||!originalFit)return false;
+  search.id='androidPrimarySearch';tools.id='androidPrimaryTools';
+  let fit=doc.getElementById('androidRailFit');
+  if(!fit){fit=doc.createElement('button');fit.id='androidRailFit';fit.type='button';fit.setAttribute('aria-label','Fit drawing');fit.onclick=()=>originalFit.click();const icon=originalFit.querySelector('svg');if(icon)fit.append(icon.cloneNode(true));}
+  // The adaptive organizer owns this original proxy; keep one visible Fit action.
+  originalFit.hidden=true;
+  const entries=[[search,'Search'],[inspect,'Inspect'],[fit,'Fit'],[tools,'Tools']];
+  for(const [action,label]of entries){
+   action.hidden=false;
+   let caption=action.querySelector('.android-primary-caption');
+   if(!caption){caption=doc.createElement('span');caption.className='android-primary-caption';caption.textContent=label;action.append(caption);}
+  }
+  tools.setAttribute('aria-label','Drawing tools');tools.title='Drawing tools';
+  const primary=new Set(entries.map(([action])=>action));
+  for(const action of [...rail.children]){
+   // The shared sidebar controller owns its toggle's toolbar parent and visibility.
+   if(primary.has(action)||action.id==='phoneSidebarToggle'||action.tagName!=='BUTTON')continue;
+   const group=doc.querySelector('#androidToolGroup-more>.android-tool-section-body')||content;
+   if(!action.querySelector('.button-label')){const label=doc.createElement('span');label.className='button-label';label.textContent=action.getAttribute('aria-label')||action.title;action.append(label);}
+   group.append(action);
+  }
+  const current=[...rail.children].filter(action=>primary.has(action));
+  if(entries.some(([action],index)=>current[index]!==action))rail.append(...primary);
+  rail.classList.remove('android-drawing-rail');rail.classList.add('android-drawing-strip');
+  doc.body.classList.remove('android-rail-hidden');
+  const toggle=doc.getElementById('androidRailToggle');if(toggle)toggle.hidden=true;
+  return true;
+ }
+
+ if(typeof module==='object'&&module.exports)module.exports={viewEntries,activateView,prepareDrawingStrip};
 
  const d=root.document;if(!d)return;
 
@@ -126,13 +164,7 @@
 
   const rail=d.getElementById('androidViewToolbar');if(!rail)return;
 
-  if(!rail.dataset.focused){rail.dataset.focused='true';d.body.classList.add('android-rail-hidden');const toggle=d.getElementById('androidRailToggle');if(toggle){toggle.setAttribute('aria-expanded','false');toggle.setAttribute('aria-label','Show drawing tools');toggle.title='Show drawing tools';const icon=root.KiCadUIIcons?.icon('tools');if(icon)toggle.replaceChildren(icon);}
-
-   const properties=d.getElementById('androidRailProperties');if(properties)properties.hidden=true;
-
-   const fit=make('button');fit.id='androidRailFit';fit.type='button';fit.setAttribute('aria-label','Fit drawing');fit.title='Fit drawing';fit.onclick=()=>d.getElementById('fitDrawing')?.click();fit.append(root.KiCadUIIcons?.icon('fit')||d.createTextNode('Fit'));rail.insertBefore(fit,rail.children[1]||null);
-
-  }
+  prepareDrawingStrip(d);
 
   const selection=d.getElementById('selectionMode'),group=d.querySelector('#androidToolGroup-highlight>.android-tool-section-body');
 

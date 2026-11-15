@@ -30,7 +30,7 @@
    try{const tab=await api.tabs.get(tabId),page=new URL(tab.url);
     if(tab.id!==tabId||page.origin!==host||page.username||page.password||!(page.pathname.toLowerCase()==='/'+repository.toLowerCase()||page.pathname.toLowerCase().startsWith('/'+repository.toLowerCase()+'/')))return false;
     const firefox=api.runtime.getManifest?.()?.browser_specific_settings?.gecko;
-    const files=[...(firefox?['firefox/browser-api.js']:[]),'parsing.js',...(provider==='github'?['github-website-history.js','github-website-pulls.js','github-session-reader.js','github-session-review.js']:['gitlab-session-reader.js']),'repository-session-bridge.js'];
+    const files=[...(firefox?['firefox/browser-api.js']:[]),'chunked-replies.js','parsing.js',...(provider==='github'?['github-website-history.js','github-website-pulls.js','github-session-reader.js','github-session-review.js']:['gitlab-session-reader.js']),'repository-session-bridge.js'];
     await api.scripting.executeScript({target:{tabId,frameIds:[0]},files});return true;
    }catch{return false;}
   }
