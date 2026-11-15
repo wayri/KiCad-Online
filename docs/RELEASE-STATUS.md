@@ -2,7 +2,11 @@
 
 KiCad Online releases are available from GitHub and the platform stores. Stores review updates independently, so their installable versions can differ from the GitHub preview.
 
-**Latest GitHub preview — 13 November 2026:** [KiCad Online 0.12.95 / Android 1.97](https://github.com/wayri/KiCad-Online/releases/tag/v0.12.95) is published with 23 assets (152,955,144 bytes). Every remote size and SHA-256 digest matches the audited local files from exact source `04316f4d216e5d226c3d3821d7f1079b0acdc1be`. Source gates: 2,709 JavaScript passes; 149 Python passes and one Windows symlink-permission skip. Offline Android assemble/lint/bundle and exact 437-viewer-asset audits passed with 19 lint warnings and no errors; APK signer matches Android 1.96. [Installed KERO/Marble observations and remaining live coverage](QA-VIEWER-0.12.95.md) are scoped, not complete platform acceptance.
+**Latest GitHub preview — 15 November 2026:** [KiCad Online 0.12.100 / Android 1.98](https://github.com/wayri/KiCad-Online/releases/tag/v0.12.100) is published with 23 assets (153,132,944 bytes). Every remote size and SHA-256 digest matches the audited local files from exact source `aacfb755e71f35247ef4f9f1779e481d90aab466`. The JavaScript gate passed all 2,803 tests. The Python suite ran 166 tests with two environment skips; the Java boundary-policy check subsequently passed with the installed JDK, leaving only the Windows symlink-privilege skip. All 21 package tests passed. Offline Android assemble/lint/bundle and exact 439-viewer-asset audits passed with 19 lint warnings and no errors; APK signing continuity matches Android 1.97.
+
+The user confirmed final installed UI acceptance after reloading: both QA replies were visible, anchored comments navigated to the drawing, Sheets was the default with Root/page badges, and Help remained within the top bar. This is user-reported acceptance because Windows automation could not activate the captured Chrome window. Earlier authorized private browser-session testing verified issue creation, an extension reply visible on GitHub and automatic website-to-extension reply readback. [Release notes and remaining coverage](releases/v0.12.100.md) distinguish these observations from broader platform acceptance. Store submissions and reviews were not changed; Altium beta is excluded, and no phone installation or Google Play publication was performed.
+
+**Previous GitHub preview — 13 November 2026:** [KiCad Online 0.12.95 / Android 1.97](https://github.com/wayri/KiCad-Online/releases/tag/v0.12.95) is published with 23 assets (152,955,144 bytes). Every remote size and SHA-256 digest matches the audited local files from exact source `04316f4d216e5d226c3d3821d7f1079b0acdc1be`. Source gates: 2,709 JavaScript passes; 149 Python passes and one Windows symlink-permission skip. Offline Android assemble/lint/bundle and exact 437-viewer-asset audits passed with 19 lint warnings and no errors; APK signer matches Android 1.96. [Installed KERO/Marble observations and remaining live coverage](QA-VIEWER-0.12.95.md) are scoped, not complete platform acceptance.
 
 **Chrome 0.12.95 is submitted for review**, with automatic publication after approval and updated release text. Chrome 0.12.94 had already published, so no review was cancelled. Mozilla and VS Code stores were not updated in this attempt. Altium beta remains separate; no phone installation or Google Play publication occurred.
 
@@ -10,12 +14,12 @@ KiCad Online releases are available from GitHub and the platform stores. Stores 
 
 | Channel | Latest recorded state (store dates noted) | Download |
 | --- | --- | --- |
-| GitHub | **0.12.95 / Android 1.97** preview published 13 November | [Release files and checksums](https://github.com/wayri/KiCad-Online/releases/tag/v0.12.95) |
+| GitHub | **0.12.100 / Android 1.98** preview published 15 November | [Release files and checksums](https://github.com/wayri/KiCad-Online/releases/tag/v0.12.100) |
 | Chrome Web Store | **0.12.95 submitted for review** 13 November; published 0.12.94; automatic publication after approval | [Chrome listing](https://chromewebstore.google.com/detail/klfdjlbngpoopegjmbajaidgodpmjaoc) |
 | VS Code Marketplace | Last observed 12 November: **0.12.94 uploaded; verifying** | [Marketplace listing](https://marketplace.visualstudio.com/items?itemName=wayri.kicad-visual-review) |
 | Mozilla Add-ons | Last observed 12 November: **0.12.94 awaiting review**; matching readable source attached; public 0.12.91 | [Firefox listing](https://addons.mozilla.org/en-US/firefox/addon/pocket-kiview-kicad-review/) |
-| Android app | **1.97 development-signed APK** on GitHub; manual updates | [APK](https://github.com/wayri/KiCad-Online/releases/download/v0.12.95/pocket-kivi-android-phone-tablet-1.97-development.apk) |
-| Safari | **0.12.95 development package**; requires Mac conversion and signing | [Safari instructions](SAFARI.md) |
+| Android app | **1.98 development-signed APK** on GitHub; manual updates | [APK](https://github.com/wayri/KiCad-Online/releases/download/v0.12.100/pocket-kivi-android-phone-tablet-1.98-development.apk) |
+| Safari | **0.12.100 development package**; requires Mac conversion and signing | [Safari instructions](SAFARI.md) |
 
 This is a dated snapshot, not a live status feed. Each store listing shows the version currently available to install. A successful upload or clean validator result does not mean an update has been approved.
 
