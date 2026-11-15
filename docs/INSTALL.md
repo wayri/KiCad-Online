@@ -1,6 +1,6 @@
 # Install KiCad Online
 
-Prepared release candidate (not yet published): **extension 0.12.100 / Android 1.98**. The last published preview is [0.12.95](https://github.com/wayri/KiCad-Online/releases/tag/v0.12.95). The 0.12.100 download links below become available only after publication. Store submission
+Latest GitHub preview: **extension 0.12.100 / Android 1.98**. Store submission
 and approval are separate from GitHub downloads. See [release status](RELEASE-STATUS.md).
 
 Download `kicad-visual-review-chrome-edge-brave-opera-vivaldi-chromium-0.12.100.zip`,
