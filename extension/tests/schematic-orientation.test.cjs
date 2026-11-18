@@ -5,6 +5,54 @@ const path = require('node:path');
 const { parse } = require('../design-diff.js');
 const { build } = require('../schematic-renderer.js');
 
+test('stacked pin labels stay readable through every rotation and mirror without losing electrical pins',()=>{
+ for(const angle of [0,90,180,270])for(const mirror of ['', 'x','y']){
+  const pins=[1,2,3].map(n=>`(pin passive line (at -5 0 0) (length 3) (name "S" (effects (font (size 1 1)))) (number "${n}" (effects (font (size 1 1)))))`).join(' ');
+  const ast=parse(`(kicad_sch (lib_symbols (symbol "Stack" (pin_names (offset .5)) (symbol "Stack_1_1" ${pins}))) (symbol (lib_id "Stack") (at 40 40 ${angle}) ${mirror?'(mirror '+mirror+')':''} (unit 1) (uuid "stack")))`);
+  const before=JSON.stringify(ast),p=build(ast).primitives;
+  const electrical=p.filter(p=>p.kind==='pin'),numbers=p.filter(p=>p.kind==='pin-number'),names=p.filter(p=>p.kind==='pin-name');
+  assert.equal(electrical.length,3);assert.deepEqual(electrical.map(p=>p.pinNumber),['1','2','3']);
+  assert.equal(numbers.length,1);assert.equal(numbers[0].text,'1, 2, 3');assert.deepEqual(numbers[0].pinNumbers,['1','2','3']);
+  assert.equal(names.length,1);assert.equal(names[0].text,'S');
+  assert.equal(Math.abs(numbers[0].angle),angle%180?90:0);
+  assert.deepEqual(numbers[0].connectPoint,electrical[0].connectPoint);
+  assert.equal(JSON.stringify(ast),before);
+ }
+});
+
+test('nearby pins with different electrical anchors do not coalesce labels',()=>{
+ const pins=[0,2.54].map((y,i)=>`(pin passive line (at -5 ${y} 0) (length 3) (name "S" (effects (font (size 1 1)))) (number "${i+1}" (effects (font (size 1 1)))))`).join(' ');
+ const p=build(parse(`(kicad_sch (lib_symbols (symbol "Stack" (symbol "Stack_1_1" ${pins}))) (symbol (lib_id "Stack") (at 40 40 0) (unit 1) (uuid "stack")))`)).primitives;
+ assert.equal(p.filter(p=>p.kind==='pin-number').length,2);assert.equal(p.filter(p=>p.kind==='pin-name').length,2);
+});
+
+test('coincident labels with different saved font styles remain separate',()=>{
+ for(const style of ['(size 2 1)','(size 1 1) bold','(size 1 1) italic','(size 1 1) (face "Arial")','(size 1 1) (thickness .3)']){
+  const pin=(number,font)=>`(pin passive line (at -5 0 0) (length 3) (name "S" (effects (font ${font}))) (number "${number}" (effects (font ${font}))))`;
+  const p=build(parse(`(kicad_sch (lib_symbols (symbol "Stack" (symbol "Stack_1_1" ${pin(1,'(size 1 1)')}${pin(2,style)}))) (symbol (lib_id "Stack") (at 40 40 0) (unit 1) (uuid "stack")))`)).primitives;
+  assert.equal(p.filter(p=>p.kind==='pin-number').length,2,style);
+  assert.equal(p.filter(p=>p.kind==='pin-name').length,2,style);
+ }
+});
+
+test('sheet-edge markers and text match twenty native KiCad pins on all four sides',()=>{
+ const source=fs.readFileSync(path.join(__dirname,'fixtures/sheet-pin-orientation.kicad_sch'),'utf8');
+ const reference=JSON.parse(fs.readFileSync(path.join(__dirname,'fixtures/sheet-pin-reference.json'),'utf8'));
+ const ast=parse(source),before=JSON.stringify(ast),primitives=build(ast).primitives.filter(p=>p.kind==='sheet-pin');
+ assert.equal(primitives.length,40,'one marker and one text per saved sheet pin');
+ const points=values=>values.map(p=>Array.isArray(p)?p:[p.x,p.y]).map(p=>p.map(n=>Number(n.toFixed(4)))).sort((a,b)=>a[0]-b[0]||a[1]-b[1]);
+ for(const pin of reference.pins){
+  const text=primitives.find(p=>p.type==='text'&&p.text===pin.name),marker=primitives.find(p=>p.type==='polygon'&&p.pinUuid===text.pinUuid);
+  assert.deepEqual(points(marker.points),points(pin.points),pin.name+' native marker');
+  assert.ok(Math.abs(text.x-pin.textAnchor[0])<.0001&&Math.abs(text.y-pin.textAnchor[1])<.0001,pin.name+' native anchor');
+  assert.equal(text.angle||0,pin.angle,pin.name+' upright rotation');assert.equal(text.align,pin.align,pin.name+' alignment');
+  assert.deepEqual(text.connectPoint,marker.connectPoint,'electrical anchor stays on the sheet edge');
+  if(pin.name.startsWith('L'))assert.ok(text.x>80&&text.align==='left','left-edge text is inside the sheet');
+  if(pin.name.startsWith('R'))assert.ok(text.x<160&&text.align==='right','right-edge text is inside the sheet');
+ }
+ assert.equal(JSON.stringify(ast),before);
+});
+
 // Independent KiCad 10 native SVG reference, exported with:
 // kicad-cli sch export svg -e -n -o <output> fixtures/schematic-orientation.kicad_sch
 // Rows: 0/90/180/270 degrees; no mirror, mirror x, mirror y.
@@ -46,6 +94,27 @@ test('rotated and mirrored symbols retain native circles, pin joins and field la
     }
   }
   assert.equal(JSON.stringify(ast), original, 'rendering does not rewrite source');
+});
+
+test('library graphic strings follow native upright writing directions and justification', () => {
+  const source = fs.readFileSync(path.join(__dirname, 'fixtures/schematic-orientation.kicad_sch'), 'utf8');
+  const labels = ['(text "RG" (at 0 0 0)', '(text "FG" (at 0 0 900)']
+    .map(start => start + ' (effects (font (size 1.27 1.27)) (justify left top)))').join(' ');
+  const primitives = build(parse(source.replace('(circle (center', labels + ' (circle (center'))).primitives;
+  // Read from KiCad 10 SVG text-anchor, baseline displacement and rotate()
+  // at the twelve saved placements. RG is horizontal and FG is vertical locally.
+  const alignments = [
+    ['lt','lt'], ['lt','rt'], ['rt','rt'], ['rt','lt'],
+    ['lb','rt'], ['rt','rb'], ['rt','lb'], ['lt','lb'],
+    ['rt','lb'], ['lt','lb'], ['lb','rt'], ['rt','rb']
+  ];
+  for (const [i, pair] of alignments.entries()) {
+    for (const [j, label] of ['RG','FG'].entries()) {
+      const p = primitives.find(p => p.reference === 'U'+(i+1) && p.text === label);
+      assert.equal(p.angle, (i+j)%2 ? -90 : 0, p.reference+' '+label);
+      assert.equal(p.align[0]+p.baseline[0], pair[j], p.reference+' '+label);
+    }
+  }
 });
 
 test('legacy matrices and world field angles survive conversion to parent-relative modern fields', () => {

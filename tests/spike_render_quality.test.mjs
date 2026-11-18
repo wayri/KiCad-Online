@@ -88,6 +88,15 @@ test('board clip interval contains the fitted board at all normal orbit distance
   }
 });
 
+test('large-board overview resolves thin copper depth at the far edge', () => {
+  const distance = 2000, radius = 1000;
+  const {near, far} = boardClipRange(distance, radius);
+  const farEdge = distance + radius;
+  const depthStep = farEdge ** 2 * (1 / near - 1 / far) / (2 ** 24 - 1);
+  assert.ok(near < distance - radius && far > farEdge);
+  assert.ok(depthStep < .001, '24-bit perspective depth resolves one micrometre at the far edge');
+});
+
 test('normal board view improves depth precision and close inspection lowers the near plane', () => {
   const normal = boardClipRange(150, 50);
   assert.ok(normal.far / normal.near < 3000 / .1);

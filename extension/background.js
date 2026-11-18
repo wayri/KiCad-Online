@@ -806,8 +806,8 @@ function sessionReviewSender(sender){
 }
 let websiteReviewTransport;
 async function websiteReviewCall(message){
- const creating=['prepare-create','verify-create','commit-create','update-prepared','lease-inspect','categories'].includes(message.action);
- if(!validRepository(message.repository)||message.kind!==undefined&&!['issue','discussion'].includes(message.kind)||message.action!=='list'&&!creating&&(!Number.isSafeInteger(message.number)||message.number<1)||!['inspect','read','list','categories','prepare','verify','commit','prepare-create','verify-create','commit-create','update-prepared','lease-inspect'].includes(message.action))throw Error('Invalid website review request.');
+ const creating=['prepare-create','verify-create','commit-create','update-prepared','lease-inspect','categories','mentions'].includes(message.action);
+ if(!validRepository(message.repository)||message.kind!==undefined&&!['issue','discussion'].includes(message.kind)||message.action!=='list'&&!creating&&(!Number.isSafeInteger(message.number)||message.number<1)||!['inspect','read','list','categories','mentions','prepare','verify','commit','prepare-create','verify-create','commit-create','update-prepared','lease-inspect'].includes(message.action))throw Error('Invalid website review request.');
  if(['prepare','verify','commit','prepare-create','verify-create','commit-create','update-prepared'].includes(message.action))await KiCadManagedPolicy.assertWrites();else await globalThis.KiCadManagedPolicy?.assertNetwork();
  websiteReviewTransport ||= KiCadGitHubWebsiteReviews.createTabTransport({api:chrome,sessions:repositorySessions(),assertWrites:()=>KiCadManagedPolicy.assertWrites()});
  return websiteReviewTransport.invoke(message);
@@ -1450,11 +1450,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     if(message.provider==='gitlab'){const host=message.host||'https://gitlab.com';if(senderOrigin?.startsWith('https://')&&senderOrigin!==host)throw new Error('GitLab host does not match the sender.');return gitlabDispatch(message,sender);}
     if(message.comment?.anchor?.provider==='gitlab')throw new Error('GitLab annotations must use the GitLab provider.');
-    const websiteTypes=new Set(['github-thread-read','chat-thread-list','chat-message-write','github-annotations','comment-policy-status','github-publish-comment','github-recover-publication','github-discussion-categories']),reviewRepository=message.pullRepository||message.repository||message.scope?.repository||message.comment?.anchor?.repository;
+    const websiteTypes=new Set(['github-thread-read','chat-thread-list','chat-message-write','chat-thread-state','comment-mention-users','github-annotations','comment-policy-status','github-publish-comment','github-recover-publication','github-discussion-categories']),reviewRepository=message.pullRepository||message.repository||message.scope?.repository||message.comment?.anchor?.repository;
     const reviewIntentKey=JSON.stringify([sender.tab?.id??sender.url,reviewRepository]),hasReviewBinding=websiteTypes.has(message.type)&&validRepository(reviewRepository)&&(await repositorySessions().candidates('github','https://github.com',reviewRepository)).some(tab=>tab.bound),websiteReviewIntent=message.reviewTransport==='website-session'||message.reviewTransport!=='api'&&(hasReviewBinding||websiteReviewIntents.has(reviewIntentKey));
-    if(websiteTypes.has(message.type)&&viewerSender(sender)&&validRepository(reviewRepository)&&websiteReviewIntent){
+    if(websiteTypes.has(message.type)&&websiteReviewIntent){
+      if(!viewerSender(sender)||!validRepository(reviewRepository))throw Error('Website reviews require a repository viewer.');
       const repository=reviewRepository;
       if(new URL(sender.url).searchParams.get('repository')!==repository)throw Error('Website review repository does not match this viewer.');
+      if(message.type==='comment-mention-users'){
+       if(!hasReviewBinding)return {users:[],warnings:['Reconnect the repository tab for contributor suggestions.']};
+       if(message.source&&message.source!=='repository')return {users:[],warnings:['Website suggestions cover the repository contributor list.']};
+       return websiteReviewCall({repository,action:'mentions',query:message.query??''});
+      }
+      if(message.type==='chat-thread-state')throw Error('Open the conversation on GitHub to change its state with your website account.');
       if(!hasReviewBinding)throw Error('The repository website session is no longer connected. Reopen this repository and invoke the extension; no API account was used.');
       websiteReviewIntents.set(reviewIntentKey,true);if(websiteReviewIntents.size>64)websiteReviewIntents.delete(websiteReviewIntents.keys().next().value);
       if(message.type==='github-thread-read'){

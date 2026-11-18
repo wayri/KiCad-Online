@@ -150,7 +150,7 @@
       properties, propertyCount,
       truncated: source.truncated || propertyCount > MAX_SAVED_PROPERTIES || properties.some((field) => field.truncated) };
     if (item.kind === "symbol") {
-      const id = String(field(item.form, "lib_id") || ""), unit = Number(field(item.form, "unit") || 1);
+      const id = String(field(item.form, "lib_name") || field(item.form, "lib_id") || ""), unit = Number(field(item.form, "unit") || 1);
       const definition = definitions?.get(id);
       if (definition) {
         const key = `${item.path}\0${id}\0${unit}`;

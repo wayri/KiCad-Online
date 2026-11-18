@@ -156,7 +156,7 @@
     const definitions=new Map(children(child(ast,"lib_symbols"),"symbol").map((s)=>[String(value(s[1])),s]));
     const powerSymbols=new Map(), powerFlags=new Set(), version=Number(field(ast,"version"));
     for (const [uuid, record] of symbols) {
-      const definition=definitions.get(String(field(record.form,"lib_id"))), power=child(definition,"power");
+      const definition=definitions.get(String(field(record.form,"lib_name") ?? field(record.form,"lib_id"))), power=child(definition,"power");
       if (!power) continue; // Names and #PWR reference conventions are not electrical evidence.
       const scope=value(power[1]);
       if (scope !== undefined && !["global","local"].includes(scope)) {
@@ -254,7 +254,7 @@
         const r=entry.record, uuid=r.metadata.uuid;
         net.objectIds.push(r.id || r.key);if(uuid)net.uuids.push(uuid);
         net.primitives.push(...((entry.power||entry.flag) ? (byUuid.get(uuid) || []).filter((p)=>!p.frame) : entry.kind === "pin" ? entry.primitives :
-          (byUuid.get(uuid) || []).filter((p)=>p.kind === entry.kind || entry.kind==="sheet_pin"&&p.kind==="sheet-pin")));
+          (byUuid.get(uuid) || []).filter((p)=>p.kind === entry.kind || entry.kind==="sheet_pin"&&p.kind==="sheet-pin" || p.kind==="text-overbar"&&(p.electricalKind===entry.kind||entry.kind==="sheet_pin"&&p.electricalKind==="sheet-pin"))));
         net.members.push({uuid,reference:entry.kind === "pin" ? r.metadata.properties.Reference || "" : "",
           pad:"",pin:entry.pin || "",kind:entry.kind,position:entry.position,...((entry.name||entry.sheetPin?.name)?{name:entry.name||entry.sheetPin.name}:{}),...(entry.sheetPin?{sheetId:entry.sheetPin.sheetId}:{})});
         net.stats.lengthMm+=entry.length || 0;

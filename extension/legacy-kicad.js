@@ -6,6 +6,29 @@
  const tokens=line=>[...line.matchAll(/"((?:\\.|[^"\\])*)"|([^\s]+)/g)].map(m=>m[1]!==undefined?m[1].replace(/\\(["\\])/g,'$1'):m[2]);
  const at=(x,y,angle=0)=>['at',mm(x),mm(y),angle],effects=(size=50,hide=false)=>['effects',['font',['size',mm(size),mm(size)]],...(hide?['hide']:[])];
  function lines(source){if(typeof source!=='string'||new TextEncoder().encode(source).length>MAX_BYTES)throw Error('Legacy schematic/library exceeds its size limit.');const result=source.replace(/^\uFEFF/,'').split(/\r?\n/);if(result.length>MAX_LINES)throw Error('Legacy schematic/library exceeds its line limit.');return result;}
+ function bitmap(input,start,end){
+  let position,scale=1,dataStarted=false,dataEnded=false,byteCount=0;
+  const parts=[];
+  for(let i=start;i<end;i++){
+   const line=input[i].trim();
+   if(!line)continue;
+   if(line==='EndData'&&dataStarted&&!dataEnded){dataEnded=true;continue;}
+   if(dataStarted&&!dataEnded){
+    if(!/^[0-9a-f]{2}(?:\s+[0-9a-f]{2})*$/i.test(line))throw Error('Invalid saved bitmap bytes.');
+    const bytes=line.match(/[0-9a-f]{2}/gi);
+    byteCount+=bytes.length;
+    if(byteCount>4*1024*1024)throw Error('Saved bitmap exceeds its 4 MiB limit.');
+    for(let at=0;at<bytes.length;at+=8192)parts.push(String.fromCharCode(...bytes.slice(at,at+8192).map(byte=>parseInt(byte,16))));
+    continue;
+   }
+   const [key,x,y]=tokens(line);
+   if(key==='Pos'&&x!==undefined&&y!==undefined)position=at(x,y);
+   if(key==='Scale'&&x!==undefined)scale=Number(x);
+   if(key==='Data'&&!dataStarted)dataStarted=true;
+  }
+  if(!position||!parts.length||!dataEnded||!Number.isFinite(scale)||scale<=0)throw Error('Invalid saved bitmap placement or data.');
+  return ['image',position,['scale',scale],['uuid',q('legacy-bitmap-'+start)],['data',q(btoa(parts.join('')))]];
+ }
  function libraries(sources,warn){
   const result=new Map();let total=0;
   if(!Array.isArray(sources))return result;
@@ -72,7 +95,12 @@
     for(const f of r.filter(x=>x[0]==='F')){const name=['Reference','Value','Footprint','Datasheet'][Number(f[1])]||f[11]||'Field'+f[1];node.push(property(name,f[2],f[4],f[5],f[6],f[7]!=='0000',(((f[3]==='V'?90:0)-orientation.angle)%180+180)%180));}
     const definition=defs.get(id)||defs.get(id.split(':').pop());if(definition){if(!placed.includes(id)){embedded.push(['symbol',q(id),...definition.slice(2)]);placed.push(id);}}else warn('Missing saved legacy library definition for '+id+': symbol body and pins omitted; fields remain visible.');ast.push(node);continue;
    }
-   if(['$Bitmap','$EndBitmap'].includes(type))warn('Legacy bitmap omitted.');
+   if(type==='$Bitmap'){
+    const end=input.indexOf('$EndBitmap',i+1);
+    if(end<0){warn('Legacy bitmap omitted: missing block terminator.');break;}
+    try{ast.push(bitmap(input,i+1,end));}catch(error){warn('Legacy bitmap omitted: '+error.message);}
+    i=end;
+   }
   }
   if(!input.some(line=>line==='$EndSCHEMATC'))throw Error('Incomplete legacy schematic terminator.');
   ast.push(embedded,...[...diagnostics].map(text=>['legacy_diagnostic',q(text)]));return ast;

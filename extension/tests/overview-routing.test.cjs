@@ -13,3 +13,11 @@ test('net routes preserve exact saved connection endpoints',()=>{
  const result=route(pages,[{fromPath:'a',toPath:'b',fromAnchor,toAnchor,name:'POWER'}]);assert.equal(result.links.length,1);assert.deepEqual(result.links[0].points[0],fromAnchor);assert.deepEqual(result.links[0].points.at(-1),toAnchor);assert.notEqual(result.links[0].points[0],fromAnchor);
  const edge=result.links[0];assert.equal(edge.anchorStubs.length,2);assert.notDeepEqual(edge.exteriorPoints[0],fromAnchor);for(const stub of edge.anchorStubs)for(let i=1;i<stub.length;i++)assert.ok(stub[i-1].x===stub[i].x||stub[i-1].y===stub[i].y,'local endpoint stubs never cut diagonally through a sheet');
 });
+
+
+test('dense hierarchy fallback docks at card edges with straight arrow approaches and obstacle clearance',()=>{
+ const pages=[{path:'a',x:0,y:0,w:100,h:80},{path:'blocker',x:130,y:0,w:120,h:140},{path:'b',x:280,y:30,w:100,h:80}],result=route(pages,[{parentPath:'a',childPath:'b'}]);assert.equal(result.omitted,0);const link=result.links[0],first=link.points[0],last=link.points.at(-1),before=link.points.at(-2),onEdge=(p,box)=>(p.x===box.x||p.x===box.x+box.w)&&p.y>=box.y&&p.y<=box.y+box.h||(p.y===box.y||p.y===box.y+box.h)&&p.x>=box.x&&p.x<=box.x+box.w;
+ assert.ok(onEdge(first,pages[0]));assert.ok(onEdge(last,pages[2]));assert.deepEqual(link.to,last);assert.ok(before.x===last.x||before.y===last.y);assert.ok(Math.hypot(last.x-before.x,last.y-before.y)>=14);
+ for(const p of link.exteriorPoints)assert.ok(!(p.x>122&&p.x<258&&p.y>-18&&p.y<148),'the routed portion stays outside the blocker clearance');
+ if(last.x===pages[2].x)assert.ok(before.x<last.x);else if(last.x===pages[2].x+pages[2].w)assert.ok(before.x>last.x);else if(last.y===pages[2].y)assert.ok(before.y<last.y);else assert.ok(before.y>last.y);
+});

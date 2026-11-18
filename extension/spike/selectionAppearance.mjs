@@ -9,6 +9,7 @@ export function createSelectionAppearance(THREE, objects) {
   }
   function dimMaterial(source,state){
     const material=source.clone();material.transparent=true;
+    material.userData.selectionOpacityCap=.24;
     material.opacity=Math.min(Number.isFinite(source.opacity)?source.opacity:1,.24);
     material.depthWrite=false;
     // Desaturate the final shaded output, including maps and instance colors.
@@ -23,7 +24,7 @@ export function createSelectionAppearance(THREE, objects) {
     state.owned.push(material);return material;
   }
   function ghostMaterials(state){
-    if(!state.ghost)state.ghost=list(state.material).map(source=>{const material=dimMaterial(source,state);material.opacity=Math.min(material.opacity,.14);return material;});
+    if(!state.ghost)state.ghost=list(state.material).map(source=>{const material=dimMaterial(source,state);material.userData.selectionOpacityCap=.14;material.opacity=Math.min(material.opacity,.14);return material;});
     return Array.isArray(state.material)?state.ghost:state.ghost[0];
   }
   function update(matches,enabled,{translucent=false}={}){

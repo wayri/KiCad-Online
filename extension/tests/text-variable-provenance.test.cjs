@@ -1,6 +1,18 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const compat=require('../file-compatibility.js'),diff=require('../design-diff.js');
 
+test('text links accept saved pages and web URLs while rejecting executable and local-file targets',()=>{
+ for(const target of ['javascript:alert(1)','data:text/html,x','file:///C:/secret','../secret','https://user:pass@example.com','https://example.com\nother'])assert.deepEqual(compat.textLinks('',target),[]);
+ assert.equal(compat.textLinks('https://example.com/a https://example.org/b.').length,2);assert.equal(compat.textLinks('https://example.com/','#5')[0].page,'5');
+ assert.equal(compat.textLinks('https://example.com/','javascript:bad').length,0);
+});
+
+test('saved page targets distinguish repeated instances instead of assigning a file ordinal',()=>{
+ const files=[{path:'root.kicad_sch',content:'(kicad_sch (uuid root) (sheet_instances (path "/" (page "1"))) (sheet (uuid a) (property "Sheetname" "A") (property "Sheetfile" "child.kicad_sch") (instances (project "Demo" (path "/root" (page "8"))))) (sheet (uuid b) (property "Sheetname" "B") (property "Sheetfile" "child.kicad_sch") (instances (project "Demo" (path "/root" (page "9"))))))'},{path:'child.kicad_sch',content:'(kicad_sch (uuid child))'}];
+ const context=compat.textContext(files,'child.kicad_sch',{rootFile:files[0].path,parse:diff.parse});assert.deepEqual(context.instances.map(item=>[item.instancePath,item.sheetNumber]),[['/root/a','8'],['/root/b','9']]);
+ assert.equal(compat.textContext(files,'root.kicad_sch',{parse:diff.parse}).sheetNumber,'1');
+});
+
 test('KERO-style component property resolves project MPN and retains its saved expression',()=>{
  const source='(kicad_sch (title_block (title "Encoder")) (symbol (property "Reference" "U2") (property "Value" "${ENCODER_OPAMP_MPN}")))',ast=diff.parse(source),raw={Reference:'U2',Value:'${ENCODER_OPAMP_MPN}',Footprint:'Encoder:TSSOP-14_4.4x5mm_P0.65mm'};
  const resolver=compat.textResolver(ast,{textVariables:{ENCODER_OPAMP_MPN:'OPA4192IPWR'}}),result=resolver.properties(raw);
@@ -87,4 +99,29 @@ test('variable inventory exposes shadowed project and ancestor definitions in th
 test('direct child views retain loaded ancestor fields and repeated instance ambiguity',()=>{
  const files=repeatedSheets(),context=compat.textContext(files,'child.kicad_sch',{rootFile:'child.kicad_sch',parse:diff.parse});assert.equal(context.contextStatus,'ambiguous');assert.equal(context.instances.length,2);
  const selected=compat.textContext(files,'child.kicad_sch',{rootFile:'child.kicad_sch',instancePath:'/root/a',parse:diff.parse});assert.equal(compat.textResolver(['kicad_sch'],selected).resolve('${VALUE_B}'),'A config');
+});
+
+test('custom symbol field names ignore case while sheet and project variable names retain saved case',()=>{
+ const ast=diff.parse('(kicad_sch (symbol (property "Reference" "R2") (property "Value_T" "${CONFIG}") (property "CONFIG" "symbol")))');
+ const resolver=compat.textResolver(ast,{textVariables:{VALUE_T:'global',CONFIG:'project'},sheetContexts:[{fields:{VALUE_T:'sheet',CONFIG:'sheet'}}]});
+ assert.equal(resolver.resolve('${VALUE_T}',{Value_T:'${CONFIG}',CONFIG:'local'}),'local');
+ assert.equal(resolver.resolve('${R2:VALUE_T}'),'symbol');
+ assert.equal(resolver.resolve('${VALUE_T}'),'sheet');
+ assert.equal(resolver.resolve('${value_t}'),'${value_t}');
+});
+
+
+test('metadata-only parsing preserves scoped variables and saved sheet instances without retaining artwork',()=>{
+ const root='(kicad_sch (uuid root) (title_block (title "Controller")) (property "GLOBAL" "saved") (lib_symbols (symbol "Unused" (symbol "Unused_1_1" (circle (center 1 2) (radius 1))))) (sheet (uuid child) (property "Sheetname" "Channel") (property "Sheetfile" "child.kicad_sch") (property "LOCAL" "scoped")) (image (data "AAAA")) (text "Artwork" (at 1 2)))',files=[{path:'root.kicad_sch',content:root},{path:'child.kicad_sch',content:'(kicad_sch (uuid child-root))'}];
+ const options={rootFile:files[0].path};assert.deepEqual(compat.textContext(files,files[1].path,{...options,parse:diff.parseMetadata}),compat.textContext(files,files[1].path,{...options,parse:diff.parse}));
+ assert.equal(compat.textResolver(diff.parseMetadata(root)).resolve('${GLOBAL} ${TITLE}'),'saved Controller');assert.equal(diff.parseMetadata(root).some(item=>Array.isArray(item)&&['lib_symbols','image','text'].includes(item[0])),false);
+ for(const invalid of ['(kicad_pcb (zone (pts (xy 1 2)))','(kicad_sch (image (data "unterminated)))','(kicad_sch (symbol 1)))'])assert.throws(()=>diff.parseMetadata(invalid));
+});
+
+
+test('metadata cache retains qualified component fields while omitting footprint copper and symbol geometry',()=>{
+ for(const [root,kind]of [['kicad_sch','symbol'],['kicad_pcb','footprint']]){
+ const source=`(${root} (${kind} (uuid part) (property "Reference" "R1") (property "VALUE_T" "10k" (effects (font (size 1 1)))) (pad "1" thru_hole circle (at 1 2) (size 2 2)) (polyline (pts (xy 1 2) (xy 3 4)))))`,ast=diff.parseMetadata(source),resolver=compat.textResolver(ast);
+ assert.equal(resolver.resolve('${R1:VALUE_T}'),'10k');const object=ast.find(n=>Array.isArray(n)&&n[0]===kind);assert.equal(object.some(n=>Array.isArray(n)&&['pad','polyline'].includes(n[0])),false);
+ }
 });

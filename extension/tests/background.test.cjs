@@ -58,6 +58,9 @@ test('explicit browser-session review intent never falls through to an API accou
  const original=KiCadGitHubReviewApi.chatThreadList;let apiCalls=0;KiCadGitHubReviewApi.chatThreadList=async()=>{apiCalls++;return {threads:[]};};t.after(()=>{KiCadGitHubReviewApi.chatThreadList=original;});
  const repository='session-owner/unbound-repo',sender={id:'test-id',url:extensionOrigin+'browser-viewer.html?repository='+repository+'&file=board.kicad_pcb'},request={type:'chat-thread-list',repository,kind:'issue',reviewTransport:'website-session'};
  const result=await message(request,sender);assert.equal(result.ok,false);assert.match(result.error,/website session is no longer connected/);assert.equal(apiCalls,0);
+ const mentions=await message({...request,type:'comment-mention-users',query:'al'},sender);assert.equal(mentions.ok,true);assert.deepEqual(mentions.result.users,[]);
+ const state=await message({...request,type:'chat-thread-state'},sender);assert.equal(state.ok,false);assert.match(state.error,/on GitHub to change its state/);
+ const invalid=await message({...request,repository:''},sender);assert.equal(invalid.ok,false);assert.equal(apiCalls,0);
  const explicitApi=await message({...request,reviewTransport:'api'},sender);assert.equal(explicitApi.ok,true);assert.equal(apiCalls,1);
 });
 

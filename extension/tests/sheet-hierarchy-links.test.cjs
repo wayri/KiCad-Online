@@ -11,9 +11,9 @@ function pages(sheets, links) {
 }
 const link = (path, target, uuid, label = uuid) => ({path, uuid, label, properties: {Sheetfile: target}});
 
-test('net curves retain exact endpoints with smooth opposing tangents and stable readable colours',()=>{
+test('net curves retain exact endpoints with bounded arches and stable readable colours',()=>{
  const {netCurve,netColor}=require('../sheet-hierarchy-links.js');
- for(const to of [{x:300,y:80},{x:-300,y:80},{x:40,y:300},{x:40,y:-300}]){const from={x:0,y:0},curve=netCurve(from,to);assert.equal(curve.a,from);assert.equal(curve.d,to);assert.ok([curve.b.x,curve.b.y,curve.c.x,curve.c.y].every(Number.isFinite));const first={x:curve.b.x-from.x,y:curve.b.y-from.y},last={x:to.x-curve.c.x,y:to.y-curve.c.y};assert.equal(Math.sign(first.x),Math.sign(last.x));assert.equal(Math.sign(first.y),Math.sign(last.y));}
+ for(const to of [{x:300,y:80},{x:-300,y:80},{x:40,y:300},{x:40,y:-300}]){const from={x:0,y:0},curve=netCurve(from,to);assert.equal(curve.a,from);assert.equal(curve.d,to);assert.ok([curve.b.x,curve.b.y,curve.c.x,curve.c.y].every(Number.isFinite));const mid={x:(curve.a.x+3*curve.b.x+3*curve.c.x+curve.d.x)/8,y:(curve.a.y+3*curve.b.y+3*curve.c.y+curve.d.y)/8},length=Math.hypot(to.x,to.y),arch=Math.abs(to.x*mid.y-to.y*mid.x)/length;assert.ok(arch>=9&&arch<=48.000001,'curve forms a bounded arch away from its chord');}
  assert.equal(netColor('ST09_OUT'),netColor('ST09_OUT'));assert.notEqual(netColor('ST09_OUT'),netColor('ST01_OUT'));assert.match(netColor('VCC',false),/^#[0-9a-f]{6}$/i);
 });
 
@@ -116,6 +116,14 @@ test('hierarchy strokes remain visible when fit-to-all makes the final arrow seg
  assert.equal(strokes,2,'paper casing separates hierarchy and net crossings');assert.equal(labels,0);
 });
 
+test('overview placement labels hide at far zoom and never cover pages or one another',()=>{
+ const labels=[],ctx={globalAlpha:1,save(){},restore(){},beginPath(){},moveTo(){},lineTo(){},quadraticCurveTo(){},setLineDash(){},stroke(){},closePath(){},fill(){},measureText(){return {width:60};},fillRect(){},fillText(text){labels.push(text);}};
+ const camera={zoom:.1,width:800,height:600,world_to_screen:p=>p},view={ctx,viewport:{camera}},edge={from:{x:0,y:0},to:{x:200,y:200},points:[{x:0,y:0},{x:0,y:100},{x:200,y:100},{x:200,y:200}],label:'16 placements',showLabel:true};
+ const draw=()=>require('../sheet-hierarchy-links.js').draw(view,{links:[edge,{...edge,label:'64 placements'}]});
+ draw();assert.equal(labels.length,0,'placement metadata stays hidden at overview scale');camera.zoom=1;draw();assert.deepEqual(labels,['16 placements'],'colliding labels do not stack');
+ labels.length=0;view.design={overviewPages:[{x:80,y:80,w:40,h:40}]};draw();assert.equal(labels.length,0,'labels cannot cover the page or its heading');
+});
+
 
 test('net guides display saved net names, skip blank badges and retain dashed identity',()=>{
  const labels=[],strokes=[],dashes=[];const ctx={save(){},restore(){},beginPath(){},moveTo(){},lineTo(){},quadraticCurveTo(){},setLineDash(v){dashes.push(v);},stroke(){strokes.push(this.strokeStyle);},closePath(){},fill(){},measureText(){return {width:20};},fillRect(){},fillText(text){labels.push(text);}};
@@ -127,4 +135,18 @@ test('net guides display saved net names, skip blank badges and retain dashed id
 test('repeated source parent instances remain a single source edge with all exact child placements',()=>{
  const graph=build(pages(['root.kicad_sch','channel.kicad_sch','leaf.kicad_sch'],[link('root.kicad_sch','channel.kicad_sch','left','Left'),link('root.kicad_sch','channel.kicad_sch','right','Right'),link('channel.kicad_sch','leaf.kicad_sch','power','Power')]));
  const edge=graph.links.find(edge=>edge.parentPath==='channel.kicad_sch');assert.ok(edge.tree);assert.equal(edge.count,2);assert.equal(edge.parentIds.length,2);assert.equal(new Set(edge.childIds).size,2);assert.equal(graph.unresolved,0);
+});
+
+
+test('hierarchy crossings bridge unrelated routes without marking endpoint junctions',()=>{
+ const {crossingPath}=require('../sheet-hierarchy-links.js'),vertical=[{x:50,y:0},{x:50,y:100}],horizontal=[{x:0,y:50},{x:100,y:50}];
+ const path=crossingPath(vertical,[horizontal]);assert.match(path,/Q 64 50 50 57/);assert.match(path,/M 50 0/);assert.match(path,/L 50 100$/);
+ assert.doesNotMatch(crossingPath(vertical,[[{x:50,y:50},{x:100,y:50}]]),/ Q /,'a real shared endpoint is not a crossing');
+ assert.doesNotMatch(crossingPath(vertical,[vertical]),/ Q /,'collinear stems are not bridges');assert.equal(crossingPath([{x:NaN,y:1}],[]),'');
+});
+
+test('parent families between the same ranks receive separate routing rails',()=>{
+ const roots=['a','b'].map((path,i)=>({path,x:i*200,y:0,w:100,h:80,placements:[{id:path,path,parentId:null}]}));
+ const children=['c','d'].map((path,i)=>({path,x:i*200,y:200,w:100,h:80,placements:[{id:path,path,parentId:roots[i].path,label:path}]}));
+ const graph=build([...roots,...children]);assert.equal(graph.links.length,2);assert.notEqual(graph.links[0].points[1].y,graph.links[1].points[1].y);assert.ok(graph.links.every(l=>l.to.y<200&&l.to.y>80));
 });

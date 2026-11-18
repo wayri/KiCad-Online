@@ -29,3 +29,21 @@ test('internal saved fills and boundaries retain their source layer and exact ne
  const ast=parse(`(kicad_pcb (net 1 "GND") (zone (uuid "inner") (net 1) (layers "In1.Cu" "In2.Cu") (filled_polygon (layer "In1.Cu") ${triangle})) (zone (uuid "outline") (net 1) (layer "In2.Cu") (polygon ${triangle})))`);
  const result=sourceZoneGeometry(ast);assert.deepEqual(result.records.map(r=>[r.layer,r.net,r.filled]),[['In1.Cu','GND',true],['In2.Cu','GND',false]]);
 });
+
+test('a busy front plane leaves room for saved fills on all 32 copper layers',()=>{
+ const names=['F.Cu',...Array.from({length:30},(_,i)=>'In'+(i+1)+'.Cu'),'B.Cu'];
+ const declarations=names.map((name,i)=>'('+(i===31?2:i===0?0:2*i+2)+' "'+name+'" signal)').join(' ');
+ const fill=name=>'(filled_polygon (layer "'+name+'") '+triangle+')';
+ const front=Array.from({length:40},()=>fill('F.Cu')).join(' ');
+ const ast=parse('(kicad_pcb (version 20241229) (layers '+declarations+') (zone (uuid "plane") (layers '+names.map(name=>'"'+name+'"').join(' ')+') '+front+' '+names.slice(1).map(fill).join(' ')+'))');
+ for(const [polygonLimit,pointLimit] of [[32,500000],[1000,96]]){
+  const result=sourceZoneGeometry(ast,polygonLimit,pointLimit);
+  assert.deepEqual(result.records.map(record=>record.layer),names);
+  assert.deepEqual(result.omittedByLayer,{'F.Cu':39});
+  assert.equal(result.truncated,true);
+  for(const record of result.records){
+   assert.equal(record.filled,true);assert.equal(record.id,'plane');
+   assert.deepEqual(record.points,[[0,0],[2,0],[0,2]]);
+  }
+ }
+});

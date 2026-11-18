@@ -7,7 +7,7 @@ const helper=()=>import('../spike/probeViewport.mjs');
 test('3D probe layer matching preserves unlayered context and handles through-hole copper wildcards',async()=>{
  const {probeLayerVisible}=await helper(),layers=new Set(['F.Cu','In1.Cu','F.SilkS','Edge.Cuts']);
  assert.equal(probeLayerVisible({layer:'F.Cu'},layers),true);assert.equal(probeLayerVisible({layer:'F.Fab'},layers),false);
- assert.equal(probeLayerVisible({layers:['*.Cu','*.Mask']},layers),true);assert.equal(probeLayerVisible({type:'Board'},layers),true);
+ assert.equal(probeLayerVisible({layers:['*.Cu','*.Mask']},layers),true);assert.equal(probeLayerVisible({type:'Board'},layers),true);assert.equal(probeLayerVisible({type:'Board',layer:'Edge.Cuts'},new Set(['F.Cu'])),true);assert.equal(probeLayerVisible({type:'Board',layer:'Edge.Cuts'},new Set()),true);
  assert.equal(probeLayerVisible({layer:'B.Cu'},layers),false);assert.equal(probeLayerVisible({layer:'F.Cu'},new Set()),false);
 });
 
@@ -159,7 +159,7 @@ test('probe3D presets use main board directions and fifteen-degree steps retain 
 test('3D probe layer/accent choice changes existing copper without reparse, requests or geometry rebuild',{skip:!threePath},async()=>{
  const THREE=await import(pathToFileURL(threePath).href),{createSharedProbeViewport}=await helper(),h=viewportHarness(THREE),source=await savedNetSource();
  const probe=createSharedProbeViewport({...h.args,board:source.board,netInspectionSource:source,selection:{netNames:['SIGNAL']},netHighlightColor:'accent'});h.flush();assert.equal(probe.getStats().netInspection.colorMode,'accent');
- const scene=h.rendered.at(-1).scene,group=scene.children.find(o=>o.name==='Probe selected net — all copper layers'),meshes=[...group.children[0].children],geometry=meshes.map(m=>m.geometry);assert.ok(meshes.every(m=>m.material.color.getHex()===0xffe18b));probe.setNetHighlightColor('layer');h.flush();assert.equal(probe.getStats().netInspection.colorMode,'layer');assert.deepEqual(group.children[0].children.map(m=>m.geometry),geometry);assert.equal(probe.getStats().sourceParses,0);assert.equal(probe.getStats().modelRequests,0);probe.dispose();h.geometry.dispose();h.material.dispose();
+ const scene=h.rendered.at(-1).scene,group=scene.children.find(o=>o.name==='Probe selected net — all copper layers'),meshes=[...group.children[0].children],geometry=meshes.map(m=>m.geometry);assert.ok(meshes.every(m=>m.material.color.getHex()===(m.material.userData.netRole==='via'?0xc5aa6c:0xffe18b)));probe.setNetHighlightColor('layer');h.flush();assert.equal(probe.getStats().netInspection.colorMode,'layer');assert.deepEqual(group.children[0].children.map(m=>m.geometry),geometry);assert.equal(probe.getStats().sourceParses,0);assert.equal(probe.getStats().modelRequests,0);probe.dispose();h.geometry.dispose();h.material.dispose();
 });
 
  test('orthographic projection preserves target scale, remains depth-independent and restores perspective', {skip:!threePath},async()=>{
@@ -175,4 +175,10 @@ test('3D probe layer/accent choice changes existing copper without reparse, requ
 test('orthographic probe retains fit, anchors, resize and independent perspective state',{skip:!threePath},async()=>{
  const THREE=await import(pathToFileURL(threePath).href),{createSharedProbeViewport}=await helper(),h=viewportHarness(THREE),probe=createSharedProbeViewport({...h.args,selection:{references:['R1']}});
  probe.setOrthographic(true);assert.equal(probe.isOrthographic(),true);assert.equal(probe.setView('top'),true);h.flush();const rendered=h.rendered.at(-1);assert.equal(rendered.camera.isOrthographicCamera,true);assert.ok(Number.isFinite(rendered.camera.left));const before=rendered.camera.top-rendered.camera.bottom;h.host.clientWidth=640;probe.fit('top');h.flush();assert.ok(h.rendered.at(-1).camera.right>0);assert.ok(before>0);probe.setOrthographic(false);h.flush();assert.equal(h.rendered.at(-1).camera.isPerspectiveCamera,true);probe.dispose();h.geometry.dispose();h.material.dispose();
+});
+
+
+test('probe highlighting preserves silkscreen texture transparency instead of drawing a solid face',{skip:!threePath},async()=>{
+ const THREE=await import(pathToFileURL(threePath).href),{createSharedProbeViewport}=await helper(),h=viewportHarness(THREE),texture=new THREE.Texture(),material=new THREE.MeshBasicMaterial({map:texture,transparent:true,alphaTest:.1}),silk=new THREE.Mesh(h.geometry,material);silk.name='silk-face';silk.userData.record={type:'Silkscreen',layer:'F.SilkS'};h.source.add(silk);
+ const probe=createSharedProbeViewport({...h.args,selection:{references:[h.mesh.userData.record.ref]}});h.flush();assert.equal(probe.getStats().selection.matched,1);const clone=h.rendered.at(-1).scene.getObjectByName('silk-face');assert.equal(clone.material,material);assert.equal(clone.material.map,texture);assert.equal(clone.material.transparent,true);probe.dispose();texture.dispose();material.dispose();h.geometry.dispose();h.material.dispose();
 });

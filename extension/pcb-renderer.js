@@ -102,8 +102,10 @@
       warned.add(label);
       warnings.push(`${label}${uuid(node) ? ` (example ${uuid(node)})` : ""} is not drawn exactly.`);
     };
-    if(Worksheet){for(const primitive of Worksheet.build(page,path))push({...primitive,layer:"Worksheet"});}
-    else warnings.push("Default worksheet module is unavailable.");
+    if(!options.silkscreenOnly){
+      if(Worksheet){for(const primitive of Worksheet.build(page,path))push({...primitive,layer:"Worksheet"});}
+      else warnings.push("Default worksheet module is unavailable.");
+    }
     warnings.push("Custom .kicad_wks templates are not resolved; the standard KiCad drawing sheet is shown.");
     function base(node, layer, owner = {}) {
       const lineStyle=field(child(node,"stroke"),"type");
@@ -161,6 +163,7 @@
         if (at && content != null) push({ type:"text", text:variableText?.resolve(content,variableFields.get(owner.uuid)||{})??String(content), ...transform(at),
           size:num(fontSize?.[2],1), angle:-rotation(node), width:.15,
           property:type==="property"?String(value(node[1])):type==="fp_text"&&value(node[1])==="reference"?"Reference":type==="fp_text"&&value(node[1])==="value"?"Value":undefined,
+          ...(justification.includes("mirror")?{mirror:true}:{}),
           bold:hasAtom(font,"bold") || !!child(font,"bold"),
           italic:hasAtom(font,"italic") || !!child(font,"italic"),
           align:justification.includes("left") ? "left" : justification.includes("right") ? "right" : "center",
@@ -237,6 +240,7 @@
     for (const node of ast.slice(1)) {
       if (!Array.isArray(node)) continue;
       const type = kind(node), layer = String(field(node,"layer") || "F.Cu");
+      if(options.silkscreenOnly && !["footprint","module"].includes(type) && !["F.SilkS","B.SilkS"].includes(layer))continue;
       if (type === "segment") {
         const a = point(node,"start"), b = point(node,"end");
         if (a && b) push({ type:"line", points:[a,b], layer, color:colorFor(layer),
@@ -254,7 +258,7 @@
           if (first >= 0 && last >= 0) plated = copperOrder.slice(Math.min(first,last),Math.max(first,last)+1);
         }
         for (const copper of (plated.length ? plated : ["F.Cu","B.Cu"])) {
-          push({ type:"circle", ...at, r:diameter/2, layer:copper, color:colorFor(copper), fill:true,
+          push({ type:"circle", ...at, r:diameter/2, layer:copper, color:"#c5aa6c", fill:true,
             uuid:uuid(node) || undefined, kind:"via",...netMeta(node) });
           if (drill > 0) push({ type:"circle", ...at, r:drill/2, layer:copper, color:"#111b25", fill:true,
             hole:true, uuid:uuid(node) || undefined, kind:"drill", objectCategory:"vias",...netMeta(node) });
@@ -277,6 +281,7 @@
         for (const sub of node.slice(1)) {
           if (!Array.isArray(sub)) continue;
           const subType = kind(sub), subLayer = String(field(sub,"layer") || layer);
+          if(options.silkscreenOnly && !["F.SilkS","B.SilkS"].includes(subLayer))continue;
           if (subType === "pad") pad(sub,owner,transform);
           else if (["fp_line","fp_arc","fp_rect","fp_circle","fp_poly","fp_text"].includes(subType)) drawShape(sub,subLayer,transform,owner);
           else if (subType === "property") drawShape(sub,subLayer,transform,owner);
@@ -298,7 +303,9 @@
           for (const region of filled) {
             const regionLayer = String(field(region,"layer") || layer), pts = points(region);
             if (pts.length >= 3) push({ type:"polygon", points:pts, layer:regionLayer, color:colorFor(regionLayer),
-              fill:true, opacity:.22, uuid:uuid(node) || undefined, kind:"zone",...netMeta(node) });
+              // Filled contours may bridge cut-outs with doubled-back segments.
+              // Those segments close the fill; they are not copper outlines.
+              fill:true, stroke:false, opacity:.22, uuid:uuid(node) || undefined, kind:"zone",...netMeta(node) });
           }
         } else {
           warn("Unfilled zone",node);

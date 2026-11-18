@@ -72,6 +72,9 @@
       if (!families.has(link.parentPath)) families.set(link.parentPath, []);
       families.get(link.parentPath).push(link);
     }
+    const lanes=new Map();
+    for(const [family,children] of families){const parent=instances.get(children[0].parentIds[0])?.page,top=Math.min(...children.map(link=>pages.find(page=>page.path===link.childPath).y));const key=JSON.stringify([parent.y+parent.h,top]);if(!lanes.has(key))lanes.set(key,[]);lanes.get(key).push(family);}
+    for(const group of lanes.values())group.sort();
     const routedLinks = [];
     for (const children of families.values()) {
       const parent = instances.get(children[0].parentIds[0])?.page;
@@ -79,7 +82,8 @@
       const firstTop = Math.min(...childPages.map(page => page.y));
       const bottom = parent.y + parent.h;
       if (firstTop - bottom < 24) {fallback.push(...children); continue;}
-      const rail = bottom + (firstTop - headingGap - bottom) / 2;
+      const peers=lanes.get(JSON.stringify([bottom,firstTop])),lane=peers.indexOf(children[0].parentPath);
+      const rail = bottom + (firstTop - headingGap - bottom) * (lane+1)/(peers.length+1);
       const start = {x: parent.x + parent.w / 2, y: bottom};
       const routes = children.map((link, index) => {
         const child = childPages[index], end = {x: child.x + child.w / 2, y: child.y - headingGap};
@@ -110,16 +114,38 @@
     commands.push(`L ${path.at(-1).x} ${path.at(-1).y}`);return commands.join(' ');
   }
 
+  // A hop denotes a crossing, never an electrical or hierarchy junction.
+  function crossingPath(points,previous,radius=7,cornerRadius=12){
+    if(!Array.isArray(points)||points.length>1024||points.some(p=>!p||![p.x,p.y].every(Number.isFinite))||!Array.isArray(previous))return '';
+    const routed=[];let budget=65536;
+    for(let i=1;i<points.length;i++){
+      const a=points[i-1],b=points[i],vertical=a.x===b.x,horizontal=a.y===b.y,length=Math.hypot(b.x-a.x,b.y-a.y),hits=[];
+      if(!length)continue;if(!routed.length)routed.push(`M ${a.x} ${a.y}`);
+      for(const path of previous.slice(0,512))for(let j=1;j<Math.min(path.length,1024)&&budget>0;j++,budget--){
+        const c=path[j-1],d=path[j];let at;
+        if(vertical&&c.y===d.y&&a.x>Math.min(c.x,d.x)&&a.x<Math.max(c.x,d.x)&&c.y>Math.min(a.y,b.y)&&c.y<Math.max(a.y,b.y))at={x:a.x,y:c.y};
+        if(horizontal&&c.x===d.x&&a.y>Math.min(c.y,d.y)&&a.y<Math.max(c.y,d.y)&&c.x>Math.min(a.x,b.x)&&c.x<Math.max(a.x,b.x))at={x:c.x,y:a.y};
+        if(at){const t=Math.hypot(at.x-a.x,at.y-a.y);if(t>radius*2&&length-t>radius*2)hits.push({at,t});}
+      }
+      let last=-Infinity;for(const {at,t}of hits.sort((x,y)=>x.t-y.t)){if(t-last<radius*3)continue;last=t;const ux=(b.x-a.x)/length,uy=(b.y-a.y)/length;
+        routed.push(`L ${at.x-ux*radius} ${at.y-uy*radius} Q ${at.x+(vertical?radius*2:0)} ${at.y+(horizontal?-radius*2:0)} ${at.x+ux*radius} ${at.y+uy*radius}`);
+      }
+      routed.push(`L ${b.x} ${b.y}`);
+    }
+    return routed.some(command=>command.includes(' Q '))?routed.join(' '):pathData(points,cornerRadius);
+  }
   function netCurve(from,to){
-    const dx=to.x-from.x,dy=to.y-from.y,vertical=Math.abs(dy)>=Math.abs(dx)*.8;
-    const span=Math.max(16,Math.min(180,Math.abs(vertical?dy:dx)*.5)),direction=Math.sign(vertical?dy:dx)||1;
-    return vertical?{a:from,b:{x:from.x,y:from.y+span*direction},c:{x:to.x,y:to.y-span*direction},d:to}:{a:from,b:{x:from.x+span*direction,y:from.y},c:{x:to.x-span*direction,y:to.y},d:to};
+    const dx=to.x-from.x,dy=to.y-from.y,distance=Math.hypot(dx,dy);if(!distance)return {a:from,b:{...from},c:{...to},d:to};
+    let nx=-dy/distance,ny=dx/distance;if(ny>0||ny===0&&nx<0){nx=-nx;ny=-ny;}
+    const lift=Math.min(64,Math.max(12,distance*.2));
+    return {a:from,b:{x:from.x+dx/3+nx*lift,y:from.y+dy/3+ny*lift},c:{x:from.x+2*dx/3+nx*lift,y:from.y+2*dy/3+ny*lift},d:to};
   }
   function netColor(name,dark=true){const palette=dark?['#65d9ff','#ffbf69','#c4a3ff','#6fe0ad','#ff91b8','#a6d875']:['#006aa6','#945400','#7444b3','#08794b','#ae3060','#517719'];let hash=0;for(const char of String(name||''))hash=(Math.imul(hash,31)+char.codePointAt(0))>>>0;return palette[hash%palette.length];}
   function draw(view, graph, dark = false, style = {}) {
     const ctx = view?.ctx, camera = view?.viewport?.camera;
     if (!ctx || !camera || !graph?.links?.length) return;
-    ctx.save();ctx.globalAlpha*=Number.isFinite(style.opacity)?style.opacity:1;const labels=new Set();
+    ctx.save();ctx.globalAlpha*=Number.isFinite(style.opacity)?style.opacity:1;const labels=new Set(),labelBoxes=[];
+    const pageBoxes=(view.design?.overviewPages||[]).map(page=>{const points=[{x:page.x,y:page.y-32},{x:page.x+page.w,y:page.y-32},{x:page.x,y:page.y+page.h},{x:page.x+page.w,y:page.y+page.h}].map(p=>camera.world_to_screen(p));return {left:Math.min(...points.map(p=>p.x)),right:Math.max(...points.map(p=>p.x)),top:Math.min(...points.map(p=>p.y)),bottom:Math.max(...points.map(p=>p.y))};});
     for (const link of graph.links) {
       const net=style.kind==='net',path=(net?(link.points||[link.from,link.to]):(link.exteriorPoints||link.points||[link.from,link.to])).map(p=>camera.world_to_screen(p)),a=path[0],b=path.at(-1),tail=path.at(-2)||a;
       if(!net&&style.dashed&&link.anchorStubs?.length){ctx.save();ctx.globalAlpha=.32;ctx.strokeStyle=style.color||(dark?'#d4b565':'#9e7b29');ctx.lineWidth=1;ctx.setLineDash([2,5]);for(const stub of link.anchorStubs){const local=stub.map(p=>camera.world_to_screen(p));ctx.beginPath();ctx.moveTo(local[0].x,local[0].y);for(const p of local.slice(1))ctx.lineTo(p.x,p.y);ctx.stroke();}ctx.restore();}
@@ -127,7 +153,7 @@
       if (length < .1) continue;
       const ux = (b.x - tail.x) / length, uy = (b.y - tail.y) / length;
       const inset=Math.min(2,length/4),head=Math.min(6,Math.max(3,length*.65)),wing=head*.45;
-      const tip = net?b:{x: b.x - ux * inset, y: b.y - uy * inset},curve=net?netCurve(a,b):null,color=net?netColor(link.name||link.label,dark):style.color||(dark ? '#69c4ba' : '#398d84');
+      const tip = net?b:{x: b.x - ux * inset, y: b.y - uy * inset},curve=net?netCurve(a,b):null,color=net?netColor(link.name||link.label,dark):style.color||(style.familyColors?netColor(link.parentPath,dark):(dark ? '#69c4ba' : '#398d84'));
       ctx.beginPath(); ctx.moveTo(a.x, a.y);
       if(net&&ctx.bezierCurveTo)ctx.bezierCurveTo(curve.b.x,curve.b.y,curve.c.x,curve.c.y,b.x,b.y);
       else {for(let i=1;i<path.length-1;i++){const prev=path[i-1],p=path[i],next=path[i+1],before=Math.hypot(p.x-prev.x,p.y-prev.y),after=Math.hypot(next.x-p.x,next.y-p.y),radius=Math.min(12,before/3,after/3);if(!before||!after)continue;ctx.lineTo(p.x-(p.x-prev.x)/before*radius,p.y-(p.y-prev.y)/before*radius);if(ctx.quadraticCurveTo)ctx.quadraticCurveTo(p.x,p.y,p.x+(next.x-p.x)/after*radius,p.y+(next.y-p.y)/after*radius);else ctx.lineTo(p.x,p.y);}ctx.lineTo(tip.x, tip.y);}
@@ -139,13 +165,15 @@
       else {ctx.beginPath(); ctx.moveTo(tip.x, tip.y);
       ctx.lineTo(tip.x - ux * head - uy * wing, tip.y - uy * head + ux * wing);
       ctx.lineTo(tip.x - ux * head + uy * wing, tip.y - uy * head - ux * wing);
-      ctx.closePath(); ctx.fillStyle = style.color||(dark ? '#69c4ba' : '#398d84'); ctx.fill();}
+      ctx.closePath(); ctx.fillStyle = style.color||(style.familyColors?netColor(link.parentPath,dark):(dark ? '#69c4ba' : '#398d84')); ctx.fill();}
       const label=String(link.label||link.name||'').trim();
-      if(link.showLabel === false || !label || net&&labels.has(label)) continue;labels.add(label);
+      if(style.labels===false || link.showLabel === false || !label || net&&labels.has(label)||!net&&(camera.zoom??1)<.8) continue;
       const labelPath=(net&&link.exteriorPoints?link.exteriorPoints.map(p=>camera.world_to_screen(p)):path);const segment=labelPath.slice(1).map((p,i)=>({a:labelPath[i],b:p,length:Math.hypot(p.x-labelPath[i].x,p.y-labelPath[i].y)})).sort((a,b)=>b.length-a.length)[0];const text=label.length>40?label.slice(0,39)+'…':label,x=net?(curve.a.x+3*curve.b.x+3*curve.c.x+curve.d.x)/8:(segment.a.x+segment.b.x)/2,y=(net?(curve.a.y+3*curve.b.y+3*curve.c.y+curve.d.y)/8:(segment.a.y+segment.b.y)/2)-12;
       ctx.font = '500 10px sans-serif';
       const width = Math.min(220, ctx.measureText(text).width + 12);
-      if(net&&Number.isFinite(camera.width)&&(x-width/2<4||x+width/2>camera.width-4||y<12||y>camera.height-12))continue;
+      if(Number.isFinite(camera.width)&&(x-width/2<4||x+width/2>camera.width-4||y<12||y>camera.height-12))continue;
+      const box={left:x-width/2-3,right:x+width/2+3,top:y-12,bottom:y+12},overlaps=other=>box.left<other.right&&box.right>other.left&&box.top<other.bottom&&box.bottom>other.top;
+      if(pageBoxes.some(overlaps)||labelBoxes.some(overlaps))continue;labelBoxes.push(box);labels.add(label);
       ctx.fillStyle = dark ? '#10212b' : '#ffffff'; ctx.fillRect(x - width / 2, y - 10, width, 20);
       ctx.fillStyle = net?color:dark ? '#d9fff7' : '#07584f'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(text, x, y, width - 8);
@@ -153,6 +181,6 @@
     ctx.restore();
   }
 
-  root.KiCadSheetHierarchyLinks = {build, draw, pathData,netCurve,netColor};
+  root.KiCadSheetHierarchyLinks = {build, draw, pathData,crossingPath,netCurve,netColor};
   if (typeof module === 'object' && module.exports) module.exports = root.KiCadSheetHierarchyLinks;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

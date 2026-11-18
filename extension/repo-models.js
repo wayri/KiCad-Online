@@ -24,10 +24,8 @@
     if (!isPath(boardPath) || !/\.kicad_pcb$/i.test(boardPath) || !isPath(modelPath)) return null;
     const boardParts = boardPath.split("/");
     if (boardParts.some(part => !part || part === "." || part === "..")) return null;
-    const projectPrefix = "${KIPRJMOD}/";
-    if (modelPath.includes("$(") || (modelPath.includes("${") && !modelPath.startsWith(projectPrefix))) return null;
-    const relative = modelPath.startsWith(projectPrefix) ? modelPath.slice(projectPrefix.length) : modelPath;
-    if (relative.includes("${") || relative.includes("}")) return null;
+    const relative = modelPath.replace(/^(?:\$\{KIPRJMOD\}|\$\(KIPRJMOD\))\//, "");
+    if (relative.includes("$(") || relative.includes("${") || relative.includes("}")) return null;
     const parts = boardParts.slice(0, -1);
     for (const part of relative.split("/")) {
       if (!part || part === ".") continue;
@@ -38,9 +36,34 @@
     return resolved.length <= MAX_PATH && isPath(resolved) ? resolved : null;
   }
 
+  // Discovery can finish after the viewer opens. Keep only the forms needed
+  // to resolve model paths so the complete PCB tree can be reclaimed.
+  function modelSource(ast) {
+    if (kind(ast) !== "kicad_pcb") throw new Error("Expected a saved KiCad PCB.");
+    const fields = new Set(["at", "layer", "uuid", "model", "embedded_files"]);
+    const projected = ["kicad_pcb"];
+    for (const node of ast) {
+      if (kind(node) === "embedded_files") projected.push(node);
+      if (kind(node) !== "footprint") continue;
+      const footprint = ["footprint"];
+      projected.push(footprint); // Preserve fallback reference numbering.
+      if (!node.some(field => kind(field) === "model")) continue;
+      for (const field of node) {
+        const type = kind(field);
+        if (fields.has(type)) footprint.push(field);
+        else if ((type === "property" && value(field[1]) === "Reference") ||
+                 (type === "fp_text" && value(field[1]) === "reference")) footprint.push(field.slice(0, 3));
+      }
+    }
+    return projected;
+  }
+
   function collect(source, boardPath, parser = root.KiCadDesignDiff?.parse, assetPaths = []) {
     if (typeof parser !== "function") throw new Error("KiCad S-expression parser is unavailable.");
-    const ast = parser(source);
+    return collectParsed(parser(source), boardPath, assetPaths);
+  }
+
+  function collectParsed(ast, boardPath, assetPaths = []) {
     if (kind(ast) !== "kicad_pcb") throw new Error("Expected a saved KiCad PCB.");
     const models = [], diagnostics = [];
     const warn = message => { if (diagnostics.length < 48) diagnostics.push(message); };
@@ -70,6 +93,12 @@
         const matches = suffix ? available.filter(path => path === suffix || path.endsWith('/' + suffix)) : [];
         if (matches.length === 1) return matches[0];
         if (matches.length > 1) { warn(`${ref}: model library path matches multiple repository files: ${suffix}`); return null; }
+        if (suffix) {
+          const lower = suffix.toLowerCase();
+          const sameFormat = available.filter(path => path.toLowerCase() === lower || path.toLowerCase().endsWith('/' + lower));
+          if (sameFormat.length === 1) { warn(`${ref}: model path casing corrected to ${sameFormat[0]}`); return sameFormat[0]; }
+          if (sameFormat.length > 1) { warn(`${ref}: model path casing is ambiguous: ${suffix}`); return null; }
+        }
         // KiCad repositories often ship only one of the STEP/VRML representations.
         // Accept a unique same-stem asset, never an unrelated basename or a URL.
         const stem = target.replace(/\.(?:step|stp|wrl|vrml)$/i, '');
@@ -115,11 +144,12 @@
       if (![x, y, angle].every(Number.isFinite) || !["F.Cu", "B.Cu"].includes(layer)) {
         warn(`${ref}: footprint placement or side is unsupported.`); continue;
       }
+      let footprintEmbedded;
       for (const entry of modelForms) {
         if (models.length >= MAX_MODELS) { warn(`Only the first ${MAX_MODELS} footprint model references are loaded.`); return { models, diagnostics }; }
         const rawPath = value(entry[1]);
         const embeddedName = typeof rawPath === 'string' && rawPath.startsWith('kicad-embed://') ? rawPath.slice(14) : null;
-        const footprintEmbedded = embeddedName !== null ? embeddedFiles(footprint) : null;
+        if (embeddedName !== null) footprintEmbedded ??= embeddedFiles(footprint);
         const embeddedAsset = embeddedName !== null ? (footprintEmbedded.has(embeddedName) ? footprintEmbedded.get(embeddedName) : boardEmbedded.get(embeddedName)) : null;
         if (embeddedName !== null && !embeddedAsset) { warn(`${ref}: embedded model is missing or ambiguous: ${embeddedName}`); continue; }
         const path = embeddedName !== null ? rawPath : repositoryPath(rawPath, ref);
@@ -162,6 +192,6 @@
       scale: entry.scale.map(axis => axis * unitScale)
     };
   }
-  root.KiCadRepoModels = { collect, resolveModelPath, modelPose };
+  root.KiCadRepoModels = { collect, collectParsed, modelSource, resolveModelPath, modelPose };
   if (typeof module === "object" && module.exports) module.exports = root.KiCadRepoModels;
 })(typeof globalThis === "object" ? globalThis : this);

@@ -21,6 +21,8 @@
   // KiCad files are overwhelmingly ASCII. Keep the same ECMAScript whitespace
   // grammar without constructing/testing a regular expression for every byte.
   const spaceCode=code=>code===32||(code>=9&&code<=13)||(code>127&&/\s/.test(String.fromCharCode(code)));
+  const METADATA_FIELDS=new Set(["version","generator","generator_version","uuid","paper","title_block","property","sheet","symbol","footprint","module","sheet_instances","legacy_source","legacy_diagnostic"]);
+  const METADATA_OBJECT_FIELDS=new Set(["property","uuid","path","instances"]);
   function parse(source, options = {}) {
     if (typeof source !== "string") throw new TypeError("KiCad source must be a string.");
     if (/^\s*PCBNEW-BOARD/.test(source))throw Error('Legacy .brd boards are detected but this drawing format is not yet rendered. Open and save a separate .kicad_pcb copy in KiCad.');
@@ -31,13 +33,16 @@
     }
     const board = /^\s*\(kicad_pcb(?:\s|\))/.test(source);
     const modern = board || /^\s*\(kicad_sch(?:\s|\))/.test(source);
-    if (new TextEncoder().encode(source).length > (modern ? MAX_MODERN_FILE : MAX_FILE)) throw new Error("KiCad file exceeds browser parser size limits.");
+    const byteLimit=modern?MAX_MODERN_FILE:MAX_FILE;
+    // UTF-8 uses at most three bytes per UTF-16 code unit. Avoid a full-size
+    // temporary byte array when that upper bound already proves the input fits.
+    if(source.length>byteLimit||source.length>byteLimit/3&&new TextEncoder().encode(source).length>byteLimit)throw new Error("KiCad file exceeds browser parser size limits.");
     const nodeLimit = modern ? 12000000 : MAX_NODES;
     const stack = [], roots = [];
-    let i = 0, nodes = 0;
+    let i = 0, nodes = 0, skippedDepth=0;
     const append = (item) => {
       if (++nodes > nodeLimit) throw new Error("KiCad file has too many S-expression nodes.");
-      (stack.at(-1) || roots).push(item);
+      if(!skippedDepth)(stack.at(-1) || roots).push(item);
     };
     while (i < source.length) {
       const ch = source[i];
@@ -46,12 +51,18 @@
       if (ch === ";") { while (i < source.length && source[i] !== "\n") i++; continue; }
       if (ch === "(") {
         if (stack.length >= MAX_DEPTH) throw new Error("KiCad S-expression is too deep.");
+        if(options.metadataOnly&&!skippedDepth){let allowed=null;
+          if(stack.length===1)allowed=METADATA_FIELDS;
+          else if(stack.length===2&&['symbol','footprint','module'].includes(stack.at(-1)?.[0]))allowed=METADATA_OBJECT_FIELDS;
+          else if(stack.at(-1)?.[0]==='property')allowed=new Set();
+          if(allowed){let start=i+1;while(start<source.length&&spaceCode(source.charCodeAt(start)))start++;let end=start;while(end<source.length&&!spaceCode(source.charCodeAt(end))&&!['(',')',';'].includes(source[end]))end++;if(!allowed.has(source.slice(start,end)))skippedDepth=stack.length+1;}
+        }
         const node = [];
         append(node); stack.push(node); i++; continue;
       }
       if (ch === ")") {
         if (!stack.length) throw new Error("Unexpected closing parenthesis in KiCad file.");
-        stack.pop(); i++; continue;
+        stack.pop();if(skippedDepth&&stack.length<skippedDepth)skippedDepth=0; i++; continue;
       }
       if (!stack.length) throw new Error("Expected a KiCad S-expression.");
       if (ch === '"') {
@@ -64,8 +75,8 @@
             if (i >= source.length) throw new Error("Unterminated KiCad escape sequence.");
             const escaped = source[i++];
             const decoded = ({ n: "\n", r: "\r", t: "\t", '"': '"', "\\": "\\" })[escaped];
-            value += decoded === undefined ? `\\${escaped}` : decoded;
-          } else value += next;
+            if(!skippedDepth)value += decoded === undefined ? `\\${escaped}` : decoded;
+          } else if(!skippedDepth)value += next;
         }
         if (!closed) throw new Error("Unterminated quoted KiCad string.");
         append({ quoted: value }); continue;
@@ -73,6 +84,7 @@
       const start = i;
       while (i < source.length) { const code=source.charCodeAt(i);if(code===40||code===41||code===59||code===34||spaceCode(code))break;i++; }
       if (start === i) throw new Error("Unexpected KiCad source character.");
+      if(skippedDepth){append(null);continue;}
       const token = source.slice(start, i);
       // Legacy hexadecimal timestamps and unquoted names may look like
       // decimal exponents (e.g. 59E99999). Keep identity fields lexical.
@@ -206,7 +218,7 @@
     const objects = [];
     for (const form of rootForm) {
       if (!Array.isArray(form) || !types.has(kindOf(form))) continue;
-      const definition = kindOf(form) === "symbol" ? definitions.get(String(second(form, "lib_id"))) : null;
+      const definition = kindOf(form) === "symbol" ? definitions.get(String(second(form, "lib_name") ?? second(form, "lib_id"))) : null;
       const record = objectRecord(path, form, null, definition);
       objects.push(record);
       if (rootKind === "kicad_pcb" && ["footprint","module"].includes(record.kind)) {
@@ -215,6 +227,10 @@
       }
     }
     return objects;
+  }
+  function parseMetadata(source,options={}){
+    const ast=parse(source,{...options,metadataOnly:true});
+    return ast.filter((item,index)=>index===0||Array.isArray(item)&&METADATA_FIELDS.has(item[0])).map(item=>Array.isArray(item)&&['symbol','footprint','module'].includes(item[0])?item.filter((field,index)=>index===0||Array.isArray(field)&&METADATA_OBJECT_FIELDS.has(field[0])):item);
   }
   // Job-scoped snapshots reuse validated source without retaining projects globally.
   const preparedProjects = new WeakMap();
@@ -292,6 +308,6 @@
     changes.sort((a, b) => a.path.localeCompare(b.path) || a.id.localeCompare(b.id) || a.status.localeCompare(b.status));
     return { changes, counts };
   }
-  root.KiCadDesignDiff = { compareProjects, projectObjects, parse, prepareProject, preparedFile, MAX_FILES, MAX_PROJECT, MAX_RENDER_PRIMITIVES, sourceByteLimit };
+  root.KiCadDesignDiff = { compareProjects, projectObjects, parse, parseMetadata, prepareProject, preparedFile, MAX_FILES, MAX_PROJECT, MAX_RENDER_PRIMITIVES, sourceByteLimit };
   if (typeof module === "object" && module.exports) module.exports = root.KiCadDesignDiff;
 })(typeof globalThis === "object" ? globalThis : this);
