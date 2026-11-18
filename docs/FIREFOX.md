@@ -10,11 +10,11 @@ Use KiCad Online to view saved schematics, PCB layouts and supported 3D models i
 2. Review the requested permissions and data disclosures, then confirm installation.
 3. Pin the extension if desired. On a repository page, click its icon to open the project viewer.
 
-The store may offer an earlier version than the GitHub preview while an update is under review. As recorded on **6 November 2026**, version **0.12.90** was awaiting Mozilla review. The listing shows the version available to install.
+The store may offer an earlier version than the GitHub preview while an update is under review. As recorded on **18 November 2026**, version **0.12.102** is awaiting Mozilla review with matching readable source attached, while **0.12.101** is approved. The listing shows the version available to install.
 
 ## Try the GitHub preview on desktop
 
-The [Firefox 0.12.100 ZIP](https://github.com/wayri/KiCad-Online/releases/download/v0.12.100/kicad-visual-review-firefox-0.12.100.zip) is an unsigned development package for **Firefox desktop 140 or newer**. It can be loaded temporarily; it does not replace a signed store installation.
+The [Firefox 0.12.102 ZIP](https://github.com/wayri/KiCad-Online/releases/download/v0.12.102/kicad-visual-review-firefox-0.12.102.zip) is an unsigned development package for **Firefox desktop 140 or newer**. It can be loaded temporarily; it does not replace a signed store installation.
 
 1. Download the Firefox ZIP, [verify its checksum](INSTALL.md#verify-downloads), and extract it.
 2. Open `about:debugging#/runtime/this-firefox`.

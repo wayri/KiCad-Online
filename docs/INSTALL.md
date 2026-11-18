@@ -100,7 +100,7 @@ Safari cannot load the Chromium ZIP as a normal extension. The Safari developmen
 3. Open **KiCad Online**. Import a project folder/ZIP through the app's file picker, or browse a supported repository.
 4. Updates are manual: download and install the newer APK over the existing app when its package and signing identity match.
 
-The current GitHub 1.99 APK is a **development-signed preview**. It is not a Play Store release. Development and future distribution/Play signing identities may differ. If Android reports a signature conflict, preserve/export projects and review state before deciding how to migrate; do not immediately uninstall or clear app data. Installing an older version over a newer version may also be rejected.
+The current GitHub 1.100 APK is a **development-signed preview**. It is not a Play Store release. Development and future distribution/Play signing identities may differ. If Android reports a signature conflict, preserve/export projects and review state before deciding how to migrate; do not immediately uninstall or clear app data. Installing an older version over a newer version may also be rejected.
 
 Android Chrome does not provide the desktop **Load unpacked** workflow. Use the Android app rather than trying to install the desktop extension in mobile Chrome.
 
