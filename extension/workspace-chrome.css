@@ -227,3 +227,6 @@ body[data-ui-theme=light] .workspace-highlight-chip{--highlight-chip-color:var(-
 /* Host-owned actions remain wired for commands, but have one visible entry point. */
 body[data-workspace-chrome] [data-context-hidden=true]{display:none!important}
 body[data-workspace-chrome][data-workspace-context=pane] #frameControls .drawing-title{display:none}
+
+.workspace-project-name{display:block;flex:0 1 auto;min-width:40px;max-width:clamp(80px,12vw,180px);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:12px;font-weight:600;color:var(--text);padding-inline-end:6px;border-inline-end:1px solid var(--line)}
+@media(max-width:700px){.workspace-project-name{max-width:110px;font-size:11px}}

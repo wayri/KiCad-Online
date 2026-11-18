@@ -14,9 +14,9 @@
   return{format:value.format,width,height,titleBlock};
  }
  function crop(canvas,camera,region){
-  const a=camera.world_to_screen({x:region.x,y:region.y}),b=camera.world_to_screen({x:region.x+region.width,y:region.y+region.height});
-  const rect=canvas.getBoundingClientRect(),sx=canvas.width/rect.width,sy=canvas.height/rect.height;
-  const x=Math.max(0,Math.min(a.x,b.x)*sx),y=Math.max(0,Math.min(a.y,b.y)*sy),right=Math.min(canvas.width,Math.max(a.x,b.x)*sx),bottom=Math.min(canvas.height,Math.max(a.y,b.y)*sy);
+  const corners=[{x:region.x,y:region.y},{x:region.x+region.width,y:region.y},{x:region.x+region.width,y:region.y+region.height},{x:region.x,y:region.y+region.height}].map(point=>camera.world_to_screen(point));
+  const rect=canvas.getBoundingClientRect(),sx=canvas.width/(camera.width||rect.width),sy=canvas.height/(camera.height||rect.height);
+  const x=Math.max(0,Math.min(...corners.map(p=>p.x))*sx),y=Math.max(0,Math.min(...corners.map(p=>p.y))*sy),right=Math.min(canvas.width,Math.max(...corners.map(p=>p.x))*sx),bottom=Math.min(canvas.height,Math.max(...corners.map(p=>p.y))*sy);
   if(right-x<2||bottom-y<2)throw new Error('The review area is outside the visible drawing. Fit or zoom it into view before capturing.');
   return{x,y,width:right-x,height:bottom-y};
  }

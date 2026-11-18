@@ -42,7 +42,7 @@ function workspaceRuntime(respond=async()=>[], hooks={}){
     getAttribute(k){return this.attributes[k]??null;}
     setAttribute(k,v){this.attributes[k]=String(v);if(k==='id')this.id=v;if(k==='class')this.className=v;}matches(selector){return selector.startsWith('.')?this.classes.has(selector.slice(1)):selector.startsWith('#')?this.id===selector.slice(1):this.tagName.toLowerCase()===selector.split('.')[0]&&(!selector.includes('.')||this.classes.has(selector.split('.')[1]));}
     closest(selector){for(let node=this;node;node=node.parentElement)if(node.matches(selector))return node;return null;}querySelector(selector){for(const child of this.children){if(child.matches(selector))return child;const nested=child.querySelector(selector);if(nested)return nested;}return null;}
-    contains(node){return node===this||this.children.some(child=>child.contains(node));}focus(){this.focused=true;}click(){return this.onclick?.();}getBoundingClientRect(){return{left:0,top:0,width:hooks.width||800,height:this.id==='reviewWorkspace'?(hooks.workspaceHeight||600):(hooks.frameHeight||600)};}
+    contains(node){return node===this||this.children.some(child=>child.contains(node));}focus(){this.focused=true;}click(){if(this.tagName==='A'&&this.href)hooks.onLink?.(this);return this.onclick?.();}getBoundingClientRect(){return{left:0,top:0,width:hooks.width||800,height:this.id==='reviewWorkspace'?(hooks.workspaceHeight||600):(hooks.frameHeight||600)};}
   }
   const get=id=>{if(!elements.has(id)){const element=new Element();element.id=id;}return elements.get(id);};
   // Retain the shared HTML's ownership hierarchy so moving panes is exercised.
@@ -98,6 +98,21 @@ test('normal flag and label clicks highlight the connected net; Shift selects on
   assert.equal(view.canvas.touchNetPick({clientX:10,clientY:0,pointerType:'mouse'}),true,kind);assert.ok([...view.canvas.netPrimitives].some(p=>p.uuid==='wire'),kind);assert.equal(selections.at(-1).kind,'net',kind);
   assert.equal(view.canvas.touchNetPick({clientX:10,clientY:0,pointerType:'mouse',shiftKey:true}),true,kind);assert.ok([...view.canvas.netPrimitives].some(p=>(p.pinUuid||p.uuid)==='flag'),kind);assert.equal([...view.canvas.netPrimitives].some(p=>p.uuid==='wire'),false,kind);assert.equal(selections.at(-1).kind,'object',kind);view.workspace.dispose();
  }
+});
+
+test('clicking label overbars selects the same net and Shift selects the complete saved label only',()=>{
+ for(const kind of ['label','global_label','hierarchical_label']){
+  const selections=[],source=`(kicad_sch (version 20250114) (${kind} "~{SIGNAL}" (shape input) (at 10 0) (effects (font (size 1.27 1.27))) (uuid flag)) (wire (pts (xy 0 0) (xy 10 0)) (uuid wire)))`;
+  const view=workspaceRuntime(undefined,{pcb:false,files:[{path:'root.kicad_sch',content:source}],onSelection:value=>selections.push(value)});view.load();const bar=view.design.primitives.find(p=>p.kind==='text-overbar');assert.ok(bar,kind);view.canvas.query=()=>[bar];
+  view.canvas.touchNetPick({clientX:10,clientY:0,pointerType:'mouse'});assert.equal(selections.at(-1).kind,'net');assert.ok(view.canvas.netPrimitives.has(bar));assert.ok([...view.canvas.netPrimitives].some(p=>p.uuid==='wire'));
+  view.canvas.touchNetPick({clientX:10,clientY:0,pointerType:'mouse',shiftKey:true});assert.equal(selections.at(-1).kind,'object');assert.ok(view.canvas.netPrimitives.has(bar));assert.ok(![...view.canvas.netPrimitives].some(p=>p.uuid==='wire'));view.workspace.dispose();
+ }
+});
+
+test('overlapping label glyphs from different saved nets require an explicit choice',()=>{
+ const content='(kicad_sch (global_label "A" (shape input) (at 0 0) (uuid a)) (global_label "B" (shape input) (at 0 20) (uuid b)))';
+ const view=workspaceRuntime(undefined,{pcb:false,files:[{path:'root.kicad_sch',content}]});view.load();view.canvas.query=()=>view.design.primitives.filter(p=>p.type==='text'&&p.kind==='global_label');view.canvas.pickDistance=()=>0;
+ view.canvas.touchNetPick({clientX:0,clientY:0,pointerType:'mouse'});assert.equal(view.canvas.netHighlight,null);const picker=descendants(view.document.body).find(n=>n.className==='touch-net-picker');assert.ok(picker);descendants(picker).find(n=>n.attributes['aria-label']==='Net: B').click();assert.equal(view.canvas.netHighlight.name,'B');view.workspace.dispose();
 });
 test('assembly variant changes publish current config while parent-applied variants do not echo',()=>{
  const events=[],view=workspaceRuntime(undefined,{onAssemblyVariant:value=>events.push(value)}),config={schemaVersion:1,variants:[{id:'prototype',name:'Prototype',parts:[{path:'board.kicad_pcb',reference:'R1',populated:false}]}]};view.load();const before=events.length;assert.equal(view.workspace.applyAssemblyVariant({variant:'prototype',config}),true);assert.equal(view.get('variantSelect').value,'prototype');assert.equal(events.length,before);view.get('variantSelect').value='default';view.get('variantSelect').onchange();assert.equal(events.at(-1).variant,'default');assert.deepEqual(JSON.parse(JSON.stringify(events.at(-1).config)),config);assert.throws(()=>view.workspace.applyAssemblyVariant({variant:'missing',config}),/Unknown assembly variant/);assert.equal(view.get('variantSelect').value,'default');view.workspace.dispose();
@@ -302,6 +317,21 @@ test('point and dragged-area review tools persist millimetre anchors and disable
  view.get('commentSearch').value='Area';view.get('commentSearch').oninput();assert.equal(view.get('commentList').children.length,1);assert.match(view.get('commentList').textContent,/Area note/);
 });
 
+test('comment anchors round-trip through scaled and offset drawing panes',async()=>{
+ let notes=[];const view=workspaceRuntime(async m=>{if(m.type==='comment-list')return notes;if(m.type==='comment-save'){notes=[m.comment];return m.comment;}return[];});
+ view.load();view.canvas.canvas.getBoundingClientRect=()=>({left:120,top:80,width:400,height:300});const host=view.get('drawingHost');host.getBoundingClientRect=()=>({left:100,top:60,width:500,height:400});host.clientWidth=1000;host.clientHeight=800;
+ view.get('pointComment').click();const event=new Event('click',{cancelable:true});Object.assign(event,{clientX:320,clientY:230});view.canvas.canvas.dispatchEvent(event);view.get('commentText').value='Scaled anchor';await view.get('saveComment').click();
+ assert.equal(notes[0].anchor.position.x,0);assert.equal(notes[0].anchor.position.y,0);view.workspace.draw();const marker=view.get('commentPins').children[0];assert.equal(marker.style.left,'440px');assert.equal(marker.style.top,'340px');view.workspace.dispose();
+});
+
+test('drawing tools and draft actions are visible without menus; destination settings never publish',async()=>{
+ const calls=[],view=workspaceRuntime(async m=>{calls.push(m);return[];});view.load();view.get('newComment').click();view.get('commentText').value='Keep my draft';
+ for(const id of ['pointComment','areaComment','captureComment'])assert.equal(view.get(id).parentElement.id,'commentDrawingTools');
+ for(const id of ['saveComment','cancelComment'])assert.equal(view.get(id).parentElement.id,'commentPostRow');
+ assert.equal(view.get('commentDrawingTools').hidden,false);assert.equal(view.get('captureStatus').hidden,true);
+ await chooseDestination(view);assert.equal(view.get('confirmCommentPost').textContent,'Done');await view.get('confirmCommentPost').click();assert.equal(view.get('commentText').value,'Keep my draft');assert.equal(calls.some(m=>m.type==='comment-save'||m.type==='github-publish-comment'||m.type==='open-comment-draft'),false);view.workspace.dispose();
+});
+
 test('comment areas render pass-through geometry and Ctrl-click selects the smallest matching area',async()=>{
  const notes=[{id:'outer',area:{x:-10,y:-10,width:30,height:30}},{id:'inner',area:{x:0,y:0,width:10,height:10}}].map(item=>({id:item.id,text:item.id+' area',createdAt:'2026-11-15T00:00:00Z',anchor:{repository:'wayri/fixture',ref:'main',file:'board.kicad_pcb',kind:'area',area:item.area}}));
  const view=workspaceRuntime(async message=>message.type==='comment-list'?notes:[]);view.load();await view.workspace.refreshComments();view.workspace.draw();
@@ -441,17 +471,55 @@ test('disabling multihighlight immediately reduces combined net and component se
 
 test('double click enters only a resolved loaded subsheet, never schematic editing',()=>{
  const files=[{path:'root.kicad_sch',content:'(kicad_sch (sheet (at 0 0) (size 10 10) (uuid "sheet-1") (property "Sheetname" "Power") (property "Sheetfile" "power.kicad_sch")))'},{path:'power.kicad_sch',content:'(kicad_sch)'}],opened=[];
- const view=workspaceRuntime(async()=>[],{pcb:false,files,query:()=>[{bbox:{context:{uuid:'sheet-1'}}}],openSheet:path=>opened.push(path)});view.load();const before=JSON.stringify(files);
- const double=()=>{const event=new Event('dblclick',{cancelable:true});Object.assign(event,{button:0,clientX:400,clientY:300});view.canvas.canvas.dispatchEvent(event);};double();assert.deepEqual(opened,['power.kicad_sch']);
+ const contexts=[],view=workspaceRuntime(async()=>[],{pcb:false,files,query:()=>[{bbox:{context:{uuid:'sheet-1'}}}],openSheet:(path,position,context)=>{opened.push(path);contexts.push(context);}});view.load();const before=JSON.stringify(files);
+ const double=()=>{const event=new Event('dblclick',{cancelable:true});Object.assign(event,{button:0,clientX:400,clientY:300});view.canvas.canvas.dispatchEvent(event);};double();assert.deepEqual(opened,['power.kicad_sch']);assert.equal(contexts[0].viaSheet.uuid,'sheet-1');assert.equal(contexts[0].viaSheet.path,'root.kicad_sch');
  view.get('measureButton').click();double();assert.equal(opened.length,1);view.get('measureButton').click();view.get('areaComment').click();double();assert.equal(opened.length,1);assert.equal(JSON.stringify(files),before);
  view.workspace.dispose();double();assert.equal(opened.length,1);
+});
+
+test('text page links navigate to the saved repeated instance and preserve modifier selection',()=>{
+ const files=[{path:'root.kicad_sch',content:'(kicad_sch (uuid root) (sheet_instances (path "/" (page "1")) (path "/a" (page "8")) (path "/b" (page "9"))) (sheet (uuid a) (at 20 20) (size 10 10) (property "Sheetname" "A") (property "Sheetfile" "child.kicad_sch")) (sheet (uuid b) (at 40 20) (size 10 10) (property "Sheetname" "B") (property "Sheetfile" "child.kicad_sch")))'},{path:'child.kicad_sch',content:'(kicad_sch (uuid child))'}],opened=[],links=[{kind:'sheet',page:'9',target:'#9'}],primitive={type:'text',links};
+ const view=workspaceRuntime(async()=>[],{pcb:false,files,query:()=>[{bbox:{primitive}}],openSheet:(path,position,context)=>opened.push({path,context})});view.canvas.query=()=>[primitive];view.load();
+ const click=modifiers=>{const event=new Event('click',{cancelable:true});Object.assign(event,{clientX:400,clientY:300,...modifiers});view.canvas.canvas.dispatchEvent(event);return event;};
+ assert.equal(click({ctrlKey:true}).defaultPrevented,false);assert.equal(opened.length,0);
+ assert.equal(click({}).defaultPrevented,true);assert.equal(opened[0].path,'child.kicad_sch');assert.equal(opened[0].context.instancePath,'/root/b');
+ primitive.links=[{target:'#404'}];click({});assert.equal(opened.length,1);assert.match(view.get('reviewNotice').textContent,/not loaded/);
+ primitive.links=[{target:'javascript:bad'}];click({});assert.equal(opened.length,1);view.workspace.dispose();
+});
+
+test('text URLs open from an explicit click; multiple URLs use a bounded chooser and measurement takes precedence',()=>{
+ const opened=[],primitive={type:'text',links:[{target:'https://example.com/manual'},{target:'https://example.org/data'}]};
+ const view=workspaceRuntime(async()=>[],{pcb:false,files:[{path:'root.kicad_sch',content:'(kicad_sch (uuid root))'}],query:()=>[{bbox:{primitive}}],onLink:link=>opened.push({href:link.href,target:link.target,rel:link.rel})});view.canvas.query=()=>[primitive];view.load();
+ const click=()=>{const event=new Event('click',{cancelable:true});Object.assign(event,{clientX:400,clientY:300});view.canvas.canvas.dispatchEvent(event);};click();assert.equal(opened.length,0);assert.equal(view.get('objectMenu').children.length,2);view.get('objectMenu').children[1].click();assert.deepEqual(opened,[{href:'https://example.org/data',target:'_blank',rel:'noopener noreferrer'}]);
+ primitive.links=[{target:'https://example.com/manual'}];view.get('measureButton').click();click();assert.equal(opened.length,1);view.get('measureButton').click();click();assert.equal(opened.length,2);view.workspace.dispose();
+});
+
+test('a page link never guesses between repeated instances sharing the same saved page number',()=>{
+ const files=[{path:'root.kicad_sch',content:'(kicad_sch (uuid root) (sheet_instances (path "/a" (page "8")) (path "/b" (page "8"))) (sheet (uuid a) (at 10 10) (size 5 5) (property "Sheetfile" "child.kicad_sch")) (sheet (uuid b) (at 20 10) (size 5 5) (property "Sheetfile" "child.kicad_sch")))'},{path:'child.kicad_sch',content:'(kicad_sch (uuid child))'}],opened=[];
+ const view=workspaceRuntime(async()=>[],{pcb:false,files,openSheet:(...args)=>opened.push(args)});view.load();view.canvas.query=()=>[{links:[{target:'#8'}]}];
+ const event=new Event('click',{cancelable:true});Object.assign(event,{clientX:400,clientY:300});view.canvas.canvas.dispatchEvent(event);assert.equal(opened.length,0);assert.match(view.get('reviewNotice').textContent,/ambiguous/);view.workspace.dispose();
 });
 
 test('missing sheet double click reports absence; parent navigation rejects ambiguous parents',()=>{
  const files=[{path:'root.kicad_sch',content:'(kicad_sch (sheet (at 0 0) (size 10 10) (uuid "sheet-1") (property "Sheetname" "Power") (property "Sheetfile" "missing.kicad_sch")))'}],opened=[];
  const view=workspaceRuntime(async()=>[],{pcb:false,files,query:()=>[{bbox:{context:{uuid:'sheet-1'}}}],openSheet:path=>opened.push(path)});view.load();const event=new Event('dblclick');Object.assign(event,{clientX:400,clientY:300});view.canvas.canvas.dispatchEvent(event);assert.deepEqual(opened,[]);assert.match(view.get('reviewNotice').textContent,/missing/);
  const parentFiles=[files[0],{path:'other.kicad_sch',content:files[0].content},{path:'missing.kicad_sch',content:'(kicad_sch)'}];const child=workspaceRuntime(async()=>[],{pcb:false,files:parentFiles,currentFile:()=> 'missing.kicad_sch',openSheet:path=>opened.push(path)});child.load();child.key('ArrowUp',{altKey:true});assert.deepEqual(opened,[]);assert.match(child.get('reviewNotice').textContent,/multiple parents/);
- const unique=workspaceRuntime(async()=>[],{pcb:false,files:[files[0],parentFiles[2]],currentFile:()=> 'missing.kicad_sch',openSheet:path=>opened.push(path)});unique.load();unique.key('ArrowUp',{altKey:true});assert.deepEqual(opened,['root.kicad_sch']);
+ const contexts=[],unique=workspaceRuntime(async()=>[],{pcb:false,files:[{...files[0],content:files[0].content.replace('(kicad_sch','(kicad_sch (uuid root)')},parentFiles[2]],currentFile:()=> 'missing.kicad_sch',getSheetInstance:()=>'/root/sheet-1',openSheet:(path,position,context)=>{opened.push(path);contexts.push(context);}});unique.load();unique.key('ArrowUp',{altKey:true});assert.deepEqual(opened,['root.kicad_sch']);assert.equal(contexts[0].instancePath,'/root');
+});
+
+test('one sheet up follows the active branch through shared and repeated parents and stops at root',()=>{
+ const sheet=(id,file)=>`(sheet (uuid ${id}) (at 10 10) (size 5 5) (property "Sheetfile" "${file}"))`;
+ for(const repeated of [false,true]){
+  const files=[{path:'root.kicad_sch',content:`(kicad_sch (uuid root) ${sheet('left','left.kicad_sch')} ${sheet('right',repeated?'left.kicad_sch':'right.kicad_sch')})`},
+   {path:'left.kicad_sch',content:`(kicad_sch (uuid left-root) ${sheet('leaf','shared.kicad_sch')})`},
+   ...(!repeated?[{path:'right.kicad_sch',content:`(kicad_sch (uuid right-root) ${sheet('leaf','shared.kicad_sch')})`}]:[]),{path:'shared.kicad_sch',content:'(kicad_sch (uuid shared))'}];
+  let active={path:'shared.kicad_sch',instancePath:'/root/right/leaf'};const opened=[];
+  const view=workspaceRuntime(async()=>[],{pcb:false,files,currentFile:()=>active.path,getSheetInstance:()=>active.instancePath,openSheet:(path,position,context)=>{active={path,instancePath:context?.instancePath};opened.push({...active});}});view.load();
+  assert.equal(view.get('sheetUp').disabled,false);view.get('sheetUp').click();view.workspace.draw();
+  assert.deepEqual(opened[0],{path:repeated?'left.kicad_sch':'right.kicad_sch',instancePath:'/root/right'});
+  view.key('ArrowUp',{altKey:true});view.workspace.draw();assert.deepEqual(opened[1],{path:'root.kicad_sch',instancePath:'/root'});assert.equal(view.get('sheetUp').disabled,true);
+  view.key('ArrowUp',{altKey:true});assert.equal(opened.length,2);assert.match(view.get('reviewNotice').textContent,/root sheet/);view.workspace.dispose();
+ }
 });
 
 test('review shortcuts inspect pointer, highlight net, focus search, respect typing and never mutate sources',()=>{
@@ -589,7 +657,7 @@ test('conversation catalog combines issues and discussions, filters by category 
  const category=view.get('commentConversationKind');assert.equal(category.value,'all');category.value='discussion';await category.onchange();
  assert.doesNotMatch(view.get('commentThreadReader').textContent,/Connector clearance/);assert.match(view.get('commentThreadReader').textContent,/Assembly review/);
  view.get('newConversation').click();assert.equal(view.get('editorThreadType').value,'discussion');assert.equal(view.get('editorDestination').value,'discussion');
- assert.equal(view.get('commentComposeTop').parentElement.id,'commentEditor');assert.equal(view.get('commentComposeTop').closest('#commentComposerMenu'),null);assert.equal(view.get('saveComment').closest('#commentComposerMenu').id,'commentComposerMenu');assert.equal(view.get('commentFormatting').hidden,true);
+ assert.equal(view.get('commentComposeTop').parentElement.id,'commentEditor');assert.equal(view.get('commentComposeTop').closest('#commentComposerMenu'),null);assert.equal(view.get('saveComment').parentElement.id,'commentPostRow');assert.equal(view.get('commentFormatting').hidden,true);
  assert.equal(calls.some(message=>['github-publish-comment','comment-publish','chat-message-write'].includes(message.type)),false);view.workspace.dispose();
 });
 
@@ -748,7 +816,7 @@ test('Reply to a remote annotation retains its drawing anchor and selects the ex
  const calls=[],note={id:'remote-note',text:'Review this part',createdAt:'2026-10-04T00:00:00Z',severity:'major',threadType:'discussion',anchor:{repository:'wayri/fixture',ref:'main',file:'board.kicad_pcb',position:{x:3,y:4}},github:{source:'discussion-comment',number:17,state:'open',author:'alice',url:'https://github.com/wayri/fixture/discussions/17#discussioncomment-1',createdAt:'2026-10-04T01:00:00Z',updatedAt:'2026-10-04T02:00:00Z'}};
  const view=workspaceRuntime(async m=>{calls.push(m);if(m.type==='github-annotations')return{notes:[note],warnings:[]};return[];});await view.get('refreshGitHub').click();
  const elements=node=>[node,...node.children.flatMap(elements)];elements(view.get('commentList')).find(node=>node.tagName==='BUTTON'&&node.textContent==='Reply').click();
- assert.equal(view.get('editorDestination').value,'existing-discussion');assert.equal(view.get('editorThreadNumber').value,'17');assert.equal(view.get('commentText').value,'');assert.match(view.get('commentAnchor').textContent,/3.00, 4.00/);assert.equal(calls.some(m=>m.type==='github-publish-comment'),false);
+ assert.equal(view.get('editorDestination').value,'existing-discussion');assert.equal(view.get('editorThreadNumber').value,'17');assert.equal(view.get('commentText').value,'');assert.equal(view.get('commentAnchor').textContent,'Selected point');assert.match(view.get('commentAnchor').title,/3.00, 4.00/);assert.equal(calls.some(m=>m.type==='github-publish-comment'),false);
 });
 
 test('net review drafts preserve the selected saved net name in formatted GitHub context',async()=>{
@@ -844,6 +912,26 @@ test('three pinned panes retain drawing width and reuse width resizing',()=>{
  const suggestions=view.get('mentionSuggestions');assert.equal(suggestions.children.length,1);suggestions.children[0].click();suggestions.children[0].click();assert.equal(view.get('commentMentions').value,'@wayri');assert.match(view.get('mentionLookupStatus').textContent,/only when posted/);assert.equal(calls.some(m=>/publish/.test(m.type)),false);
  const pending=view.get('mentionSource').onchange();view.workspace.dispose();finish({users:[{login:'other',roles:['User']}],warnings:[]});await pending;assert.equal(suggestions.children.length,0);
  });
+
+test('overview reuses hydrated child pin geometry for selection while the active root stays open',()=>{
+ const files=[
+  {path:'root.kicad_sch',content:'(kicad_sch (global_label "SIG" (at 0 0) (uuid root-label)))'},
+  {path:'child.kicad_sch',content:'(kicad_sch (global_label "SIG" (at 0 0) (uuid child-label)) (symbol (lib_id "Device:R") (at 0 0) (uuid part) (property "Reference" "R1")))'}
+ ];
+ const view=workspaceRuntime(undefined,{files,pcb:false});view.load();
+ const api=view.workspace;
+ assert.equal(api.selectOverviewNet(files[0].path,'root-label'),true);
+ assert.equal(api.selectOverviewNet(files[1].path,'part'),false);
+ const pin={kind:'pin',uuid:'part',ownerUuid:'part',pinNumber:'1',connectPoint:{x:0,y:0}};
+ view.designs.set(files[1].path,{primitives:[pin]});
+ const nets=api.overviewNetworks();
+ assert.ok(nets.find(net=>net.path===files[1].path).primitives.includes(pin));
+ assert.equal(api.overviewNetworks(),nets);
+ assert.ok(api.overviewSelection(files[0].path).netIds.length);
+ assert.equal(api.selectOverviewNet(files[1].path,'part'),true);
+ assert.equal(view.canvas.design,view.design);
+ view.workspace.dispose();
+});
 
  test('PCB hierarchical net cross-highlight opens its saved schematic sheet and highlights refreshed geometry',()=>{
  const files=[{path:'root.kicad_sch',content:'(kicad_sch (sheet (at 0 0) (size 10 10) (uuid "sheet-1") (property "Sheetname" "Power") (property "Sheetfile" "power.kicad_sch")))'},{path:'power.kicad_sch',content:'(kicad_sch (label "ENABLE" (at 1 1 0) (uuid "label-1")) (wire (pts (xy 1 1) (xy 10 1)) (uuid "wire-1")))'}];
@@ -982,7 +1070,7 @@ test('check window reports blocked 3D navigation instead of claiming a successfu
 
 test('compact composer inserts an inline mention and derives title and mentions on save',async()=>{
  let notes=[];const calls=[];const view=workspaceRuntime(async m=>{calls.push(m);if(m.type==='comment-list')return notes;if(m.type==='comment-mention-users')return{users:[{login:'wayri',name:'Reviewer'}]};if(m.type==='comment-save'){notes=[m.comment];return m.comment;}return[];});view.load();await new Promise(r=>setImmediate(r));view.get('newComment').click();
- assert.equal(view.get('commentComposeTop').children.length,3);assert.equal(view.get('editorTitleLabel').parentElement.hidden,true);assert.equal(view.get('editorDestination').value,'issue');
+ assert.equal(view.get('commentComposeTop').children.length,1);assert.equal(view.get('commentComposeTop').children[0].attributes['aria-label'],'Choose comment destination');assert.equal(view.get('editorTitleLabel').parentElement.hidden,true);assert.equal(view.get('editorDestination').value,'issue');
  const box=view.get('commentText');box.value='Review title\nAsk @wa';box.selectionStart=box.value.length;box.dispatchEvent(new Event('input'));await new Promise(r=>setTimeout(r,240));assert.equal(view.get('inlineMentionSuggestions').hidden,false);view.get('inlineMentionSuggestions').children[0].click();assert.equal(box.value,'Review title\nAsk @wayri ');assert.equal(view.get('inlineMentionSuggestions').hidden,true);await view.get('saveComment').click();assert.deepEqual([...notes[0].mentions],['wayri']);assert.match(view.get('commentList').textContent,/Review title/);
 });
 
@@ -1184,7 +1272,7 @@ test('all-sheet stacks count repeated placements through nested reused parents',
  const result=composeSheetOverview([{path:child.sheet.path,label:'Control',instanceCount:child.instanceCount,instances:child.instances,design:{page:{width:100,height:100},primitives:[source]},groups:[]}]);
  assert.equal(result.pages[0].instanceCount,2);assert.equal(result.pages[0].instances.length,2);
  assert.equal(result.design.primitives.filter(p=>p.type==='polygon').length,2);
- assert.ok(result.design.primitives.some(p=>p.type==='text'&&p.text==='Control · 2 instances'));
+ assert.ok(result.design.primitives.some(p=>p.kind==='overview-title'&&p.text==='Control ×2'&&p.maxTextWidth===100));
  assert.equal(result.design.primitives.filter(p=>p.uuid==='part').length,1);assert.deepEqual(source.points,[{x:1,y:2},{x:3,y:4}]);
 });
 test('all-sheet stack counting retains cyclic sources without claiming resolved placements',()=>{
@@ -1226,9 +1314,9 @@ test('destination review never saves or posts until final confirmation and can r
  view.load();await new Promise(setImmediate);view.get('newComment').click();view.get('commentText').value='Check connector';
  await chooseDestination(view);assert.equal(view.get('commentPostReview').open,true);assert.equal(calls.some(m=>m.type==='comment-save'||m.type==='github-publish-comment'),false);
  assert.match(view.get('commentPostReview').textContent,/wayri\/fixture/);const back=view.get('commentPostReview').querySelector('.inspector-actions').children[0];back.click();
- assert.equal(view.get('commentPostReview').open,false);assert.equal(view.get('commentText').value,'Check connector');assert.equal(view.get('editorDestination').closest('label').parentElement.className,'comment-composer-menu-body');
+ assert.equal(view.get('commentPostReview').open,false);assert.equal(view.get('commentText').value,'Check connector');assert.equal(view.get('editorDestination').closest('label').parentElement.hidden,true);
  await chooseDestination(view);view.get('editorDestination').value='existing-issue';view.get('editorDestination').onchange();view.get('editorThreadNumber').value='37';
- await view.get('confirmCommentPost').click();const publication=calls.find(m=>m.type==='github-publish-comment');assert.equal(publication.destination,'issue');assert.equal(publication.number,37);assert.equal(view.get('commentPostReview').open,false);
+ await view.get('confirmCommentPost').click();assert.equal(calls.some(m=>m.type==='github-publish-comment'||m.type==='comment-publish'),false);await sendComment(view);const publication=calls.find(m=>m.type==='github-publish-comment');assert.equal(publication.destination,'issue');assert.equal(publication.number,37);assert.equal(view.get('commentPostReview').open,false);
 });
 test('one destination selector switches an issue draft to an existing GitHub discussion before confirmation',async()=>{
  const calls=[];let notes=[];const view=workspaceRuntime(async m=>{calls.push(m);if(m.type==='comment-list')return notes;if(m.type==='comment-save'){notes=[m.comment];return m.comment;}if(m.type==='github-publish-comment')return{remoteRef:{kind:'discussion',repository:'wayri/fixture',number:18,url:'https://github.com/wayri/fixture/discussions/18',publishedAt:'2026-10-10T12:00:00Z'}};return[];},{android:true,pullNumber:9});
@@ -1236,12 +1324,12 @@ test('one destination selector switches an issue draft to an existing GitHub dis
  const selector=view.get('commentPostDestination');assert.deepEqual(Array.from(selector.children,item=>item.value),['issue','existing-issue','discussion','existing-discussion','pull-request']);
  selector.value='existing-discussion';selector.onchange();view.get('editorThreadNumber').value='18';assert.equal(view.get('editorThreadType').value,'discussion');assert.equal(view.get('editorNumberLabel').hidden,false);assert.equal(view.get('editorCategoryLabel').hidden,true);assert.equal(calls.some(m=>m.type==='comment-save'||m.type==='github-publish-comment'),false);
  view.get('commentPostReview').querySelector('.inspector-actions').children[0].click();assert.equal(view.get('editorDestination').value,'existing-discussion');assert.equal(view.get('editorThreadNumber').value,'18');assert.deepEqual(Array.from(view.get('editorDestination').children,item=>item.value),['discussion','existing-discussion']);await chooseDestination(view);assert.equal(selector.value,'existing-discussion');
- await view.get('confirmCommentPost').click();const publication=calls.find(m=>m.type==='github-publish-comment');assert.equal(publication.destination,'discussion');assert.equal(publication.number,18);assert.equal(publication.comment.threadType,'discussion');view.workspace.dispose();
+ await view.get('confirmCommentPost').click();assert.equal(calls.some(m=>m.type==='github-publish-comment'||m.type==='comment-publish'),false);await sendComment(view);const publication=calls.find(m=>m.type==='github-publish-comment');assert.equal(publication.destination,'discussion');assert.equal(publication.number,18);assert.equal(publication.comment.threadType,'discussion');view.workspace.dispose();
 });
 
 test('GitLab destination selector posts discussions on issues without GitHub categories',async()=>{
  const calls=[];const view=workspaceRuntime(async m=>{calls.push(m);if(m.type==='comment-publish')return{remoteRef:{provider:'gitlab',host:'https://gitlab.com',kind:'discussion',repository:'group/project',number:12,url:'https://gitlab.com/group/project/-/issues/12#note_5',publishedAt:'2026-10-10T12:00:00Z'}};return[];},{provider:'gitlab',repository:'group/project',host:'https://gitlab.com',android:true});
- view.load();await new Promise(setImmediate);view.get('newComment').click();view.get('commentText').value='Discuss clearance';await chooseDestination(view);const selector=view.get('commentPostDestination');assert.deepEqual(Array.from(selector.children,item=>item.value),['issue','existing-issue','issue-discussion']);selector.value='issue-discussion';selector.onchange();view.get('editorThreadNumber').value='12';assert.equal(view.get('editorCategoryLabel').hidden,true);assert.equal(calls.some(m=>m.type==='comment-publish'),false);await view.get('confirmCommentPost').click();const publication=calls.find(m=>m.type==='comment-publish');assert.equal(publication.destination,'issue');assert.equal(publication.discussion,true);assert.equal(publication.number,12);view.workspace.dispose();
+ view.load();await new Promise(setImmediate);view.get('newComment').click();view.get('commentText').value='Discuss clearance';await chooseDestination(view);const selector=view.get('commentPostDestination');assert.deepEqual(Array.from(selector.children,item=>item.value),['issue','existing-issue','issue-discussion']);selector.value='issue-discussion';selector.onchange();view.get('editorThreadNumber').value='12';assert.equal(view.get('editorCategoryLabel').hidden,true);assert.equal(calls.some(m=>m.type==='comment-publish'),false);await view.get('confirmCommentPost').click();assert.equal(calls.some(m=>m.type==='github-publish-comment'||m.type==='comment-publish'),false);await sendComment(view);const publication=calls.find(m=>m.type==='comment-publish');assert.equal(publication.destination,'issue');assert.equal(publication.discussion,true);assert.equal(publication.number,12);view.workspace.dispose();
 });
 
 test('unselect retains net highlights, while clearing highlights resets 2D and 3D selection',()=>{
@@ -1476,9 +1564,9 @@ test('refresh of the old thread cannot cancel a pending deliberate thread naviga
 });
 
 test('thread state changes require current policy and Terms, and send only exact thread identity',async()=>{
- const chat=captureChat(),calls=[],view=workspaceRuntime(async message=>{calls.push(message);return message.type==='comment-policy-status'?{allowed:true}:{state:'closed'};},{chatPanel:chat.panel});view.load();
+ const chat=captureChat(),calls=[],view=workspaceRuntime(async message=>{calls.push(message);return message.type==='comment-policy-status'?{allowed:true}:{state:'closed'};},{android:true,chatPanel:chat.panel});view.load();
  const details={thread:{kind:'issue',number:5,title:'Visible title'},state:'closed',expectedUpdatedAt:'2026-10-28T10:00:00Z',confirmed:true};await chat.options.onThreadState(details);const sent=calls.find(m=>m.type==='chat-thread-state');assert.deepEqual(JSON.parse(JSON.stringify(sent.thread)),{kind:'issue',number:5});assert.equal(sent.file,'board.kicad_pcb');assert.equal(sent.repository,'wayri/fixture');assert.equal(sent.confirmed,true);await assert.rejects(chat.options.onThreadState({...details,confirmed:false}),/Confirm/);view.workspace.dispose();
- const blocked=captureChat(),other=workspaceRuntime(async()=>({allowed:false,reason:'Administrator blocked writes'}),{chatPanel:blocked.panel});other.load();await assert.rejects(blocked.options.onThreadState(details),/Administrator/);other.workspace.dispose();
+ const blocked=captureChat(),other=workspaceRuntime(async()=>({allowed:false,reason:'Administrator blocked writes'}),{android:true,chatPanel:blocked.panel});other.load();await assert.rejects(blocked.options.onThreadState(details),/Administrator/);other.workspace.dispose();
 });
 test('chat uses exact source-bound net location and refuses another revision or provider',()=>{const chat=captureChat(),view=workspaceRuntime(undefined,{chatPanel:chat.panel});view.load();const anchor={...chat.options.getScope(),kind:'net',netName:'SIGNAL',objectId:'net:1'};assert.equal(chat.options.onLocate(anchor),true);assert.equal(view.canvas.netHighlight.name,'SIGNAL');assert.equal(chat.options.onLocate({...anchor,ref:'another'}),false);assert.equal(chat.options.onLocate({...anchor,provider:'gitlab',host:'https://gitlab.com'}),false);assert.equal(view.chatDraft().hasDraft(),true);view.workspace.dispose();assert.equal(view.chatDraft(),undefined);assert.equal(chat.calls.at(-1),'disposed');});
 test('chat confirmation names the verified VS Code remote while keeping local annotation scope',async()=>{const chat=captureChat(),collaboration={provider:'github',host:'https://github.com',repository:'real/project',ref:'a'.repeat(40),prefix:''},calls=[],view=workspaceRuntime(async m=>{calls.push(m);return[];},{chatPanel:chat.panel,vscode:{collaboration},repository:'local/workspace',ref:'workspace',unacceptedRules:true});view.load();assert.equal(chat.options.getScope().repository,'local/workspace');const pending=chat.options.confirmSend({thread:{kind:'issue',number:4,title:'Review'},action:'create'}),dialog=view.document.body.children.find(n=>n.tagName==='DIALOG'&&n.className.includes('chat-send-review'));assert.match(dialog.textContent,/real\/project/);assert.equal(calls.some(m=>m.type==='chat-message-write'),false);dialog.querySelector('button').click();assert.equal(await pending,false);view.workspace.dispose();});
@@ -1575,7 +1663,7 @@ test('linked note state follows fetched issue state, filters closed and skips lo
 });
 
 test('conversation state filters apply to provider rows and confirmed mutations update linked annotations',async()=>{
- const chat=captureChat(),calls=[],note={id:'receipt-note',text:'Linked check',severity:'info',state:'open',createdAt:'2026-10-28T00:00:00Z',anchor:{repository:'wayri/fixture',ref:'main',file:'board.kicad_pcb'},remoteRefs:[{kind:'issue',repository:'wayri/fixture',number:7,url:'https://github.com/wayri/fixture/issues/7',publishedAt:'2026-10-28T00:00:00Z'}]},view=workspaceRuntime(async m=>{calls.push(m);if(m.type==='comment-list')return[note];if(m.type==='comment-policy-status')return{allowed:true};if(m.type==='chat-thread-state')return{kind:'issue',number:7,state:m.state,updatedAt:'2026-10-29T02:00:00Z'};if(m.type==='chat-thread-list')return{threads:m.kind==='issue'?[{kind:'issue',number:7,title:'Open task',state:'open',updatedAt:'2026-10-29T00:00:00Z'},{kind:'issue',number:8,title:'Closed task',state:'closed',updatedAt:'2026-10-29T01:00:00Z'}]:[],hasMore:false};return[];},{chatPanel:chat.panel});view.load();await view.workspace.refreshComments();view.get('showComments').click();await new Promise(setImmediate);
+ const chat=captureChat(),calls=[],note={id:'receipt-note',text:'Linked check',severity:'info',state:'open',createdAt:'2026-10-28T00:00:00Z',anchor:{repository:'wayri/fixture',ref:'main',file:'board.kicad_pcb'},remoteRefs:[{kind:'issue',repository:'wayri/fixture',number:7,url:'https://github.com/wayri/fixture/issues/7',publishedAt:'2026-10-28T00:00:00Z'}]},view=workspaceRuntime(async m=>{calls.push(m);if(m.type==='comment-list')return[note];if(m.type==='comment-policy-status')return{allowed:true};if(m.type==='chat-thread-state')return{kind:'issue',number:7,state:m.state,updatedAt:'2026-10-29T02:00:00Z'};if(m.type==='chat-thread-list')return{threads:m.kind==='issue'?[{kind:'issue',number:7,title:'Open task',state:'open',updatedAt:'2026-10-29T00:00:00Z'},{kind:'issue',number:8,title:'Closed task',state:'closed',updatedAt:'2026-10-29T01:00:00Z'}]:[],hasMore:false};return[];},{android:true,chatPanel:chat.panel});view.load();await view.workspace.refreshComments();view.get('showComments').click();await new Promise(setImmediate);
  view.get('commentConversationState').value='closed';view.get('commentConversationState').onchange();assert.doesNotMatch(view.get('commentThreadReader').querySelector('.chat-conversation-list').textContent,/Open task/);assert.match(view.get('commentThreadReader').querySelector('.chat-conversation-list').textContent,/Closed task/);
  await chat.options.onThreadState({thread:{kind:'issue',number:7,title:'Open task'},state:'closed',expectedUpdatedAt:'2026-10-29T00:00:00Z',confirmed:true});assert.equal(view.get('commentList').children[0].attributes['data-state'],'closed');assert.match(view.get('commentThreadReader').querySelector('.chat-conversation-list').textContent,/Open task/);assert.equal(note.state,'open');assert.equal(calls.filter(m=>m.type==='chat-thread-state').length,1);assert.equal(calls.some(m=>m.type==='comment-save'),false);view.workspace.dispose();
 });
@@ -1601,7 +1689,7 @@ test('destination dialog restores nested composer controls safely on repeated cl
  for(let i=0;i<2;i++){
   await chooseDestination(view);const dialog=view.get('commentPostReview');assert.equal(dialog.open,true);
   const back=action(dialog,'Back to comment');assert.doesNotThrow(()=>back.click());assert.equal(dialog.open,false);assert.doesNotThrow(()=>dialog.close());
-  assert.equal(view.get('editorDestination').closest('label').parentElement.className,'comment-composer-menu-body');assert.equal(view.get('commentText').value,'Keep this draft');
+  assert.equal(view.get('editorDestination').closest('label').parentElement.hidden,true);assert.equal(view.get('commentText').value,'Keep this draft');
  }
  assert.equal(calls.some(m=>m.type==='comment-save'||m.type==='github-publish-comment'),false);view.workspace.dispose();
 });
@@ -1814,7 +1902,7 @@ test('website handoff stays hidden in connected native viewers without changing 
 test('property field action opens a source-bound draft and saves field context only on explicit save',async()=>{
  const calls=[],view=workspaceRuntime(async m=>{calls.push(m);return [];});view.load();view.get('objectList').children[0].click();
  const rows=view.get('propertyList').children[0].children[1].children,row=rows.find(r=>r.children[0].textContent==='Value');
- row.children[1].children[1].click();assert.equal(view.get('commentEditor').hidden,false);assert.match(view.get('commentAnchor').textContent,/Property: Value/);
+ row.children[1].children[1].click();assert.equal(view.get('commentEditor').hidden,false);assert.equal(view.get('commentAnchor').textContent,'R1');assert.match(view.get('commentAnchor').title,/Property: Value/);
  assert.equal(calls.some(m=>m.type==='comment-save'),false);view.get('commentText').value='Check this value';await view.get('saveComment').click();
  const saved=calls.find(m=>m.type==='comment-save').comment;assert.equal(saved.anchor.reference,'R1');assert.equal(saved.anchor.file,'board.kicad_pcb');assert.equal(saved.anchor.reviewTarget.surface,'property');assert.equal(saved.anchor.reviewTarget.field,'Value');assert.ok(saved.anchor.position);view.workspace.dispose();
 });
@@ -2002,4 +2090,44 @@ test('legacy saved page paths resolve by sheet UUID and absent pages are not inv
  const files=[{path:'root.kicad_sch',content:source},{path:'child.kicad_sch',content:'(kicad_sch)'},{path:'other.kicad_sch',content:'(kicad_sch)'}],view=workspaceRuntime(undefined,{pcb:false,files});
  const rows=view.get('sheetList').children.find(n=>n.classList.contains('sheet-tree')).children,opens=rows.map(row=>row.children.find(n=>n.classList.contains('sheet-open')));
  assert.match(opens[1].getAttribute('aria-label'),/Saved sheet page: 7/);assert.equal(opens[2].getAttribute('aria-label'),null);view.workspace.dispose();
+});
+
+test('browser-session chat omits API-only state actions',()=>{const chat=captureChat(),view=workspaceRuntime(undefined,{chatPanel:chat.panel});view.load();assert.equal(chat.options.browserSession,true);assert.equal(chat.options.onThreadState,undefined);view.workspace.dispose();});
+
+
+test('placing and replacing a point retains conversation destination and unsent message',async()=>{
+ const calls=[],thread={kind:'issue',number:12,title:'Power review',url:'https://github.com/wayri/fixture/issues/12',state:'open',author:'wayri',createdAt:'2026-10-01T00:00:00Z',body:'Review',comments:[],warnings:[]};
+ const view=workspaceRuntime(async m=>{calls.push(m);if(m.type==='github-thread-read')return thread;return[];});view.load();view.get('commentThreadKind').value='issue';view.get('commentThreadNumber').value='12';await view.get('commentThreadLoad').click();
+ const place=()=>{view.get('pointComment').click();const e=new Event('click',{cancelable:true});Object.assign(e,{clientX:420,clientY:320});view.canvas.canvas.dispatchEvent(e);};
+ place();assert.equal(view.get('editorDestination').value,'existing-issue');assert.equal(view.get('editorThreadNumber').value,'12');view.get('commentText').value='Keep this draft';place();assert.equal(view.get('commentText').value,'Keep this draft');assert.equal(view.get('editorDestination').value,'existing-issue');assert.equal(view.get('editorThreadNumber').value,'12');assert.equal(calls.some(m=>m.type==='github-publish-comment'),false);view.workspace.dispose();
+});
+
+test('comment bubble pointer gestures do not dismiss its pane; linked local marker opens its thread',async()=>{
+ const calls=[],note={id:'linked-bubble',text:'Review here',severity:'major',createdAt:'2026-10-01T00:00:00Z',anchor:{repository:'wayri/fixture',ref:'main',file:'board.kicad_pcb',kind:'point',position:{x:0,y:0}},remoteRefs:[{kind:'issue',repository:'wayri/fixture',number:12,url:'https://github.com/wayri/fixture/issues/12',publishedAt:'2026-10-01T00:00:00Z'}]};
+ const view=workspaceRuntime(async m=>{calls.push(m);if(m.type==='comment-list')return[note];if(m.type==='github-thread-read')return{kind:'issue',number:12,title:'Review',url:note.remoteRefs[0].url,state:'open',author:'wayri',createdAt:note.createdAt,body:'Review',comments:[],warnings:[]};return[];});view.load();await view.workspace.refreshComments();const pin=view.get('commentPins').children.find(n=>n.attributes['data-note-id']===note.id);assert.ok(pin);assert.equal(pin.attributes['data-severity'],'major');const down=new Event('pointerdown',{bubbles:true,cancelable:true});pin.dispatchEvent(down);assert.equal(down.cancelBubble,true);await pin.click();await new Promise(setImmediate);assert.ok(calls.some(m=>m.type==='github-thread-read'&&m.number===12));assert.equal(view.get('commentsSidebar').hidden,false);view.workspace.dispose();
+});
+
+
+test('publishing an anchored reply returns to the same issue conversation',async()=>{
+ let notes=[];const calls=[],thread={kind:'issue',number:12,title:'Power review',url:'https://github.com/wayri/fixture/issues/12',state:'open',author:'wayri',createdAt:'2026-10-01T00:00:00Z',body:'Conversation retained',comments:[],warnings:[]};
+ const view=workspaceRuntime(async m=>{calls.push(m);if(m.type==='comment-list')return notes;if(m.type==='github-annotations')return{notes:[],warnings:[]};if(m.type==='comment-save'){notes=[m.comment];return m.comment;}if(m.type==='github-thread-read')return thread;if(m.type==='github-publish-comment')return{remoteRef:{kind:'issue',repository:'wayri/fixture',number:12,url:thread.url+'#issuecomment-99',publishedAt:'2026-11-01T00:00:00Z'}};return[];});view.load();view.get('commentThreadKind').value='issue';view.get('commentThreadNumber').value='12';await view.get('commentThreadLoad').click();
+ view.get('pointComment').click();const e=new Event('click',{cancelable:true});Object.assign(e,{clientX:420,clientY:320});view.canvas.canvas.dispatchEvent(e);view.get('commentText').value='Check the power connector';await sendComment(view);
+ const published=calls.find(m=>m.type==='github-publish-comment');assert.equal(published.destination,'issue');assert.equal(published.number,12);assert.ok(calls.filter(m=>m.type==='github-thread-read'&&m.number===12).length>=2);assert.match(view.get('commentThreadMessages').textContent,/Conversation retained/,view.get('commentThreadStatus').textContent+' / '+view.get('commentStatus').textContent);assert.equal(view.get('commentEditor').hidden,true);view.workspace.dispose();
+});
+
+
+test('sheet occurrences have a single labelled disclosure and readable exact-instance rows',()=>{
+ const files=[{path:'root.kicad_sch',content:'(kicad_sch (uuid root) (sheet (uuid left) (at 10 10) (size 10 10) (property "Sheetname" "Switch Main") (property "Sheetfile" "shared.kicad_sch")) (sheet (uuid right) (at 40 10) (size 10 10) (property "Sheetname" "Switch Redundant") (property "Sheetfile" "shared.kicad_sch")))'},{path:'shared.kicad_sch',content:'(kicad_sch (uuid shared))'}],opened=[],view=workspaceRuntime(undefined,{pcb:false,files,openSheet:(...args)=>opened.push(args)});view.load();
+ const list=view.get('sheetList'),find=className=>descendants(list).filter(n=>n.className===className),toggle=find('sheet-occurrences-toggle')[0];assert.ok(toggle);assert.match(toggle.textContent,/2 instances/);assert.equal(toggle.attributes['aria-expanded'],'false');assert.equal(find('sheet-locate').length,0);assert.equal(find('sheet-occurrence').length,0);toggle.click();
+ const choices=find('sheet-occurrence');assert.equal(choices.length,2);assert.ok(choices.some(n=>n.textContent.includes('Switch Main')));assert.ok(choices.some(n=>n.textContent.includes('Switch Redundant')));const selected=choices.find(n=>n.textContent.includes('Switch Redundant'));selected.click();assert.equal(opened.at(-1)[0],'shared.kicad_sch');assert.equal(opened.at(-1)[2].instancePath,selected.attributes['data-instance-id']);
+ const rootToggle=find('sheet-toggle').find(n=>n.attributes['aria-label']?.startsWith('Collapse '));assert.ok(rootToggle);rootToggle.click();assert.equal(find('sheet-occurrences-toggle').length,0);assert.equal(find('sheet-occurrence').length,0);view.workspace.dispose();
+});
+
+
+test('schematic navigation excludes board files from a mixed loaded project',()=>{
+ const files=[{path:'root.kicad_sch',content:'(kicad_sch)'},{path:'child.kicad_sch',content:'(kicad_sch)'},{path:'board.kicad_pcb',content:'(kicad_pcb)'}],opened=[];
+ const view=workspaceRuntime(async()=>[],{pcb:false,files,openSheet:path=>opened.push(path)});view.load();
+ assert.deepEqual(view.get('sheetSelect').children.map(option=>option.value).sort(),['child.kicad_sch','root.kicad_sch']);
+ view.get('sheetSelect').value='child.kicad_sch';view.get('sheetSelect').onchange();assert.deepEqual(opened,['child.kicad_sch']);
+ view.workspace.dispose();
 });

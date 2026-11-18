@@ -77,6 +77,7 @@
     const fontWidth = value(size?.[1]), fontHeight = value(size?.[2]);
     const justify = form(effects, "justify")?.slice(1).map(value) || [];
     return { bold: hasFlag(font, "bold"), italic: hasFlag(font, "italic"),
+      ...(typeof scalar(effects,"href")==="string"?{href:scalar(effects,"href")}:{}),
       ...(finite(fontWidth) && fontWidth > 0 ? { fontWidth } : {}),
       ...(finite(fontHeight) && fontHeight > 0 ? { fontHeight } : {}),
       ...(savedColor(font)&&savedColor(font)!=="rgba(0,0,0,0)"?{sourceColor:savedColor(font),color:savedColor(font)}:{}),
@@ -110,13 +111,17 @@
   }
   const MAX_IMAGE_BYTES=4*1024*1024,MAX_IMAGE_PIXELS=16000000,MAX_TOTAL_IMAGE_BYTES=8*1024*1024,MAX_TOTAL_IMAGE_PIXELS=16000000;
   const PNG_CRC=Uint32Array.from({length:256},(_,n)=>{for(let bit=0;bit<8;bit++)n=n&1?0xedb88320^(n>>>1):n>>>1;return n>>>0;});
-  function embeddedPNG(node,version){
+  function embeddedImage(node,version){
     const parts=form(node,"data")?.slice(1).map(value);let length=0;
-    if(!parts?.length||parts.some(part=>typeof part!=="string"||(length+=part.length)>Math.ceil(MAX_IMAGE_BYTES/3)*4))throw Error("Embedded PNG exceeds its 4 MiB limit or has invalid base64 data.");
-    const encoded=parts.join("");if(encoded.length%4||! /^[A-Za-z0-9+/]*={0,2}$/.test(encoded))throw Error("Embedded image is not base64 PNG data.");
-    const binary=atob(encoded);if(binary.length>MAX_IMAGE_BYTES||btoa(binary)!==encoded)throw Error("Embedded PNG data is oversized or not canonical base64.");
-    const bytes=Uint8Array.from(binary,char=>char.charCodeAt(0));if(bytes.length<45||[137,80,78,71,13,10,26,10].some((n,i)=>bytes[i]!==n))throw Error("Embedded image is not a PNG.");
-    const view=new DataView(bytes.buffer),read=at=>view.getUint32(at),chunkType=at=>String.fromCharCode(...bytes.subarray(at,at+4));let width=0,height=0,physicalX=null,ended=false,hasData=false,chunks=0;
+    if(!parts?.length)throw Error("No inline bitmap data was saved in the schematic.");
+    if(parts.some(part=>typeof part!=="string"||(length+=part.length)>Math.ceil(MAX_IMAGE_BYTES/3)*4))throw Error("Embedded bitmap exceeds its 4 MiB limit or has invalid base64 data.");
+    const encoded=parts.join("");if(encoded.length%4||! /^[A-Za-z0-9+/]*={0,2}$/.test(encoded))throw Error("Embedded image is not base64 bitmap data.");
+    const binary=atob(encoded);if(binary.length>MAX_IMAGE_BYTES||btoa(binary)!==encoded)throw Error("Embedded bitmap data is oversized or not canonical base64.");
+    const bytes=Uint8Array.from(binary,char=>char.charCodeAt(0)),view=new DataView(bytes.buffer);
+    if(binary.startsWith("BM"))return embeddedBMP(view,encoded,version);
+    if(bytes.length<45||[137,80,78,71,13,10,26,10].some((n,i)=>bytes[i]!==n))throw Error("Embedded image is not a PNG or BMP.");
+    const read=at=>view.getUint32(at),chunkType=at=>String.fromCharCode(...bytes.subarray(at,at+4));
+    const kept=[binary.slice(0,8)];let width=0,height=0,physicalX=null,ended=false,hasData=false,chunks=0;
     for(let at=8;at<bytes.length;){
       if(++chunks>4096||at+12>bytes.length)throw Error("Embedded PNG chunk structure is invalid.");
       const size=read(at),type=chunkType(at+4),end=at+12+size;if(end>bytes.length||!/^[A-Za-z]{4}$/.test(type))throw Error("Embedded PNG chunk is truncated or invalid.");
@@ -129,19 +134,36 @@
       else if(type==="pHYs"){
         if(size!==9||physicalX!==null)throw Error("Embedded PNG physical resolution is invalid.");if(bytes[at+16]===1)physicalX=read(at+8);else if(bytes[at+16]!==0)throw Error("Embedded PNG resolution unit is invalid.");
       }else if(type==="IDAT")hasData=true;
-      else if(type==="IEND"){if(size||end!==bytes.length||!hasData)throw Error("Embedded PNG end marker is invalid.");ended=true;}
-      else if(["acTL","fcTL","fdAT","iCCP","zTXt","iTXt"].includes(type))throw Error("Animated PNGs and compressed image metadata are not supported in the bounded preview.");
+      else if(type==="IEND"){if(size||!hasData)throw Error("Embedded PNG end marker is invalid.");ended=true;}
+      else if(["acTL","fcTL","fdAT"].includes(type))throw Error("Animated PNGs are not supported in the bounded preview.");
       else if(type[0]===type[0].toUpperCase()&&type!=="PLTE")throw Error("Embedded PNG has an unsupported critical chunk.");
+      // Older native saves may contain extra bytes after IEND. Forward only
+      // validated PNG chunks and omit metadata requiring extra decompression.
+      if(!["iCCP","zTXt","iTXt"].includes(type))kept.push(binary.slice(at,end));
+      if(ended)break;
       at=end;
     }
     if(!ended)throw Error("Embedded PNG end marker is missing.");
+    return {dataUrl:"data:image/png;base64,"+btoa(kept.join("")),pixelWidth:width,pixelHeight:height,ppi:imageResolution(physicalX,version),bytes:bytes.length};
+  }
+  function imageResolution(physicalX,version){
     // KiCad parseImage preserves three saved-scale eras. PNG pHYs is pixels/m;
     // pre-20260623 wxWidgets resolution conversion truncated pixels/cm first.
     let ppi=300;if(physicalX!==null&&physicalX/100>1){const corrected=Math.round(physicalX*.0254),legacy=Math.floor(physicalX/100)>1?Math.round(Math.floor(physicalX/100)*2.54):corrected;ppi=version<=20230121?300:version<20260623?legacy:corrected;}
     if(!Number.isFinite(ppi)||ppi<1||ppi>1000000)throw Error("Embedded PNG resolution exceeds the preview limit.");
-    return {dataUrl:"data:image/png;base64,"+encoded,pixelWidth:width,pixelHeight:height,ppi,bytes:bytes.length};
+    return ppi;
   }
-  function pageSettings(ast, warn) {
+  function embeddedBMP(view,encoded,version){
+    const bytes=view.byteLength;
+    if(bytes<54||view.getUint32(2,true)!==bytes||view.getUint32(14,true)!==40)throw Error("Embedded BMP has an unsupported or invalid header.");
+    const offset=view.getUint32(10,true),width=view.getInt32(18,true),height=Math.abs(view.getInt32(22,true)),depth=view.getUint16(28,true);
+    if(width<1||height<1||width*height>MAX_IMAGE_PIXELS||view.getUint16(26,true)!==1||![24,32].includes(depth)||view.getUint32(30,true)!==0)
+      throw Error("Embedded BMP must use uncompressed 24-bit or 32-bit pixels within the 16 megapixel limit.");
+    const pixelBytes=Math.ceil(width*depth/32)*4*height;
+    if(offset<54||offset+pixelBytes!==bytes)throw Error("Embedded BMP pixel data is truncated or invalid.");
+    return {dataUrl:"data:image/bmp;base64,"+encoded,pixelWidth:width,pixelHeight:height,ppi:imageResolution(view.getInt32(38,true),version),bytes};
+  }
+  function pageSettings(ast, warn=()=>{}) {
     const paper = form(ast, "paper"), name = value(paper?.[1]) || "A4";
     let size = PAPERS[name];
     if (name === "User") {
@@ -173,16 +195,17 @@
     const variableText=Compatibility?.textResolver(rootAST,{...sheetOptions,path},warn), variableFields=new Map();
     for(const node of [...forms(rootAST,"symbol"),...forms(rootAST,"sheet")])if(ownId(node))variableFields.set(ownId(node),variableText?.fields(node));
     const resolveText=(string,owner={})=>variableText?.resolve(string,variableFields.get(owner.ownerUuid||owner.uuid)||{})??String(string??"");
+    const textLinks=(string,owner={})=>Compatibility?.textLinks?.(resolveText(string,owner),owner.href===undefined?undefined:resolveText(owner.href,owner))||[];
     const page = pageSettings(rootAST, warn);
     function line(a, b, color, width, owner = {}) {
       if (a && b) emit({ type: "line", points: [a, b], color, width, ...owner });
     }
     function text(position, string, size, angle, color, owner = {}) {
       if (position && string !== undefined && string !== null && String(string)) {
-        const parsed = overbarText(resolveText(string,owner));
+        const parsed = overbarText(resolveText(string,owner)),links=textLinks(string,owner);
         emit({ type: "text", x: position.x, y: position.y, text: parsed.text,
           ...((parsed.bars.length||String(string)!==parsed.text) ? { rawText: String(string) } : {}),
-          size, angle: finite(angle) ? angle : 0, color, ...owner });
+          size, angle: finite(angle) ? angle : 0, color, ...owner,...(links.length?{links}:{}) });
         if (parsed.bars.length) {
           const width = owner.fontWidth || size, height = owner.fontHeight || size;
           const lines = parsed.text.split("\n"), radians = (angle || 0) * Math.PI / 180;
@@ -201,7 +224,7 @@
               // by .02 em. Prefix/suffix advances exclude the pen-width term.
               const x1 = origin + textWidth(content.slice(0, start), width) + width * 0.02;
               const x2 = origin + textWidth(content.slice(0, end), width) - width * 0.18;
-              line(map(x1,y), map(x2,y), color, owner.textThickness || 0.1524, { ...owner, kind: "text-overbar" });
+              line(map(x1,y), map(x2,y), color, owner.textThickness || 0.1524, { ...owner, kind: "text-overbar",...(["label","global_label","hierarchical_label","sheet-pin"].includes(owner.kind)?{electricalKind:owner.kind}:{}) });
             }
             offset += content.length + 1;
           }
@@ -250,7 +273,7 @@
         if (!at || !end || at.x === end.x || at.y === end.y) { warn("Text box without valid position/size was skipped."); return; }
         const textOwner={...owner};for(const key of ["color","sourceColor","lineStyle","fillColor"])delete textOwner[key];
         const left=Math.min(at.x,end.x),right=Math.max(at.x,end.x),top=Math.min(at.y,end.y),bottom=Math.max(at.y,end.y),sizeMM=fontSize(node),style=fontStyle(node),strokeWidth=scalar(form(node,"stroke"),"width"),border=!(finite(strokeWidth)&&strokeWidth<0);
-        emit({type:"polygon",points:[{x:left,y:top},{x:right,y:top},{x:right,y:bottom},{x:left,y:bottom}].map(map),color,width,stroke:border,...(fill?{fill}:{}),...owner});
+        emit({type:"polygon",points:[{x:left,y:top},{x:right,y:top},{x:right,y:bottom},{x:left,y:bottom}].map(map),color,width,stroke:border,...(fill?{fill}:{}),...owner,...(style.href!==undefined?{links:textLinks(value(node[1]),{...owner,href:style.href})}:{})});
         const marginForm=form(node,"margins"),fallbackMargin=sizeMM*.75+(border?width/2:0),margins=marginForm?.slice(1).map(value);
         if(margins&& (margins.length!==4||margins.some(n=>!finite(n)||n<0))){warn("Text box with invalid saved margins has no rendered text.");return;}
         const [ml,mt,mr,mb]=margins||[fallbackMargin,fallbackMargin,fallbackMargin,fallbackMargin],inner={left:left+ml,top:top+mt,right:right-mr,bottom:bottom-mb};
@@ -279,10 +302,24 @@
         if (isHidden(node)) return;
         const at = point(node, "at");
         if (!at) { warn("Text without position was skipped."); return; }
-        const angle = value(form(node, "at")?.[3]) || 0;
-        const origin = map(at), axis = map({ x: at.x + Math.cos(angle * Math.PI / 180), y: at.y + Math.sin(angle * Math.PI / 180) });
-        text(origin, value(node[1]), fontSize(node), Math.atan2(axis.y - origin.y, axis.x - origin.x) * 180 / Math.PI, color,
-          { ...owner, ...fontStyle(node) });
+        // Library graphic text stores its vertical orientation as 900 (tenths
+        // of a degree). KiCad plots both writing directions upright.
+        const localVertical = !!value(form(node, "at")?.[3]);
+        const origin = map(at), right = map({ x: at.x + 1, y: at.y });
+        const up = map({ x: at.x, y: at.y + 1 }), axis = localVertical ? up : right;
+        const dx = axis.x - origin.x, dy = axis.y - origin.y;
+        const vertical = Math.abs(dy) > Math.abs(dx), style = fontStyle(node);
+        if ((vertical ? dy > 0 : dx < 0) && style.align !== "center")
+          style.align = style.align === "left" ? "right" : "left";
+        const rx = right.x - origin.x, ry = right.y - origin.y;
+        const ux = up.x - origin.x, uy = up.y - origin.y;
+        // Native mirrored text flips vertical justification in the local
+        // horizontal orientation for the identity matrix and vertical otherwise.
+        const mirrored = rx * uy - ry * ux > 0;
+        const identityAxes = rx > 0.5 && uy > 0.5;
+        if (mirrored && localVertical !== identityAxes && style.baseline !== "middle")
+          style.baseline = style.baseline === "top" ? "bottom" : "top";
+        text(origin, value(node[1]), fontSize(node), vertical ? -90 : 0, color, { ...owner, ...style });
       } else warn(`Unsupported graphic ${kind} was skipped.`);
     }
     function renderTable(node,owner) {
@@ -405,7 +442,7 @@
     function renderSymbol(node) {
       const at = point(node, "at");
       if (!at) { warn("Placed symbol without position was skipped."); return; }
-      const id = scalar(node, "lib_id") ?? value(node[1]);
+      const id = scalar(node, "lib_name") ?? scalar(node, "lib_id") ?? value(node[1]);
       if (typeof id !== "string") { warn("Placed symbol without library ID was skipped."); return; }
       const unit = scalar(node, "unit") ?? 1, style = scalar(node, "convert") ?? 1;
       const angle = value(form(node, "at")?.[3]) ?? 0;
@@ -422,10 +459,32 @@
       const units = libraryUnits(id, finite(unit) ? unit : 1, finite(style) ? style : 1);
       if (!units.length) warn(`No drawable unit ${unit} style ${style} for ${id}.`);
       const graphicStart = primitives.length;
+      const pinLabels = new Map();
       for (const body of units) for (const item of body) {
         if (!Array.isArray(item)) continue;
         const kind = typeOf(item);
-        if (kind === "pin") renderPin(item, map, owner, mainDefinition || body);
+        if (kind === "pin") {
+          const start = primitives.length;
+          renderPin(item, map, owner, mainDefinition || body);
+          // Coincident visible pins remain separate electrical primitives. Only
+          // coalesce their display labels, otherwise stacked package pins print
+          // several different digits over exactly the same pixels.
+          for (let i = start; i < primitives.length; i++) {
+            const label = primitives[i];
+            if (!["pin-name", "pin-number"].includes(label.kind)) continue;
+            const key = JSON.stringify([label.kind,label.x,label.y,label.angle,label.size,
+              label.align,label.baseline,label.color,label.fontWidth,label.fontHeight,
+              label.fontFace,label.bold,label.italic,label.textThickness,label.lineSpacing,
+              label.href,label.connectPoint,label.kind === "pin-name" ? label.text : null]);
+            const previous = pinLabels.get(key);
+            if (!previous) { pinLabels.set(key,label); continue; }
+            const numbers = previous.pinNumbers || [previous.pinNumber];
+            if (!numbers.includes(label.pinNumber)) numbers.push(label.pinNumber);
+            previous.pinNumbers = numbers;
+            if (label.kind === "pin-number") previous.text = numbers.join(", ");
+            primitives.splice(i--,1);
+          }
+        }
         else if (["polyline", "rectangle", "circle", "arc", "bezier", "text", "text_box"].includes(kind)) drawGraphic(item, map, owner);
         else if (kind === "image") warn(`Symbol graphic ${kind} is not rendered.`);
       }
@@ -479,15 +538,19 @@
       if (isHidden(node)) return;
       const at = point(node, "at");
       if (!at) { warn(`${kind} without position was skipped.`); return; }
-      const content = resolveText(value(node[1]),owner), size = fontSize(node), angle = value(form(node, "at")?.[3]) || 0;
+      const content = resolveText(value(node[1]),owner), size = fontSize(node), savedAngle = value(form(node, "at")?.[3]) || 0;
+      // A sheet pin's saved angle names its sheet edge. Its marker and text
+      // face into the sheet, opposite the corresponding child-sheet label.
+      const angle=kind==="sheet-pin"?((savedAngle+180)%360+360)%360:savedAngle;
       const shape = scalar(node, "shape") || (kind === "sheet-pin" ? value(node[2]) : "input");
       const style = fontStyle(node), color = kind === "global_label" ? COLOR.symbol : "#725600";
       const labelOwner = { ...owner, kind, connectPoint: at };
       const map = transform(at, angle);
       const known = ["input", "output", "bidirectional", "tri_state", "passive"];
       if (!known.includes(shape)) warn(`Unsupported ${kind} shape ${shape}; using passive outline.`);
-      const input = ["input", "bidirectional", "tri_state"].includes(shape);
-      const output = ["output", "bidirectional", "tri_state"].includes(shape);
+      const drawingShape=kind==="sheet-pin"?({input:"output",output:"input"}[shape]||shape):shape;
+      const input = ["input", "bidirectional", "tri_state"].includes(drawingShape);
+      const output = ["output", "bidirectional", "tri_state"].includes(drawingShape);
       let positions, place, labelAngle = -angle;
       // Hierarchical labels and sheet pins use a fixed-size connector icon;
       // global labels enclose text, so their width follows the text metric.
@@ -497,7 +560,7 @@
         else if (input) positions = [{x:0,y:0},{x:h,y:h},{x:size,y:h},{x:size,y:-h},{x:h,y:-h}];
         else if (output) positions = [{x:size,y:0},{x:h,y:-h},{x:0,y:-h},{x:0,y:h},{x:h,y:h}];
         else positions = [{x:0,y:-h},{x:size,y:-h},{x:size,y:h},{x:0,y:h}];
-        place = map({x:size + 0.1905,y:0});
+        place = map({x:(style.fontWidth||size) + 0.1905,y:0});
       } else {
         const arrow = size * 0.875, h = size, padding = size * 0.375;
         // Canvas supplies text rather than KiCad's stroke glyphs. Preserve a
@@ -564,12 +627,12 @@
       } else if (kind === "image") {
         try{
           const at=point(node,"at"),scale=scalar(node,"scale")??1,rotation=scalar(node,"rotate")??0,opacity=scalar(node,"opacity")??1;
-          if(!at||!finite(scale)||scale<=0||!finite(rotation)||!finite(opacity)||opacity<0||opacity>1)throw Error("Embedded PNG has invalid position, scale, rotation or opacity.");
+          if(!at||!finite(scale)||scale<=0||!finite(rotation)||!finite(opacity)||opacity<0||opacity>1)throw Error("Embedded bitmap has invalid position, scale, rotation or opacity.");
           if(imageCount>=16)throw Error("Schematic exceeds its 16-image preview limit.");
-          const png=embeddedPNG(node,Number(scalar(rootAST,"version"))||20230121),pixels=png.pixelWidth*png.pixelHeight;
-          if(imageBytes+png.bytes>MAX_TOTAL_IMAGE_BYTES||imagePixels+pixels>MAX_TOTAL_IMAGE_PIXELS)throw Error("Schematic exceeds its total 8 MiB / 16 megapixel image preview budget.");
-          const width=png.pixelWidth*25.4/png.ppi*scale,height=png.pixelHeight*25.4/png.ppi*scale;if(!finite(width)||!finite(height)||width>100000||height>100000)throw Error("Embedded PNG physical size exceeds the preview limit.");
-          const map=transform(at,rotation);emit({type:"image",dataUrl:png.dataUrl,pixelWidth:png.pixelWidth,pixelHeight:png.pixelHeight,points:[{x:-width/2,y:-height/2},{x:width/2,y:-height/2},{x:width/2,y:height/2},{x:-width/2,y:height/2}].map(map),opacity,...owner});imageBytes+=png.bytes;imagePixels+=pixels;imageCount++;
+          const bitmap=embeddedImage(node,Number(scalar(rootAST,"version"))||20230121),pixels=bitmap.pixelWidth*bitmap.pixelHeight;
+          if(imageBytes+bitmap.bytes>MAX_TOTAL_IMAGE_BYTES||imagePixels+pixels>MAX_TOTAL_IMAGE_PIXELS)throw Error("Schematic exceeds its total 8 MiB / 16 megapixel image preview budget.");
+          const width=bitmap.pixelWidth*25.4/bitmap.ppi*scale,height=bitmap.pixelHeight*25.4/bitmap.ppi*scale;if(!finite(width)||!finite(height)||width>100000||height>100000)throw Error("Embedded bitmap physical size exceeds the preview limit.");
+          const map=transform(at,rotation);emit({type:"image",dataUrl:bitmap.dataUrl,pixelWidth:bitmap.pixelWidth,pixelHeight:bitmap.pixelHeight,points:[{x:-width/2,y:-height/2},{x:width/2,y:-height/2},{x:width/2,y:height/2},{x:-width/2,y:height/2}].map(map),opacity,...owner});imageBytes+=bitmap.bytes;imagePixels+=pixels;imageCount++;
         }catch(error){warn("Schematic image was not rendered: "+error.message);}
       } else if (["embedded_files", "rule_area"].includes(kind)) {
         warn(`Schematic construct ${kind} is not rendered.`);
@@ -577,6 +640,6 @@
     }
     return { primitives, page, warnings, compatibility };
   }
-  root.KiCadSchematicRenderer = { build };
+  root.KiCadSchematicRenderer = { build, pageSettings };
   if (typeof module === "object" && module.exports) module.exports = root.KiCadSchematicRenderer;
 })(typeof globalThis === "object" ? globalThis : this);

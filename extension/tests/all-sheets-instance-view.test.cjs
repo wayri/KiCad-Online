@@ -47,6 +47,18 @@ test('stacked canvas preserves front-copy picking identity and routes airwires t
  assert.ok(result.design.primitives.some(p=>p.text==='Root / Left'));
 });
 const page=(path,placements=[])=>({path,label:path,placements,design:{page:{width:297,height:210},primitives:[]},groups:[]});
+
+test('broad all-sheet hierarchies wrap into readable ranks with bounded titles and intact identities',()=>{
+ const root=page('root',[{id:'root'}]),entries=[root,...Array.from({length:30},(_,i)=>({...page('sheets/child-'+String(i).padStart(2,'0'),[{id:'child-'+i,parentId:'root'}]),label:'SubSheets/Shared_very_long_hierarchical_sheet_name_'+i+'.kicad_sch',instanceCount:64,instanceLabel:'Root / repeated channel '+i}))];
+ const result=composeSheetOverview(entries),pages=result.pages,byPath=new Map(pages.map(p=>[p.path,p]));
+ assert.equal(pages.length,31);assert.ok(result.design.page.width<=7*(297+35),'wide branches use at most seven columns');
+ assert.ok(new Set(pages.slice(1).map(p=>p.y)).size>1,'children wrap into several rows');
+ for(const a of pages)for(const b of pages)if(a!==b)assert.ok(a.x+a.w+3<=b.x||b.x+b.w+3<=a.x||a.y+a.h+32<=b.y||b.y+b.h+32<=a.y,'paper and header gutters do not overlap');
+ for(const child of pages.slice(1))assert.ok(child.y>pages[0].y,'all descendants stay below their parent');
+ const titles=result.design.primitives.filter(p=>p.kind==='overview-title');assert.equal(titles.length,31);assert.ok(titles.every(p=>p.maxTextWidth===297&&p.minDisplayWidthPx>=60));assert.ok(titles[1].text.endsWith(' ×64'));assert.ok(!titles[1].text.includes('SubSheets/'));
+ const reordered=composeSheetOverview([...entries].reverse());for(const p of reordered.pages)assert.deepEqual([p.x,p.y],[byPath.get(p.path).x,byPath.get(p.path).y]);
+ assert.equal(pages[1].instanceCount,64);assert.equal(pages[1].path,entries[1].path);assert.equal(entries[1].label.includes('.kicad_sch'),true,'saved/source labels are not rewritten');
+});
 test('overview lays parents above descendants and centers branches without overlapping pages',()=>{
  const entries=[page('z-root',[{id:'root'}]),page('a-left',[{id:'left',parentId:'root'}]),page('b-right',[{id:'right',parentId:'root'}]),page('c-grandchild',[{id:'grandchild',parentId:'left'}])];
  const pages=composeSheetOverview(entries).pages,byPath=new Map(pages.map(p=>[p.path,p]));
@@ -65,4 +77,40 @@ test('shared sheets stay below every resolved parent, and malformed ancestry rem
  pages=composeSheetOverview(entries).pages;assert.equal(pages.length,entries.length);
  assert.ok(pages.every(p=>Number.isFinite(p.x)&&Number.isFinite(p.y)));
  assert.deepEqual(entries[2].placements,[{id:'one',parentId:'root'},{id:'two',parentId:'branch'}]);
+});
+
+
+test('KiCad 6 spaced sheet properties survive discovery, model preparation and instance net mapping',async()=>{
+ const data=require('../browser-data.js'),diff=require('../design-diff.js'),model=require('../design-model.js');
+ const child='design/FPGA_PWR&MISC.kicad_sch',root='design/Marble.kicad_sch';
+ const sources=new Map([[root,'(kicad_sch (uuid root) (sheet (uuid power) (property "Sheet name" "FPGA_PWR&MISC") (property "Sheet file" "FPGA_PWR&MISC.kicad_sch")))'],[child,'(kicad_sch (uuid power-root))']]);
+ const loaded=await data.loadProject('BerkeleyLab/Marble','main',root,async(_repo,_ref,path)=>sources.get(path)??null);
+ assert.equal(loaded.length,2);
+ const prepared=model.buildProject(loaded,null,diff.prepareProject(loaded));
+ const entries=sheetOverviewEntries(prepared.sheets,prepared.objects.filter(o=>o.kind==='sheet'));
+ assert.equal(entries.length,2);const placements=entries.flatMap(e=>e.placements);
+ assert.equal(placements.find(p=>p.path===child).parentId,placements.find(p=>p.path===root).id);
+ const parent=net('power-in',root,{sheetPins:[{sheetId:'power',name:'VCC'}]}),target=net('power-out',child,{hierarchicalNames:['VCC']});
+ const result=resolve([parent,target],[parent.id],placements);
+ assert.deepEqual(result.matches.map(m=>m.net.id).sort(),['power-in','power-out']);assert.equal(result.links.length,1);
+});
+
+
+test('mixed paper sizes pack with a fixed small gap rather than maximum-width cells',()=>{
+ const entries=[80,100,300].map((width,i)=>({path:String(i),label:String(i),design:{page:{width,height:100},primitives:[]},groups:[]}));
+ const result=composeSheetOverview(entries),pages=[...result.pages].sort((a,b)=>a.x-b.x);
+ for(let i=1;i<pages.length;i++)assert.equal(pages[i].x-(pages[i-1].x+pages[i-1].w),24);
+ assert.equal(result.design.page.width,528);assert.ok(result.design.page.height<210);
+});
+test('saved sheet-symbol positions order mixed-size branches and center their descendants',()=>{
+ const diff=require('../design-diff.js'),model=require('../design-model.js');
+ const symbol=(name,x)=>`(sheet (at ${x} 20) (uuid id-${name}) (property "Sheetname" "${name}") (property "Sheetfile" "${name}.kicad_sch"))`;
+ const files=[['root',symbol('alpha',150)+symbol('zeta',20)],['alpha',''],['zeta',symbol('leaf',40)],['leaf','']].map(([name,body])=>({path:name+'.kicad_sch',content:`(kicad_sch (uuid root-${name}) ${body})`}));
+ const prepared=model.buildProject(files,null,diff.prepareProject(files));
+ const overview=(sheets,objects)=>composeSheetOverview(sheetOverviewEntries(sheets,objects).map(e=>({...page(e.sheet.path,e.placements),design:{page:{width:e.sheet.path==='leaf.kicad_sch'?225:100,height:120},primitives:[]}}))).pages;
+ const symbols=prepared.objects.filter(o=>o.kind==='sheet'),pages=overview(prepared.sheets,symbols),byPath=new Map(pages.map(p=>[p.path,p]));
+ const [root,alpha,zeta,leaf]=files.map(f=>byPath.get(f.path)),center=p=>p.x+p.w/2;
+ assert.ok(zeta.x+zeta.w<alpha.x);assert.equal(center(zeta),center(leaf));
+ assert.equal(center(root),(leaf.x+alpha.x+alpha.w)/2);
+ for(const p of overview([...prepared.sheets].reverse(),[...symbols].reverse()))assert.deepEqual([p.x,p.y],[byPath.get(p.path).x,byPath.get(p.path).y]);
 });

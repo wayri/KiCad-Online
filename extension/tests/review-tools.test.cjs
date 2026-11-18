@@ -12,6 +12,14 @@ test('evidence crop respects camera flip, device pixel ratio and visible clippin
  const camera=new Camera(800,600);camera.center.set(0,0);camera.zoom=10;const canvas={width:1600,height:1200,getBoundingClientRect:()=>({width:800,height:600})};
  const a=tools.crop(canvas,camera,{x:1,y:2,width:3,height:4});camera.flipped=true;const b=tools.crop(canvas,camera,{x:1,y:2,width:3,height:4});assert.equal(a.width,60);assert.equal(a.height,80);assert.equal(b.width,60);assert.notEqual(a.x,b.x);assert.throws(()=>tools.crop(canvas,camera,{x:10000,y:2,width:3,height:4}),/outside/);
 });
+
+test('area capture uses logical viewport dimensions through CSS scaling and all four rotated corners',()=>{
+ const camera=new Camera(800,600);camera.center.set(0,0);camera.zoom=10;camera.quarterTurns=.5;
+ const canvas={width:1600,height:1200,getBoundingClientRect:()=>({left:200,top:100,width:400,height:300})},area={x:-4,y:-2,width:8,height:4};
+ const crop=tools.crop(canvas,camera,area),expected=12*10/Math.SQRT2*2;
+ assert.ok(Math.abs(crop.width-expected)<1e-8);assert.ok(Math.abs(crop.height-expected)<1e-8);
+ camera.flipped=true;const flipped=tools.crop(canvas,camera,area);assert.ok(Math.abs(flipped.width-expected)<1e-8);assert.ok(Math.abs(flipped.height-expected)<1e-8);
+});
 test('captured PNG persists in sidecar without inflating a GitHub marker or injecting URLs',()=>{
  const note={id:'capture',text:'Check this region',createdAt:'2026-10-04T00:00:00Z',anchor:{repository:'wayri/board',ref:'main',file:'board.kicad_pcb',area:{x:0,y:0,width:10,height:5}},capture:{mime:'image/png',dataUrl:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==',width:10,height:5}};
  assert.deepEqual(comments.parseSidecar(comments.serializeSidecar([note]))[0].capture,note.capture);

@@ -180,3 +180,20 @@ test('native GitHub HTML upload markup preserves exact draft, asset identity and
  for(const altered of [image.replace('768','767'),image.replace('370','371'),image.replace('alt="Image"','alt="Image" onload="alert(1)"'),image.replace('alt="Image"','alt="Image" src="'+url+'"'),image.replace(url,'https://evil.test/image.png'),image+'extra text',image+'<script>alert(1)</script>',image+image,image.replace('alt="Image"','alt="Image" style="color:red"')])assert.equal(api.uploadedScreenshot(original+'\n'+altered,original,capture,url),false,altered);
  assert.equal(api.uploadedScreenshot(original.replace('KEEP','CHANGED')+'\n'+image,original,capture,url),false);
 });
+
+test('repository website mentions read only the homepage contributor section and reuse its bounded result',async()=>{
+ const repository='owner/repo',location={href:'https://github.com/owner/repo/issues/2'},document={querySelector:()=>null};
+ const links=['/Alice','/alice','//outside.test/a','/other/repo','/Bob'].map(href=>({getAttribute:()=>href}));
+ const section={querySelectorAll:selector=>selector==='li a[href]'?links:[]};
+ const homepage={querySelectorAll:()=>[{getAttribute:()=>'/other/repo/graphs/contributors',closest:()=>{throw Error('wrong repository');}},{getAttribute:()=>'/owner/repo/graphs/contributors',closest:()=>section}]};
+ let reads=0;
+ const client=api.create({document,location,parseHTML:()=>homepage,fetch:async(url,options)=>{
+  reads++;assert.equal(url,'https://github.com/owner/repo');assert.equal(options.credentials,'same-origin');assert.equal(options.redirect,'error');
+  return new Response('homepage',{headers:{'Content-Type':'text/html'}});
+ }});
+ const lookup=query=>client.dispatch({action:'mentions',repository,query});
+ assert.deepEqual((await lookup('@AL')).users.map(u=>u.login),['Alice']);
+ assert.deepEqual((await lookup('')).users.map(u=>u.login),['Alice','Bob']);
+ assert.equal(reads,1);await assert.rejects(lookup('a'.repeat(65)),/query/);
+ location.href='https://github.com/other/repo';await assert.rejects(lookup('bob'),/matching GitHub repository/);
+});

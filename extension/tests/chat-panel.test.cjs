@@ -25,7 +25,7 @@ function harness(overrides={}){
   confirmSend:async value=>{confirmations.push(value);return true;},onRead:async(kind,number)=>reads.push({kind,number}),
   createAnnotation:(text,extra)=>comments.validateComment({id:extra.id,text,createdAt:'2026-10-27T05:00:00.000Z',severity:extra.severity,state:extra.state,anchor:{...scope,reference:'U3',uuid:'component-3',kind:'footprint'}}),
   onSaveDraft:async note=>saved.push(note),onSaveTextDraft:async draft=>savedText.push(draft),...overrides};
- const api=mount(options),find=className=>walk(container).find(node=>node.className?.split(' ').includes(className)),byId=id=>walk(container).find(node=>node.id===id);
+ const api=mount(options),find=className=>walk(doc.body).find(node=>node.className?.split(' ').includes(className)),byId=id=>walk(doc.body).find(node=>node.id===id);
  const type=text=>{const input=byId('chatMessageText');input.value=text;input.selectionStart=text.length;input.selectionEnd=text.length;input.oninput();return input;};
  return{api,doc,container,host,requests,confirmations,reads,saved,savedText,timers,events,find,byId,type,options,setScope:value=>{scope=value;},setRequest:fn=>{options.request=fn;}};
 }

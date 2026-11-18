@@ -32,6 +32,7 @@ function viewer(parameters, read, extras={}) {
   const get = (id) => { if (!elements.has(id)) elements.set(id, new Element()); return elements.get(id); };
   get('changesPanel').hidden = true; get('changeFilter').value = 'all';
   const timers=new Set();const calls = [], listeners = new Map(), parentMessages=[],parent={postMessage:(message,origin)=>parentMessages.push({message,origin})};
+  const document={getElementById:get,createElement:tag=>new Element(tag)};
   vm.runInNewContext(source, { URL, URLSearchParams, Number, Map, Set, Promise, parent,crypto:require('node:crypto').webcrypto,
     setTimeout:(fn,ms)=>{const timer={fn,ms};timers.add(timer);return timer;},clearTimeout:timer=>timers.delete(timer),
     KiCadGitHub: require('../parsing.js'), KiCadBrowserData: data, KiCadDesignDiff: diff, KiCadViewState: viewState, KiCadPairedReview:pairedReview,
@@ -39,8 +40,8 @@ function viewer(parameters, read, extras={}) {
     matchMedia: () => ({ matches: true }), addEventListener: (name, callback) => {const all=listeners.get(name)||[];all.push(callback);listeners.set(name,all);},
     chrome: { runtime: { getURL: (name) => 'chrome-extension://test-id/'+name,
       sendMessage: async (message) => { calls.push(message); return read(message); } } },
-    document: { getElementById: get, createElement: (tag) => new Element(tag) },...extras });
-  return { get, calls, parent, parentMessages,expire:()=>{for(const timer of [...timers])timer.fn();},dispatch:(type,event)=>listeners.get(type)?.forEach(fn=>fn(event)),pagehide:()=>listeners.get('pagehide')?.forEach(fn=>fn()), message: (event) => listeners.get('message').forEach(callback=>callback(event)), click: (text) => get('toolbar').children.find((node) => node.textContent === text).click() };
+    document,...extras });
+  return { get, document, calls, parent, parentMessages,expire:()=>{for(const timer of [...timers])timer.fn();},dispatch:(type,event)=>listeners.get(type)?.forEach(fn=>fn(event)),pagehide:()=>listeners.get('pagehide')?.forEach(fn=>fn()), message: (event) => listeners.get('message').forEach(callback=>callback(event)), click: (text) => get('toolbar').children.find((node) => node.textContent === text).click() };
 }
 const parameters = {repository:'wayri/board', headRepository:'fork/board', file:'new.kicad_sch',
   oldFile:'old.kicad_sch', base:'a'.repeat(40), head:'b'.repeat(40)};
@@ -457,4 +458,10 @@ test('only the primary drawing relays explicit workspace theme changes to detach
  view.get('workspaceTheme').click();
  assert.equal(head.messages.at(-1).message.syncDetached,true);assert.equal(pair.messages.at(-1).message.syncDetached,false);
  assert.equal(head.messages.at(-1).message.drawingTheme,'dark');assert.equal(pair.messages.at(-1).message.drawingTheme,'dark');
+});
+
+
+test('workspace shows a stable project name and identifies the project in its tab title',async()=>{
+ const view=viewer({...parameters,file:'hardware/My Controller.kicad_sch'},async()=>({ok:true,result:[]}));await tick();
+ assert.equal(view.get('workspaceProjectName').textContent,'My Controller');assert.match(view.get('workspaceProjectName').title,/wayri\/board/);assert.match(view.document.title,/^My Controller · Schematic — KiCad Online$/);
 });

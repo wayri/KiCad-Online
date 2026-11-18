@@ -15,6 +15,22 @@
   const here=new URL(location.href);
   if(here.origin!=='https://github.com'||here.username||here.password||here.pathname.split('/').slice(1,3).join('/').toLowerCase()!==repository.toLowerCase())throw problem('Keep the matching GitHub repository tab open.');
  }
+ const contributorPages=new WeakMap();
+ function contributorUsers(doc,repository){
+  const users=new Map(),path='/'+repository.toLowerCase()+'/graphs/contributors';
+  for(const heading of doc.querySelectorAll('h2 a[href], h3 a[href]')){
+   if(heading.getAttribute('href')?.toLowerCase()!==path)continue;
+   const section=heading.closest('.BorderGrid-cell');
+   if(!section)continue;
+   for(const link of section.querySelectorAll('li a[href]')){
+    const profile=link.getAttribute('href'),login=profile?.slice(1);
+    if(profile?.startsWith('/')&&LOGIN.test(login||'')&&!users.has(login.toLowerCase()))users.set(login.toLowerCase(),{login,roles:['Contributor'],url:'https://github.com/'+login});
+    if(users.size>=64)break;
+   }
+   break;
+  }
+  return [...users.values()];
+ }
  function login(doc){const value=doc.querySelector('meta[name="user-login"]')?.getAttribute('content');return LOGIN.test(value||'')?value:null;}
  function discussionForm(form,nodes,repository,path){
   let url;try{url=new URL(form?.getAttribute('action')||'','https://github.com');}catch{}
@@ -167,7 +183,7 @@
    const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);
    try{
     const response=await fetcher(url,{credentials:'same-origin',redirect:'error',cache:'no-store',headers:{Accept:'text/html'},signal:controller.signal});
-    if(response.status===404){const feature=path.startsWith('/discussions')?'Discussions':'Issues';throw problem('GitHub returned HTTP 404 for '+feature+' in this repository. Check that '+feature+' is enabled and available to the signed-in account in the matching browser session. Nothing was posted; your draft is kept.');}
+    if(response.status===404){if(path==='')throw problem('GitHub could not open this repository homepage.');const feature=path.startsWith('/discussions')?'Discussions':'Issues';throw problem('GitHub returned HTTP 404 for '+feature+' in this repository. Check that '+feature+' is enabled and available to the signed-in account in the matching browser session. Nothing was posted; your draft is kept.');}
     if(!response.ok||response.url&&response.url!==url||!/text\/html/i.test(response.headers.get('content-type')||''))throw problem('GitHub website review access is unavailable. Open the repository tab and complete its sign-in or SSO.');
     if(Number(response.headers.get('content-length'))>8*1024*1024)throw problem('GitHub review page exceeds its size budget.');
     const reader=response.body.getReader(),chunks=[];let size=0;
@@ -180,8 +196,24 @@
    const {repository,action,number}=message,kind=message.kind||'issue';scope(repository,location);if(!['issue','discussion'].includes(kind))throw problem('Unsupported website conversation type.');const currentComposer=()=>composer(document,{repository,number,kind});
    const creating=['prepare-create','verify-create','commit-create'].includes(action);
    const snapshot=(doc)=>kind==='discussion'?discussionData(doc,repository,number):threadData(doc,repository,number);
-   if(!['inspect','read','prepare','verify','commit','list','categories','prepare-create','verify-create','commit-create','update-prepared','lease-inspect'].includes(action)||!['list','categories','lease-inspect'].includes(action)&&!creating&&action!=='update-prepared'&&!integer(number))throw problem('Unsupported website review operation.');
+   if(!['inspect','read','prepare','verify','commit','list','categories','mentions','prepare-create','verify-create','commit-create','update-prepared','lease-inspect'].includes(action)||!['list','categories','mentions','lease-inspect'].includes(action)&&!creating&&action!=='update-prepared'&&!integer(number))throw problem('Unsupported website review operation.');
    if(action==='lease-inspect')return {safeToNavigate:leaseSafe(document,location)};
+   if(action==='mentions'){
+    const query=message.query??'';
+    if(typeof query!=='string'||query.length>64||/[\x00-\x1f\x7f]/.test(query))throw problem('Invalid contributor query.');
+    const account=login(document),identity=repository.toLowerCase();
+    let entry=contributorPages.get(document);
+    if(!entry||entry.repository!==identity||entry.account!==account||entry.expires<Date.now()){
+     const atRoot=new URL(location.href).pathname.replace(/\/$/,'').toLowerCase()==='/'+identity;
+     const load=atRoot?Promise.resolve(document):page(repository,'');
+     entry={repository:identity,account,expires:Date.now()+30000,users:load.then(doc=>contributorUsers(doc,repository))};
+     contributorPages.set(document,entry);
+    }
+    let users;try{users=await entry.users;}catch(error){if(contributorPages.get(document)===entry)contributorPages.delete(document);throw error;}
+    scope(repository,location);if(login(document)!==account)throw problem('GitHub account changed. Look up contributors again.');
+    const term=query.trim().replace(/^@/,'').toLowerCase();
+    return {users:users.filter(user=>user.login.toLowerCase().includes(term)).slice(0,25),warnings:[users.length?'Suggestions include contributors shown on the repository homepage.':'The repository homepage exposed no contributors.']};
+   }
    if(action==='categories'){
     const doc=await page(repository,'/discussions/new/choose'),categories=new Map();
     for(const link of [...doc.querySelectorAll('a[href]')].slice(0,500)){let url;try{url=new URL(link.getAttribute('href'),'https://github.com');}catch{continue;}

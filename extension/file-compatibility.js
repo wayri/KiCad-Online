@@ -66,6 +66,16 @@
   return {value:expand(text,0,true),expressions};
  }
  // Resolve saved text only: no environment, filesystem access or dynamic code execution.
+ function textLinks(text,href){
+  const target=input=>{if(typeof input!=='string'||input.length>4096||/[\x00-\x20\x7f]/.test(input))return null;
+   if(/^#[^#/?\\]{1,64}$/.test(input))return {kind:'sheet',page:input.slice(1),target:input};
+   if(!/^https?:\/\//i.test(input))return null;
+   try{const url=new URL(input);if(url.username||url.password||!url.hostname)return null;return {kind:'web',target:url.href};}catch{return null;}
+  };
+  if(href!==undefined&&href!=='')return [target(href)].filter(Boolean);
+  const links=new Map();for(const match of String(text??'').slice(0,65536).matchAll(/https?:\/\/[^\s<>"\u0000-\u001f]+/gi)){const link=target(match[0].replace(/[.,;!]+$/,''));if(link)links.set(link.target,link);if(links.size>=32)break;}
+  return [...links.values()];
+ }
  function textResolver(ast,options={},warn=()=>{}){
   const fields=node=>{const result=Object.fromEntries((node||[]).filter(x=>Array.isArray(x)&&value(x[0])==='property').map(x=>[String(value(x[1])),String(value(x[2])??'')]));for(const key of ['Reference','Value','Footprint','Datasheet','Description'])if(Object.prototype.hasOwnProperty.call(result,key))result[key.toUpperCase()]=result[key];return result;};
   const sheetContexts=(options.sheetContexts||[]).map(context=>({...context,fields:Object.assign(Object.create(null),context.fields)})),blocked=new Set(options.unavailableVariables||[]);
@@ -79,6 +89,9 @@
   for(const [key,text] of [['#',options.sheetNumber],['##',options.sheetCount],['SHEETNAME',options.sheetName],['PROJECTNAME',options.projectName]])if(text!==undefined)save(key,String(text),'Sheet context');
   const references=new Map();
   for(const node of ast||[]){if(!Array.isArray(node)||!['symbol','footprint','module'].includes(value(node[0])))continue;const local=fields(node),ref=local.Reference;if(ref)references.set(ref,references.has(ref)?null:local);}
+  // Symbol fields are case-insensitive in KiCad. Sheet and project bindings
+  // retain their saved case; never fold the entire hierarchy into one map.
+  const objectKey=(owner,key)=>{if(Object.prototype.hasOwnProperty.call(owner||{},key))return key;const matches=Object.keys(owner||{}).filter(name=>name.toUpperCase()===key.toUpperCase());return matches.length===1?matches[0]:null;};
   const reported=new Set();
   function inspectText(input,local={},scopeStart=0,projectOnly=false){
    const raw=String(input??''),variables=new Map(),unresolved=new Set();
@@ -88,8 +101,8 @@
    const expand=(text,chain=[],owner=local,start=0,globalOnly=false)=>text.replace(/\$\{([^{}]{1,200})\}/g,(token,key)=>{
     const separator=key.lastIndexOf(':'),target=separator>0?references.get(key.slice(0,separator)):null,field=separator>0?key.slice(separator+1):key;
     let own,lookup=key,source,nextOwner=owner,nextStart=start,nextGlobal=globalOnly;
-    if(!globalOnly&&separator>0&&references.has(key.slice(0,separator))){own=target;lookup=field;source='Reference '+key.slice(0,separator);nextOwner=target||{};}
-    else if(!globalOnly&&Object.prototype.hasOwnProperty.call(owner,key)){own=owner;source=owner===local?'Selected object field':'Referenced object field';}
+    if(!globalOnly&&separator>0&&references.has(key.slice(0,separator))){own=target;lookup=objectKey(target,field);source='Reference '+key.slice(0,separator);nextOwner=target||{};}
+    else if(!globalOnly&&objectKey(owner,key)!==null){own=owner;lookup=objectKey(owner,key);source=owner===local?'Selected object field':'Referenced object field';}
     else if(!globalOnly&&blocked.has(key)){source='Ambiguous sheet instance';}
     else {
      let index=globalOnly?-1:sheetContexts.findIndex((context,i)=>i>=start&&Object.prototype.hasOwnProperty.call(context.fields,key));
@@ -135,10 +148,12 @@
    if(++visited>512||ancestors.length>=32||ancestors.includes(file)){incomplete=true;return;}
    const ast=read(file);if(!ast)return;
    const id=ids.every(Boolean)?'/'+ids.join('/'):null,name=names.every(item=>typeof item==='string')?(names.length?'/'+names.join('/')+'/':'/'):undefined;
-   if(file===path)candidates.push({instancePath:id,sheetContexts:contexts,sheetName:names.length?names.at(-1):'/',sheetPath:name});
+   if(file===path)candidates.push({instancePath:id,parentPath:ancestors.at(-1)||null,parentInstancePath:ids.length>1&&ids.every(Boolean)?'/'+ids.slice(0,-1).join('/'):null,sheetContexts:contexts,sheetName:names.length?names.at(-1):'/',sheetPath:name,...(pageNumbers.has(id)?{sheetNumber:pageNumbers.get(id)}:{})});
    for(const sheet of (ast||[]).filter(item=>Array.isArray(item)&&value(item[0])==='sheet')){
     const fields=props(sheet),target=relative(file,fields.Sheetfile??fields['Sheet file']),uuid=field(sheet,'uuid');if(!target||!byPath.has(target))continue;
     const sheetName=fields.Sheetname??fields['Sheet name'],nextIds=ids.concat(uuid),nextNames=names.concat(sheetName);
+    const nextId=nextIds.every(Boolean)?'/'+nextIds.join('/'):null;
+    for(const instances of (sheet||[]).filter(item=>Array.isArray(item)&&value(item[0])==='instances'))for(const project of instances.filter(item=>Array.isArray(item)&&value(item[0])==='project'))for(const entry of project.filter(item=>Array.isArray(item)&&value(item[0])==='path'))if(String(value(entry[1])).replace(/\/$/,'')===id){const page=field(entry,'page');if(nextId&&page!==undefined)pageNumbers.set(nextId,String(page));}
     const bindings={...fields,SHEETFILE:fields.Sheetfile??fields['Sheet file']};if(sheetName!==undefined)bindings.SHEETNAME=sheetName;
     if(nextNames.every(item=>typeof item==='string'))bindings.SHEETPATH='/'+nextNames.join('/')+'/';
     visit(target,[{fields:bindings,source:bindings.SHEETPATH?'Sheet '+bindings.SHEETPATH:'Sheet fields ('+target+')',instancePath:nextIds.every(Boolean)?'/'+nextIds.join('/'):null},...contexts],nextIds,nextNames,ancestors.concat(file));
@@ -149,7 +164,9 @@
   const parents=new Map();for(const file of (files||[]).slice(0,512))for(const sheet of (read(file.path)||[]).filter(item=>Array.isArray(item)&&value(item[0])==='sheet')){const fields=props(sheet),target=relative(file.path,fields.Sheetfile??fields['Sheet file']);if(target&&byPath.has(target)){if(!parents.has(target))parents.set(target,new Set());parents.get(target).add(file.path);}}
   const roots=new Set(),seen=new Set();function ascend(file){if(seen.has(file)){return;}seen.add(file);const incoming=parents.get(file);if(!incoming?.size)roots.add(file);else for(const parent of incoming)ascend(parent);}
   ascend(rootFile);if(roots.size===1)rootFile=[...roots][0];else if(roots.size!==1)incomplete=true;
-  const rootAst=read(rootFile);visit(rootFile,[],[field(rootAst,'uuid')],[],[]);
+  const rootAst=read(rootFile),rootId=field(rootAst,'uuid'),pageNumbers=new Map();
+  for(const group of (rootAst||[]).filter(item=>Array.isArray(item)&&value(item[0])==='sheet_instances'))for(const entry of group.filter(item=>Array.isArray(item)&&value(item[0])==='path')){const parts=String(value(entry[1])).split('/').filter(Boolean);if(parts[0]!==rootId)parts.unshift(rootId);const page=field(entry,'page');if(parts.every(Boolean)&&page!==undefined)pageNumbers.set('/'+parts.join('/'),String(page));}
+  visit(rootFile,[],[rootId],[],[]);
   const selected=instancePath?candidates.filter(item=>item.instancePath?.replace(/\/$/,'')===String(instancePath).replace(/\/$/,'')):candidates;
   if(selected.length===1&&!incomplete)return {...selected[0],contextStatus:'resolved',instances:candidates};
   const unavailableVariables=[...new Set([...candidates.flatMap(item=>item.sheetContexts.flatMap(context=>Object.keys(context.fields))),'SHEETNAME','SHEETPATH','#'])];
@@ -210,5 +227,5 @@
   const refresh=()=>{const info=read();button.textContent=info?.restrictedPreview?'Legacy · Restricted':info?.majorVersion?`KiCad ${info.majorVersion} · Features`:'File features';if(dialog.open)dialog.close();};refresh();
   return {refresh,check(id){const feature=features.find(f=>f.id===id);return feature?explain(feature):false;},dispose(){dialog.remove();button.remove();}};
  }
- root.KiCadFileCompatibility={textResolver,textContext,textExpressions,inspect,features,capability,mountStatus};if(typeof module==='object'&&module.exports)module.exports=root.KiCadFileCompatibility;
+ root.KiCadFileCompatibility={textResolver,textContext,textExpressions,textLinks,inspect,features,capability,mountStatus};if(typeof module==='object'&&module.exports)module.exports=root.KiCadFileCompatibility;
 })(typeof globalThis==='object'?globalThis:this);

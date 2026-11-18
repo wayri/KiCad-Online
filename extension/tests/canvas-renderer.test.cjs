@@ -26,11 +26,13 @@ test('cubic graphics use their actual curve for drawing and picking, including o
  assert.equal(core.hitPrimitive(curve,{x:405,y:7.5},.02),true);assert.equal(core.hitPrimitive(curve,{x:405,y:10},.02),false);assert.equal(core.hitPrimitive({...curve,fill:true},{x:405,y:3},.02),true);
  const {canvas,operations}=runtime();canvas.setDocument({primitives:[curve],layers:[]},'drawing');canvas.viewport.camera.bbox={x:398,y:-2,w:14,h:14};operations.length=0;canvas.draw();assert.ok(operations.some(row=>row[0]==='bezierCurveTo'));canvas.dispose();
 });
-test('embedded PNGs decode once, use saved world geometry and release pending loads on source replacement',()=>{
+test('embedded bitmaps decode once, use saved world geometry and release pending loads on source replacement',()=>{
  const decoded=[];class Image{constructor(){decoded.push(this);}set src(value){this.source=value;}get src(){return this.source;}}
  const {canvas,operations}=runtime(1,{Image}),png={type:'image',uuid:'png',pixelWidth:2,pixelHeight:1,dataUrl:'data:image/png;base64,iVBORw0KGgoAAA==',points:[{x:400,y:10},{x:420,y:10},{x:420,y:20},{x:400,y:20}]};
  canvas.primitives=[png];canvas.viewport.camera.bbox={x:395,y:5,w:30,h:20};canvas.draw();assert.equal(decoded.length,1);assert.equal(decoded[0].decoding,'async');decoded[0].naturalWidth=2;decoded[0].naturalHeight=1;decoded[0].onload();operations.length=0;canvas.draw();assert.ok(operations.some(row=>row[0]==='drawImage'));assert.equal(decoded.length,1);assert.equal(canvas.query({x:410,y:15})[0],png);
- const unsafe={...png,dataUrl:'https://example.com/private.png'};canvas.imageResource(unsafe);assert.equal(decoded.length,1);canvas.primitives=[];assert.equal(decoded[0].onload,null);assert.equal(decoded[0].src,'');canvas.dispose();
+ const unsafe={...png,dataUrl:'https://example.com/private.png'};canvas.imageResource(unsafe);assert.equal(decoded.length,1);
+ const bmp={...png,dataUrl:'data:image/bmp;base64,Qk0AAAAA'};canvas.imageResource(bmp);assert.equal(decoded.length,2);assert.equal(decoded[1].src,bmp.dataUrl);
+ canvas.primitives=[];assert.equal(decoded[0].onload,null);assert.equal(decoded[0].src,'');assert.equal(decoded[1].src,'');canvas.dispose();
 });
 test('outline rectangles do not capture their interior while filled pads and component bodies remain selectable',()=>{
  const outline={type:'polygon',kind:'rectangle',uuid:'outline',points:[{x:0,y:0},{x:20,y:0},{x:20,y:20},{x:0,y:20}],width:.15};
@@ -64,6 +66,28 @@ test('text culling uses rendered metrics, keeps crossing and rotated labels, and
  canvas.viewport.camera.flipped=true;canvas.inView(crossing,view);assert.equal(measurements,5);
  assert.equal(crossing.text,'crossing');canvas.dispose();
 });
+
+test('label text picking follows measured glyph alignment, rotation, flip and non-square fonts',()=>{
+ const {canvas}=runtime(),camera=canvas.viewport.camera;camera.zoom=20;let measured=0;
+ canvas.ctx.measureText=function(){measured++;const left=this.textAlign==='right'?120:this.textAlign==='center'?60:0;return {width:120,actualBoundingBoxLeft:left,actualBoundingBoxRight:120-left,actualBoundingBoxAscent:8,actualBoundingBoxDescent:3};};
+ for(const flipped of [false,true])for(const turn of [0,1,1/6])for(const angle of [0,-90])for(const align of ['left','right','center']){
+  camera.flipped=flipped;camera.quarterTurns=turn;const p={type:'text',kind:'label',uuid:'label',x:10,y:20,text:'TEST',size:1,fontHeight:1,fontWidth:2,align,angle};canvas.primitives=[p];
+  const origin=camera.world_to_screen(p),rotation=((flipped?-angle:angle)+turn*90)*Math.PI/180,x=align==='left'?120:align==='right'?-120:0;
+  const world=localX=>camera.screen_to_world({x:origin.x+localX*Math.cos(rotation),y:origin.y+localX*Math.sin(rotation)});
+  assert.equal(canvas.query(world(x),1)[0],p,`${align}/${angle}/${turn}/${flipped} rendered glyphs`);
+  assert.ok(!canvas.query(world(align==='right'?120:align==='left'?-120:300),1).includes(p),'blank opposite side does not capture clicks');
+  const count=measured;canvas.query(world(x),1);assert.equal(measured,count,'warm picking reuses font metrics');
+ }
+ canvas.dispose();
+});
+
+test('label outline interiors are electrical hit targets without filling unrelated drawing outlines',()=>{
+ const points=[{x:0,y:0},{x:20,y:0},{x:20,y:8},{x:0,y:8}];
+ for(const kind of ['global_label','hierarchical_label','sheet-pin'])assert.equal(core.hitPrimitive({type:'polygon',kind,points},{x:10,y:4},.01),true,kind);
+ assert.equal(core.hitPrimitive({type:'polygon',kind:'graphic',points},{x:10,y:4},.01),false);
+ const {canvas}=runtime(),sheet={type:'polygon',kind:'sheet',uuid:'sheet',fill:true,points:[{x:0,y:0},{x:40,y:0},{x:40,y:30},{x:0,y:30}]},pin={type:'polygon',kind:'sheet-pin',uuid:'sheet',pinUuid:'pin',points};
+ canvas.primitives=[sheet,pin];assert.equal(canvas.query({x:10,y:4},1)[0],pin,'a sheet pin takes precedence over its containing sheet');canvas.dispose();
+});
 test('multiline text and minimum pixel font remain visible, with safe fallback for missing metrics',()=>{
  const {canvas}=runtime();canvas.viewport.camera.zoom=1;
  canvas.ctx.measureText=()=>({actualBoundingBoxLeft:100,actualBoundingBoxRight:0,actualBoundingBoxAscent:8,actualBoundingBoxDescent:8});
@@ -71,6 +95,15 @@ test('multiline text and minimum pixel font remain visible, with safe fallback f
  assert.equal(canvas.inView(p,{x:0,y:0,w:10,h:10}),true);
  canvas.primitives=[p];canvas.ctx.measureText=()=>({width:10});assert.equal(canvas.inView(p,{x:1000,y:1000,w:1,h:1}),true);
  canvas.dispose();
+});
+
+test('overview titles ellipsize within their page width and reveal details only at readable scale',()=>{
+ const {canvas,operations}=runtime();canvas.ctx.measureText=text=>({width:Array.from(text).length*8});
+ const p={type:'text',text:'Very long sheet name with repeated prefix and 温度',x:0,y:0,size:4,minPixelSize:12,maxTextWidth:100,minDisplayWidthPx:60};
+ const raw=p.text;canvas.viewport.camera.zoom=.5;assert.deepEqual(Array.from(canvas.displayTextLines(p)),[]);operations.length=0;canvas.paint(p);assert.equal(operations.filter(op=>op[0]==='fillText').length,0);
+ canvas.viewport.camera.zoom=1;const line=canvas.displayTextLines(p)[0];assert.ok(line.endsWith('…'));assert.ok(canvas.ctx.measureText(line).width<=100);canvas.paint(p);assert.equal(p.text,raw);
+ canvas.viewport.camera.zoom=5;assert.equal(canvas.displayTextLines(p)[0],raw);
+ const subtitle={...p,minDisplayWidthPx:240};canvas.viewport.camera.zoom=2;assert.equal(canvas.displayTextLines(subtitle).length,0);canvas.viewport.camera.zoom=3;assert.equal(canvas.displayTextLines(subtitle).length,1);canvas.dispose();
 });
 test('measured label culling reduces paint work without changing layer, net, source or picking state',()=>{
  const {canvas}=runtime();canvas.ctx.measureText=()=>({actualBoundingBoxLeft:20,actualBoundingBoxRight:20,actualBoundingBoxAscent:10,actualBoundingBoxDescent:10});
@@ -90,6 +123,37 @@ function runtime(dpr=1,extra={}){
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../owned-canvas.js'),'utf8'),env);
   const canvas=env.KiCadOwnedCanvas.mount(host,{pcb:true,dark:true});return{canvas,ctx,element,host,operations,listeners};
 }
+
+test('saved zone cut-out bridges fill without streaks in immediate and retained painting',()=>{
+ const {parse}=require('../design-diff.js'),{build}=require('../pcb-renderer.js');
+ // The outer contour visits the hole over a doubled-back horizontal bridge.
+ // Stroking this saved contour would draw an artificial line from x=0 to x=20.
+ const source=`(kicad_pcb (layers (0 "F.Cu" signal))
+  (zone (net 1) (layer "F.Cu") (uuid "bridged-zone")
+   (polygon (pts (xy 0 0) (xy 1000 0) (xy 1000 1000) (xy 0 1000)))
+   (filled_polygon (layer "F.Cu") (pts (xy 0 0) (xy 1000 0)
+    (xy 1000 1000) (xy 0 1000) (xy 0 20) (xy 20 20)
+    (xy 20 40) (xy 40 40) (xy 40 20) (xy 20 20) (xy 0 20)))))`;
+ const geometry=build(parse(source),'large-cutout.kicad_pcb');
+ const zone=geometry.primitives.find(p=>p.kind==='zone');
+ const outline=geometry.primitives.find(p=>p.kind==='zone-outline');
+ class Path{moveTo(){}lineTo(){}closePath(){}}
+ for(const retained of [false,true]){
+  const {canvas,operations}=runtime(1,retained?{Path2D:Path}:{});
+  canvas.primitives=[zone,outline];
+  for(const dark of [false,true])for(const highlighted of [false,true]){
+   canvas.dark=dark;canvas.netPrimitives=highlighted?new Set([zone]):new Set();
+   operations.length=0;canvas.paint(zone);
+   assert.equal(operations.filter(op=>op[0]==='fill').length,1,'saved copper is still filled');
+   assert.equal(operations.filter(op=>op[0]==='stroke').length,0,'cut-out bridge is never outlined');
+   assert.equal(core.hitPrimitive(zone,{x:100,y:20},.01),true,'copper alongside the bridge remains selectable');
+   assert.equal(core.hitPrimitive(zone,{x:30,y:30},.01),false,'the saved cut-out remains empty');
+   operations.length=0;canvas.paint(outline);
+   assert.equal(operations.filter(op=>op[0]==='stroke').length,1,'separate saved outline remains available');
+  }
+  canvas.dispose();
+ }
+});
 
 test('saved RGBA bypasses theme remapping, background fills use the body color and dash state resets',()=>{
  const {canvas,ctx,operations}=runtime();canvas.pcb=false;const p={type:'polygon',points:[{x:0,y:0},{x:5,y:0},{x:5,y:5}],width:.2,color:'rgba(132,0,0,0.5)',sourceColor:'rgba(132,0,0,0.5)',fill:'color',fillColor:'rgba(20,80,240,0.25)',lineStyle:'dash_dot'};

@@ -29,3 +29,9 @@ test('expanded assembly lifts components beyond outer copper and reveals inner l
  assert.equal(front.position.z,.7);assert.equal(back.position.z,-.7);assert.equal(inner.position.z,plan.layers[2].z);
  inner.geometry.dispose();inner.material.dispose();
 });
+
+
+test('silkscreen follows its saved outer copper side throughout expansion',async()=>{
+ const {createExplodeView}=await import('../spike/explodeView.mjs');const view=createExplodeView({}, {layers:[{name:'F.Cu',z:1},{name:'In1.Cu',z:0},{name:'B.Cu',z:-1}]});
+ for(const amount of [0,25,100,0]){view.set(amount);assert.equal(view.offset('F.SilkS'),view.offset('F.Cu'));assert.equal(view.offset('B.SilkS'),view.offset('B.Cu'));}
+});

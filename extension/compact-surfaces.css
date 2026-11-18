@@ -93,13 +93,13 @@ body:has(#signinAvailability){font-size:14px;max-width:48rem;margin:16px auto;pa
 
 /* Compact review actions keep values readable on touch and desktop. */
 .kicad-field-table td:has(>.field-comment-action),.bom-manager td:has(>.field-comment-action),.bom-group td:has(>.field-comment-action){position:relative;padding-inline-end:32px;min-height:28px}
-.kicad-field-table .field-comment-action,.bom-manager .field-comment-action,.bom-group .field-comment-action{position:absolute;inset-inline-end:3px;top:3px;display:inline-flex;align-items:center;justify-content:center;min-width:24px;width:24px;min-height:24px;height:24px;padding:5px;margin:0;border:1px solid transparent;border-radius:5px;background:transparent;box-shadow:none;color:var(--muted,#7b8899);opacity:1;float:none}
+.kicad-field-table .field-comment-action,.bom-manager .field-comment-action,.bom-group .field-comment-action{position:absolute;inset-inline-end:3px;top:50%;transform:translateY(-50%);display:inline-flex;align-items:center;justify-content:center;min-width:24px;width:24px;min-height:24px;height:24px;padding:5px;margin:0;border:1px solid transparent;border-radius:5px;background:transparent;box-shadow:none;color:var(--muted,#7b8899);opacity:1;float:none}
 .field-comment-action svg{width:13px;height:13px;flex:none}
 .field-comment-action:hover{color:var(--text,#e6e9ef);background:var(--raised,#292d36);border-color:var(--line,#42515c)}
 .field-comment-action:focus-visible{color:var(--text,#e6e9ef);outline:2px solid var(--accent,#59d6bf);outline-offset:1px}
 @media(pointer:coarse){
  .kicad-field-table td:has(>.field-comment-action),.bom-manager td:has(>.field-comment-action),.bom-group td:has(>.field-comment-action){padding-inline-end:44px;padding-block:12px}
- .kicad-field-table .field-comment-action,.bom-manager .field-comment-action,.bom-group .field-comment-action{width:36px;min-width:36px;height:36px;min-height:36px;top:4px}
+ .kicad-field-table .field-comment-action,.bom-manager .field-comment-action,.bom-group .field-comment-action{width:36px;min-width:36px;height:36px;min-height:36px}
  .field-comment-action svg{width:15px;height:15px}
 }
 

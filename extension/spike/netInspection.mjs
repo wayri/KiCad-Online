@@ -10,13 +10,13 @@ export function createNetInspection(THREE,{board,plan,zones,pads,world,colorForL
  const emptyState=()=>({active:false,nets:[],tracks:0,pads:0,vias:0,platedPads:0,fills:0,boundaries:0,omitted:0,sourceLimited:false,warnings:[]});let signature='',state=emptyState();
  const resources=new Set(),materials=new Map(),budget=200000;let colorMode='layer';
  const color=layer=>colorMode==='layer'?colorForLayer(layer):0xffe18b;
- const tagMaterial=(m,layer)=>{m.userData.netLayer=layer;return m;};
- function setColorMode(value){const next=value==='accent'?'accent':'layer';if(next===colorMode)return; colorMode=next;for(const m of resources)if(m.isMaterial&&m.userData.netLayer)m.color.set(color(m.userData.netLayer));}
- const material=layer=>{if(materials.has(layer))return materials.get(layer);const m=tagMaterial(new THREE.MeshBasicMaterial({color:color(layer),side:THREE.DoubleSide,toneMapped:false}),layer);resources.add(m);materials.set(layer,m);return m;};
+ const tagMaterial=(m,layer,role='copper')=>{m.userData.netLayer=layer;m.userData.netRole=role;return m;};
+ function setColorMode(value){const next=value==='accent'?'accent':'layer';if(next===colorMode)return; colorMode=next;for(const m of resources)if(m.isMaterial&&m.userData.netLayer&&m.userData.netRole!=='via')m.color.set(color(m.userData.netLayer));}
+ const material=(layer,role='copper')=>{const key=role+':'+layer;if(materials.has(key))return materials.get(key);const m=tagMaterial(new THREE.MeshBasicMaterial({color:role==='via'?0xc5aa6c:color(layer),side:THREE.DoubleSide,toneMapped:false}),layer,role);resources.add(m);materials.set(key,m);return m;};
  const shapeFor=outline=>{const shape=new THREE.Shape(outline.outline.map(([x,y])=>new THREE.Vector2(x,-y)));if(outline.drill)shape.holes.push(new THREE.Path(outline.drill.map(([x,y])=>new THREE.Vector2(x,-y))));return shape;};
  function clear(){for(const resource of resources)resource.dispose();resources.clear();materials.clear();group.clear();group.visible=false;signature='';state=emptyState();}
- function instances(geometry,records,layer,place){
-  if(!records.length){geometry.dispose();return;}resources.add(geometry);const mesh=new THREE.InstancedMesh(geometry,material(layer),records.length),object=new THREE.Object3D();
+ function instances(geometry,records,layer,place,role='copper'){
+  if(!records.length){geometry.dispose();return;}resources.add(geometry);const mesh=new THREE.InstancedMesh(geometry,material(layer,role),records.length),object=new THREE.Object3D();
   records.forEach((record,index)=>{object.position.set(0,0,0);object.rotation.set(0,0,0);object.scale.set(1,1,1);place(object,record,index);object.updateMatrix();mesh.setMatrixAt(index,object.matrix);});
   resources.add(mesh);mesh.userData.layer=layer;mesh.userData.records=records.map(record=>record.track||record);mesh.instanceMatrix.needsUpdate=true;mesh.computeBoundingSphere();group.add(mesh);return mesh;
  }
@@ -63,8 +63,8 @@ export function createNetInspection(THREE,{board,plan,zones,pads,world,colorForL
    }
   }
   for(const pad of pads){if(pad.nativeType!=='thru_hole'||!(pad.drill>0)||!take(pad))continue;const front=plan.byLayer.get('F.Cu'),back=plan.byLayer.get('B.Cu');if(!front||!back)continue;barrel(pad,{zMin:back.z,zMax:front.z,from:'F.Cu',to:'B.Cu'},true);state.platedPads++;}
-  for(const batch of annuli.values())instances(new THREE.ExtrudeGeometry(shapeFor(batch.outline),{depth:batch.layer.thickness,bevelEnabled:false,curveSegments:8}),batch.records,batch.layer.name,(object,record)=>{const[x,y]=world(record.at);object.position.set(x,y,batch.layer.z-batch.layer.thickness/2);});
-  for(const batch of barrels.values()){const mesh=instances(drillWallGeometry(THREE,batch.outline,batch.span.zMax-batch.span.zMin),batch.records,batch.span.from,(object,record)=>{const[x,y]=world(record.at);object.rotation.z=(record.rotation||0)*Math.PI/180;const[dx,dy]=record.drillOffset||[0,0],c=Math.cos(object.rotation.z),s=Math.sin(object.rotation.z);object.position.set(x+dx*c+dy*s,y+dx*s-dy*c,batch.span.zMin);});if(mesh)mesh.userData.explodeSpan=batch.span;}
+  for(const batch of annuli.values())instances(new THREE.ExtrudeGeometry(shapeFor(batch.outline),{depth:batch.layer.thickness,bevelEnabled:false,curveSegments:8}),batch.records,batch.layer.name,(object,record)=>{const[x,y]=world(record.at);object.position.set(x,y,batch.layer.z-batch.layer.thickness/2);},'via');
+  for(const batch of barrels.values()){const mesh=instances(drillWallGeometry(THREE,batch.outline,batch.span.zMax-batch.span.zMin),batch.records,batch.span.from,(object,record)=>{const[x,y]=world(record.at);object.rotation.z=(record.rotation||0)*Math.PI/180;const[dx,dy]=record.drillOffset||[0,0],c=Math.cos(object.rotation.z),s=Math.sin(object.rotation.z);object.position.set(x+dx*c+dy*s,y+dx*s-dy*c,batch.span.zMin);},'via');if(mesh)mesh.userData.explodeSpan=batch.span;}
   state.active=state.tracks+state.pads+state.vias+state.platedPads+state.fills+state.boundaries>0;group.visible=state.active;
   if(state.boundaries)state.warnings.push('Unfilled saved zones are boundary-only; no copper fill is inferred.');
   if(state.vias||state.platedPads)state.warnings.push('Saved drill wall surfaces and layer spans are shown; plating thickness is not inferred.');

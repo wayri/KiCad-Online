@@ -15,17 +15,54 @@ export function drillLoopInsideBoard(loop,outer,holes=[]){
  return true;
 }
 export function sourceZoneGeometry(ast,maxPolygons=1000,maxPoints=500000){
- const records=[],nets=new Map(children(ast,'net').map(node=>[value(node[1]),String(value(node[2])||'')]));let points=0,truncated=false,unfilled=0;
- for(const zone of children(ast,'zone')){
-  const filled=children(zone,'filled_polygon'),polygons=filled.length?filled:children(zone,'polygon');if(!filled.length)unfilled++;
-  const layerNode=child(zone,'layers'),layers=layerNode?layerNode.slice(1).map(value):[value(child(zone,'layer')?.[1])];
-  for(const polygon of polygons){const pts=children(child(polygon,'pts')||[],'xy').map(node=>[Number(value(node[1])),Number(value(node[2]))]).filter(point=>point.every(Number.isFinite));
-   if(pts.length<3)continue;
-   const ownLayer=value(child(polygon,'layer')?.[1]);for(const layer of ownLayer?[ownLayer]:layers){if(typeof layer!=='string'||!/^(?:F|B|In[1-9]\d*)\.Cu$/.test(layer))continue;
-    if(records.length>=maxPolygons||points+pts.length>maxPoints){truncated=true;continue;}points+=pts.length;
-    records.push({points:pts,layer,filled:Boolean(filled.length),id:String(value(child(zone,'uuid')?.[1])||value(child(zone,'tstamp')?.[1])||'saved-zone-'+records.length),net:String(value(child(zone,'net_name')?.[1])||nets.get(value(child(zone,'net')?.[1]))||(typeof value(child(zone,'net')?.[1])==='string'?value(child(zone,'net')?.[1]):''))});
+ const nets=new Map(children(ast,'net').map(node=>[value(node[1]),String(value(node[2])||'')]));
+ const zones=children(ast,'zone'), smallest=new Map(), counts=new Map();
+ let unfilled=0;
+ function* candidates(firstPass){
+  let ordinal=0;
+  for(const zone of zones){
+   const fills=children(zone,'filled_polygon'),filled=fills.length>0;
+   if(firstPass&&!filled)unfilled++;
+   const declared=child(zone,'layers')?.slice(1).map(value)??[value(child(zone,'layer')?.[1])];
+   const id=value(child(zone,'uuid')?.[1])||value(child(zone,'tstamp')?.[1]);
+   const netCode=value(child(zone,'net')?.[1]);
+   const net=String(value(child(zone,'net_name')?.[1])||nets.get(netCode)||(typeof netCode==='string'?netCode:''));
+   for(const polygon of filled?fills:children(zone,'polygon')){
+    const pts=child(polygon,'pts')||[];
+    let size=0;
+    for(const item of pts)if(kind(item)==='xy'&&Number.isFinite(Number(value(item[1])))&&Number.isFinite(Number(value(item[2]))))size++;
+    if(size<3)continue;
+    const ownLayer=value(child(polygon,'layer')?.[1]);
+    for(const layer of ownLayer?[ownLayer]:declared){
+     if(typeof layer==='string'&&/^(?:F|B|In[1-9]\d*)\.Cu$/.test(layer))yield {layer,ordinal:ordinal++,size,pts,filled,id,net};
+    }
    }
   }
  }
- return{records,unfilled,truncated};
+ // Reserve one complete contour per represented layer before spending the
+ // remaining budget in source order. Prefer actual saved fill over a boundary.
+ for(const candidate of candidates(true)){
+  const {layer,size,filled}=candidate;
+  counts.set(layer,(counts.get(layer)||0)+1);
+  if(size>maxPoints)continue;
+  const best=smallest.get(layer);
+  if(!best||(filled&&!best.filled)||(filled===best.filled&&size<best.size))smallest.set(layer,candidate);
+ }
+ let remainingPoints=maxPoints,remainingPolygons=maxPolygons;
+ const reserved=new Set(),records=[];
+ for(const {size,ordinal} of [...smallest.values()].sort((a,b)=>a.size-b.size||a.ordinal-b.ordinal)){
+  if(remainingPolygons<=0||size>remainingPoints)break;
+  reserved.add(ordinal);remainingPolygons--;remainingPoints-=size;
+ }
+ for(const {layer,ordinal,size,pts,filled,id,net} of candidates(false)){
+  if(!reserved.has(ordinal)){
+   if(remainingPolygons<=0||size>remainingPoints)continue;
+   remainingPolygons--;remainingPoints-=size;
+  }
+  const points=children(pts,'xy').map(node=>[Number(value(node[1])),Number(value(node[2]))]).filter(point=>point.every(Number.isFinite));
+  records.push({points,layer,filled,id:String(id||'saved-zone-'+ordinal),net});
+  counts.set(layer,counts.get(layer)-1);
+ }
+ const omittedByLayer=Object.fromEntries([...counts].filter(([,count])=>count>0));
+ return {records,unfilled,truncated:Object.keys(omittedByLayer).length>0,omittedByLayer};
 }

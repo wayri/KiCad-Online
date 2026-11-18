@@ -14,6 +14,20 @@ const board = `(kicad_pcb
     (model "../shared/back.vrml" (scale (xyz 1 1 1))))
 )`;
 
+test('3D inventory retains model placement and shared embedded data without drawing geometry', () => {
+  const { modelSource, collectParsed } = require('../repo-models.js');
+  const source = `(kicad_pcb (zone (filled_polygon (pts (xy 1 2))))
+    (footprint "A" (pad "1")) (footprint "B" (at 3 4) (pad "2")
+    (embedded_files (file (name "a.wrl") (data "|AAAA|")))
+    (model "kicad-embed://a.wrl") (model "kicad-embed://a.wrl")))`;
+  const projected = modelSource(globalThis.KiCadDesignDiff.parse(source));
+  assert.doesNotMatch(JSON.stringify(projected), /"zone"|"pad"|"filled_polygon"/);
+  const inventory = collectParsed(projected, 'board.kicad_pcb');
+  assert.deepEqual(inventory, collect(source, 'board.kicad_pcb'));
+  assert.equal(inventory.models[0].reference, 'REF2');
+  assert.strictEqual(inventory.models[0].embeddedAsset, inventory.models[1].embeddedAsset);
+});
+
 test('resolves only same-repository model references', () => {
   assert.equal(resolveModelPath('hardware/board.kicad_pcb', 'models/a.wrl'), 'hardware/models/a.wrl');
   assert.equal(resolveModelPath('hardware/board.kicad_pcb', '../shared/a.wrl'), 'shared/a.wrl');
@@ -33,6 +47,20 @@ test('literal hash model names resolve from saved paths and repository inventory
   const result=collect(source,'board.kicad_pcb',undefined,[path]);
   assert.equal(result.models.length,1);assert.equal(result.models[0].path,path);assert.deepEqual(result.diagnostics,[]);
   assert.equal(resolveModelPath('board.kicad_pcb','local/part/IC%23PBF.STEP'),null);
+});
+
+test('legacy project prefix resolves within the repository and rejects nested variables', () => {
+  assert.equal(resolveModelPath('pcb/board.kicad_pcb', '$(KIPRJMOD)/models/a.step'), 'pcb/models/a.step');
+  assert.equal(resolveModelPath('pcb/board.kicad_pcb', '$(KIPRJMOD)/../../a.step'), null);
+  assert.equal(resolveModelPath('pcb/board.kicad_pcb', '$(KIPRJMOD)/$(OTHER)/a.step'), null);
+});
+
+test('library references prefer a unique case-insensitive format match over alternate formats', () => {
+  const source = '(kicad_pcb (footprint "Part" (at 1 2) (model "${KICAD9_3DMODEL_DIR}/Package.3dshapes/body.step")))';
+  const step = 'models/Package.3dshapes/body.STEP';
+  const wrl = 'models/Package.3dshapes/body.wrl';
+  assert.equal(collect(source, 'board.kicad_pcb', undefined, [wrl, step]).models[0].path, step);
+  assert.equal(collect(source, 'board.kicad_pcb', undefined, [step, 'other/' + step, wrl]).models.length, 0);
 });
 
 test('collects every supported model with per-model transforms and footprint side', () => {

@@ -53,6 +53,7 @@
     if(!pcb){const resolvedRoot=KiCadBrowserData.rootSheetPath(files,requestedFile);if(resolvedRoot)rootFile=resolvedRoot;else if(files.length&&!files.some(file=>file.discoveryWarning))files[0].discoveryWarning='The saved schematic hierarchy has no unambiguous root. Choose a sheet in the navigator.';}
     const focusedEntry=params.has('focusX')&&params.has('focusY')&&['focusX','focusY'].every(key=>Number.isFinite(Number(params.get(key)))&&Math.abs(Number(params.get(key)))<=1e6);
     const initialFile=focusedEntry?requestedFile:rootFile;
+    document.title=rootFile.split('/').at(-1).replace(/\.(?:kicad_(?:sch|pcb)|sch|brd)$/i,'')+' · '+(pcb?'Layout':'Schematic')+' — KiCad Online';
 
     const preferenceKey=JSON.stringify(['kicad-review-preferences',...(provider==='gitlab'?['gitlab',providerContext.host]:[]),repository,rootFile]);
 
@@ -79,8 +80,29 @@
 
     if($('refBadge')){$('refBadge').textContent=ref.length>20?ref.slice(0,17)+'…':ref;$('refBadge').title=ref;}
 
-    const variableAsts=new Map();function parseVariableSource(content,file){const cached=variableAsts.get(file.path);if(cached?.content===content)return cached.ast;const ast=KiCadDesignDiff.parse(content,{libraries:file.legacyLibraries});if(variableAsts.size>=256)variableAsts.delete(variableAsts.keys().next().value);variableAsts.set(file.path,{content,ast});return ast;}
+    const variableAsts=new Map();function parseVariableSource(content,file){const cached=variableAsts.get(file.path);if(cached?.content===content)return cached.ast;const ast=(KiCadDesignDiff.parseMetadata||KiCadDesignDiff.parse)(content,{libraries:file.legacyLibraries});if(variableAsts.size>=256)variableAsts.delete(variableAsts.keys().next().value);variableAsts.set(file.path,{content,ast});return ast;}
     const designs=new Map(prepared.design?[[initialFile,prepared.design]]:[]),host=$('drawingHost');globalThis.KiCadUIIcons?.decorate();$('frameControls').hidden=false;
+    const sheetInstances=new Map(),designInstances=new Map(),sheetContexts=new Map();
+    function sheetContext(path,instancePath){
+      const key=JSON.stringify([path,instancePath]);if(sheetContexts.has(key))return sheetContexts.get(key);
+      const context=globalThis.KiCadFileCompatibility?.textContext?.(files,path,{rootFile,instancePath,parse:parseVariableSource})||{};
+      if(sheetContexts.size>=1024)sheetContexts.delete(sheetContexts.keys().next().value);sheetContexts.set(key,context);return context;
+    }
+    const initialContext=pcb?{}:sheetContext(initialFile);
+    if(initialContext.instancePath)sheetInstances.set(initialFile,initialContext.instancePath);
+    designInstances.set(initialFile,initialContext.instancePath||'');
+    const instanceControl=document.createElement('select');instanceControl.className='sheet-instance-select';instanceControl.hidden=true;
+    instanceControl.setAttribute('aria-label','Sheet instance');instanceControl.title='Sheet instance for local variable values';
+    if(!pcb)$('frameControls').append(instanceControl);
+    function syncSheetInstance(path){
+      if(pcb)return;const context=sheetContext(path),instances=context.instances||[];instanceControl.replaceChildren();instanceControl.hidden=instances.length<2;
+      const add=(value,label)=>{const item=document.createElement('option');item.value=value;item.textContent=label;instanceControl.append(item);};
+      if(!sheetInstances.has(path))add('','Choose sheet instance…');
+      for(const item of instances)add(item.instancePath||'',item.sheetPath||item.sheetName||item.instancePath);
+      instanceControl.value=sheetInstances.get(path)||'';
+    }
+    instanceControl.onchange=()=>{if(instanceControl.value)openSheet(currentFile(),null,{instancePath:instanceControl.value});};
+    syncSheetInstance(initialFile);
 
     canvas=KiCadOwnedCanvas.mount(host,{dark,pcb,acceleration:preferences.acceleration,worksheet:preferences.worksheet!==false});status.remove();
     compatibilityUI=globalThis.KiCadFileCompatibility?.mountStatus($('frameControls'),()=>canvas.design?.compatibility);
@@ -235,23 +257,29 @@
 
     $('fitLayer').onclick=()=>{if(!canvas.fitLayer())$('layerFocusStatus').textContent='No drawable geometry on the focused layer.';canvas.draw();};
 
-    function buildSheet(path){
-      if(!designs.has(path)){
+    function buildSheet(path,instancePath=sheetInstances.get(path)){
+      const context=pcb?{}:sheetContext(path,instancePath),identity=context.instancePath||'';
+      if(context.instancePath)sheetInstances.set(path,context.instancePath);
+      else if(instancePath)sheetInstances.delete(path);
+      if(!designs.has(path)||designInstances.get(path)!==identity){
         const file=files.find(source=>source.path===path);
         if(!file)throw new Error('The referenced sheet is absent.');
         const sheets=files.filter(source=>/\.(?:kicad_sch|sch)$/i.test(source.path));
-        designs.set(path,(pcb?KiCadPCBRenderer:KiCadSchematicRenderer).build(KiCadDesignDiff.parse(file.content,{libraries:file.legacyLibraries}),path,{textVariables:file.textVariables,sheetNumber:sheets.findIndex(source=>source.path===path)+1,sheetCount:sheets.length,sheetName:path===rootFile?'/':'/'+path.split('/').at(-1).replace(/\.(?:kicad_sch|sch)$/i,'')+'/',...(globalThis.KiCadFileCompatibility?.textContext?.(files,path,{rootFile,parse:parseVariableSource})||{})}));
+        designs.set(path,(pcb?KiCadPCBRenderer:KiCadSchematicRenderer).build(KiCadDesignDiff.parse(file.content,{libraries:file.legacyLibraries}),path,{textVariables:file.textVariables,sheetNumber:sheets.findIndex(source=>source.path===path)+1,sheetCount:sheets.length,sheetName:path===rootFile?'/':'/'+path.split('/').at(-1).replace(/\.(?:kicad_sch|sch)$/i,'')+'/',...context}));
+        designInstances.set(path,identity);
       }
       return designs.get(path);
     }
-    function openSheet(path,position){
+    function openSheet(path,position,context={}){
       sheetOverview?.close();
 
       if(scene)return;const file=files.find(source=>source.path===path);if(!file)throw new Error('The referenced sheet is absent.');
 
       if(/\.kicad_pcb$/i.test(path)!==pcb)throw new Error('Cannot mix board and schematic drawings.');
 
-      buildSheet(path);
+      let instancePath=context.instancePath;
+      if(!instancePath&&context.viaSheet?.uuid){const parent=sheetContext(context.viaSheet.path,sheetInstances.get(context.viaSheet.path));if(parent.instancePath)instancePath=parent.instancePath+'/'+context.viaSheet.uuid;}
+      buildSheet(path,instancePath||sheetInstances.get(path));syncSheetInstance(path);
 
       canvas.setDocument(designs.get(path),path);compatibilityUI?.refresh();layers();workspace?.attachCanvas(canvas);workspace?.draw();
 
@@ -379,7 +407,7 @@
     }
     workspace=KiCadReviewWorkspace.mount({initialModel:prepared.model,initialDesign:prepared.design,initialNetModel:prepared.nets,files,repository,provider,host:providerContext.host,ref,rootFile,pcb,bomCompanion,pairedFile:params.get('pairedFile')||undefined,getCanvas:()=>canvas,currentFile,focus,openSheet,getRulerUnits:()=>preferences.rulerUnits,
 
-      getDesigns:()=>designs,resolveProbeViews,getSchematicProbeRows,mountProbe3D,updateDiagnostics,onOverviewHighlights:()=>sheetOverview?.refresh(),
+      getDesigns:()=>designs,getSheetInstance:path=>sheetInstances.get(path),resolveProbeViews,getSchematicProbeRows,mountProbe3D,updateDiagnostics,onOverviewHighlights:()=>sheetOverview?.refresh(),
       onHierarchy(hierarchy){if(!disposed)parent.postMessage({type:'kicad-review:hierarchy',repository,ref,hierarchy},ownOrigin);},
       onAssemblyVariant({variant,config}){if(!disposed)parent.postMessage({type:'kicad-review:assembly-variant',repository,ref,file:requestedFile,rootFile,variant,config},ownOrigin);},
       onSelection(selection){if(crossApplying||!globalThis.KiCadPairedReview?.validSelection(selection))return;windowLink?.publish(selection);if(globalThis.KiCadVSCodeBridge?.selection)globalThis.KiCadVSCodeBridge.selection(selection);else parent.postMessage({type:'kicad-review:selection',selection},ownOrigin);},
@@ -396,7 +424,7 @@
       for(const details of [guide,stacks])details.addEventListener('toggle',placeOverviewPopovers);
       const dismissOverviewPopovers=event=>{for(const details of [guide,stacks])if(details.open&&!details.contains?.(event.target))details.open=false;};document.addEventListener?.('pointerdown',dismissOverviewPopovers);
       const surface=document.createElement('div');surface.className='sheet-shared-canvas';gallery.append(surface);
-      let overviewView=null,opened=false,ticket=0,composition=null,hierarchyGraph=null,overviewFitted=true,connectedOnly=false,refitNext=true,stackSignature='';const stackButtons=[];const frontInstances=new Map(),frontSelections=new Map(),overviewNets=new WeakMap();let overviewPointer=null;
+      let overviewView=null,opened=false,ticket=0,composition=null,hierarchyGraph=null,overviewFitted=true,connectedOnly=false,refitNext=true,stackSignature='';const stackButtons=[];const frontInstances=new Map(),frontSelections=new Map();let overviewPointer=null;
       connectedToggle.onclick=()=>{connectedOnly=!connectedOnly;connectedToggle.setAttribute('aria-pressed',String(connectedOnly));refitNext=true;return rebuild();};
       hierarchyToggle.onclick=()=>{hierarchyToggle.setAttribute('aria-pressed',String(hierarchyToggle.getAttribute('aria-pressed')!=='true'));overviewView?.draw();};
       netLinksToggle.onclick=()=>{netLinksToggle.setAttribute('aria-pressed',String(netLinksToggle.getAttribute('aria-pressed')!=='true'));overviewView?.draw();};
@@ -428,14 +456,12 @@
       function miniElide(text,width){const chars=Array.from(text);if(miniTextWidth(text)<=width)return text;const candidate=keep=>chars.slice(0,Math.ceil(keep/2)).join('')+'…'+(Math.floor(keep/2)?chars.slice(-Math.floor(keep/2)).join(''):'');let low=0,high=chars.length;while(low<high){const keep=Math.ceil((low+high)/2);if(miniTextWidth(candidate(keep))<=width)low=keep;else high=keep-1;}return candidate(low);}
       function miniLabelLines(page){const text=String(page.label||page.path).replace(/\.(?:kicad_sch|sch)$/i,'').trim(),width=page.w-28;if(miniTextWidth(text)<=width)return [text];const chars=Array.from(text);let end=0;while(end<chars.length&&miniTextWidth(chars.slice(0,end+1).join(''))<=width)end++;end=Math.max(1,end);const prefix=chars.slice(0,end).join(''),breakAt=Math.max(prefix.lastIndexOf(' '),prefix.lastIndexOf('/'),prefix.lastIndexOf('_'),prefix.lastIndexOf('-'));if(breakAt>=end/2)end=breakAt+1;return [chars.slice(0,end).join('').trim(),miniElide(chars.slice(end).join('').trim(),width)];}
       const renderMiniature=()=>{
-        const entries=(workspace.overviewSheets?.()||[]).filter(entry=>entry.sheet).map(entry=>({path:entry.sheet.path,label:entry.sheet.label||entry.sheet.path,placements:entry.placements||[],design:{page:{width:297,height:104},primitives:[]},groups:[]}));
-        const sourceKey=JSON.stringify(entries.map(entry=>[entry.path,entry.label,entry.placements.map(p=>[p.id,p.parentId])]));
+        const entries=(workspace.overviewSheets?.()||[]).filter(entry=>entry.sheet).map(entry=>({path:entry.sheet.path,label:entry.sheet.label||entry.sheet.path,instanceCount:entry.instanceCount,placements:entry.placements||[],design:{page:designs.get(entry.sheet.path)?.page||((()=>{const file=files.find(file=>file.path===entry.sheet.path);return file&&KiCadSchematicRenderer.pageSettings?KiCadSchematicRenderer.pageSettings(parseVariableSource(file.content,file)):{width:297,height:210};})()),primitives:[]},groups:[]}));
+        const sourceKey=JSON.stringify(entries.map(entry=>[entry.path,entry.label,entry.design.page.width,entry.design.page.height,entry.placements.map(p=>[p.id,p.parentId,p.sheetPosition?.x,p.sheetPosition?.y])]));
         if(miniSVG&&miniSourceKey===sourceKey){for(const [path,node]of miniNodes){node.classList.toggle('highlighted',Boolean(workspace.overviewSelection?.(path)?.netIds?.length));node.classList.toggle('current',path===currentFile());}return;}
         miniSourceKey=sourceKey;miniNodes.clear();
-        const mini=KiCadReviewWorkspace.composeSheetOverview(entries),svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
-        // Keep saved ancestry and rank order; only the miniature uses shorter
-        // cards and wider horizontal gutters than the full drawing overview.
-        for(const page of mini.pages)page.x*=1.12;
+        const mini=KiCadReviewWorkspace.composeSheetOverview(entries,[],false),svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+        // Use the same paper sizes, rank order and compact layout as the canvas.
         const width=Math.max(297,...mini.pages.map(page=>page.x+page.w)),height=Math.max(104,...mini.pages.map(page=>page.y+page.h));
         const geometry=JSON.stringify(mini.pages.map(page=>[page.path,page.x,page.y,page.w,page.h]));miniFitBox={x:-12,y:-4,w:width+24,h:height+8};if(!miniView||geometry!==miniGeometry){const active=mini.pages.find(page=>page.path===currentFile())||mini.pages[0],w=mini.pages.length<=12?miniFitBox.w:Math.min(miniFitBox.w,720),h=mini.pages.length<=12?miniFitBox.h:Math.min(miniFitBox.h,400);miniView={x:miniClamp((active?.x||0)+(active?.w||297)/2-w/2,miniFitBox.x,miniFitBox.x+miniFitBox.w-w),y:miniClamp((active?.y||0)+(active?.h||104)/2-h/2,miniFitBox.y,miniFitBox.y+miniFitBox.h-h),w,h};}miniGeometry=geometry;miniSVG=svg;miniPan=null;paintMiniView();svg.setAttribute('width','100%');svg.setAttribute('height','160');svg.setAttribute('aria-label','Sheet hierarchy, parents above children; drag to pan, wheel or plus/minus to zoom, Home to fit all sheets');svg.setAttribute('tabindex','0');
         svg.addEventListener('wheel',event=>{const point=miniPoint(event);event.preventDefault();event.stopPropagation();zoomMini(Math.exp(-Math.max(-200,Math.min(200,event.deltaY||0))*.003),point);},{passive:false});
@@ -445,31 +471,45 @@
         svg.addEventListener('keydown',event=>{if(!['+','=','-','0','Home','ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key))return;event.preventDefault();event.stopPropagation();if(event.key==='Home'||event.key==='0')miniFit.onclick();else if(event.key==='+'||event.key==='=')zoomMini(1.25);else if(event.key==='-')zoomMini(1/1.25);else{miniView={...miniView,x:miniView.x+({'ArrowLeft':-.1,'ArrowRight':.1}[event.key]||0)*miniView.w,y:miniView.y+({'ArrowUp':-.1,'ArrowDown':.1}[event.key]||0)*miniView.h};paintMiniView();}});
         const graph=globalThis.KiCadSheetHierarchyLinks?.build(mini.pages,{headingGap:0});
         const defs=document.createElementNS('http://www.w3.org/2000/svg','defs'),arrow=document.createElementNS('http://www.w3.org/2000/svg','marker'),tip=document.createElementNS('http://www.w3.org/2000/svg','path');arrow.setAttribute('id','sheetTreeArrow');arrow.setAttribute('viewBox','0 0 6 6');arrow.setAttribute('refX','6');arrow.setAttribute('refY','3');arrow.setAttribute('markerUnits','userSpaceOnUse');arrow.setAttribute('markerWidth','14');arrow.setAttribute('markerHeight','14');arrow.setAttribute('orient','auto');tip.setAttribute('d','M 0 0 L 6 3 L 0 6 Z');tip.setAttribute('fill','#58a89f');arrow.append(tip);defs.append(arrow);svg.append(defs);
-        for(const link of graph?.links||[]){const line=document.createElementNS('http://www.w3.org/2000/svg','path'),casing=document.createElementNS('http://www.w3.org/2000/svg','path'),points=link.points||[link.from,{x:link.from.x,y:(link.from.y+link.to.y)/2},{x:link.to.x,y:(link.from.y+link.to.y)/2},link.to],d=globalThis.KiCadSheetHierarchyLinks?.pathData?.(points,24)||points.map((point,index)=>`${index?'L':'M'} ${point.x} ${point.y}`).join(' ');casing.setAttribute('d',d);casing.setAttribute('class','sheet-tree-miniature-link-casing');line.setAttribute('d',d);line.setAttribute('class','sheet-tree-miniature-link');line.setAttribute('marker-end','url(#sheetTreeArrow)');svg.append(casing,line);}
-        const labels=mini.pages.map(miniLabelLines),labelCounts=new Map();for(const lines of labels){const key=lines.join('\n');labelCounts.set(key,(labelCounts.get(key)||0)+1);}
+        const priorRoutes=[],branchColors=new Map();
+        for(const [index,link]of (graph?.links||[]).entries()){
+          const line=document.createElementNS('http://www.w3.org/2000/svg','path'),casing=document.createElementNS('http://www.w3.org/2000/svg','path'),points=link.points||[link.from,{x:link.from.x,y:(link.from.y+link.to.y)/2},{x:link.to.x,y:(link.from.y+link.to.y)/2},link.to];
+          const color=globalThis.KiCadSheetHierarchyLinks?.netColor(link.parentPath,dark)||'#58a89f';if(!branchColors.has(link.childPath))branchColors.set(link.childPath,[]);if(!branchColors.get(link.childPath).includes(color))branchColors.get(link.childPath).push(color);
+          const crossings=priorRoutes.filter(route=>route.family!==link.parentPath).map(route=>route.points),d=globalThis.KiCadSheetHierarchyLinks?.crossingPath?.(points,crossings,7,link.tree?24:6)||globalThis.KiCadSheetHierarchyLinks?.pathData?.(points,24)||points.map((point,i)=>`${i?'L':'M'} ${point.x} ${point.y}`).join(' ');priorRoutes.push({family:link.parentPath,points});
+          const marker=document.createElementNS('http://www.w3.org/2000/svg','marker'),tip=document.createElementNS('http://www.w3.org/2000/svg','path'),markerId='sheetTreeArrow'+index;for(const [key,value]of Object.entries({id:markerId,viewBox:'0 0 6 6',refX:6,refY:3,markerWidth:6,markerHeight:6,markerUnits:'strokeWidth',orient:'auto'}))marker.setAttribute(key,value);tip.setAttribute('d','M 0 0 L 6 3 L 0 6 Z');tip.setAttribute('fill',color);marker.append(tip);defs.append(marker);
+          casing.setAttribute('d',d);casing.setAttribute('class','sheet-tree-miniature-link-casing');line.setAttribute('d',d);line.setAttribute('class','sheet-tree-miniature-link');line.style.stroke=color;line.setAttribute('data-parent-path',link.parentPath);line.setAttribute('marker-end',`url(#${markerId})`);svg.append(casing,line);
+        }
+
+        const labels=mini.pages.map(page=>{const count=entries.find(entry=>entry.path===page.path)?.placements.length||0;return miniLabelLines({...page,label:String(page.label||page.path).replace(/\.(?:kicad_sch|sch)$/i,'')+(count>1?' ×'+count:'')});}),labelCounts=new Map();for(const lines of labels){const key=lines.join('\n');labelCounts.set(key,(labelCounts.get(key)||0)+1);}
         for(const [index,page]of mini.pages.entries()){
           const node=document.createElementNS('http://www.w3.org/2000/svg','g'),rect=document.createElementNS('http://www.w3.org/2000/svg','rect'),label=document.createElementNS('http://www.w3.org/2000/svg','text'),tooltip=document.createElementNS('http://www.w3.org/2000/svg','title'),selection=workspace.overviewSelection?.(page.path);
-          miniNodes.set(page.path,node);node.setAttribute('role','button');node.setAttribute('tabindex','0');node.setAttribute('aria-label',`Go to ${page.label}`);node.setAttribute('aria-description',page.path);node.setAttribute('class','sheet-tree-miniature-node'+(selection?.netIds?.length?' highlighted':'')+(page.path===currentFile()?' current':''));rect.setAttribute('x',page.x);rect.setAttribute('y',page.y);rect.setAttribute('width',page.w);rect.setAttribute('height',page.h);rect.setAttribute('rx','12');
+          miniNodes.set(page.path,node);node.setAttribute('role','button');node.setAttribute('tabindex','0');const occurrences=entries.find(entry=>entry.path===page.path)?.placements||[];node.setAttribute('aria-label',occurrences.length>1?`${page.label}: ${occurrences.length} occurrences. Choose an occurrence`:`Go to ${page.label}`);node.setAttribute('data-instance-count',String(occurrences.length));node.setAttribute('aria-description',page.path);node.setAttribute('class','sheet-tree-miniature-node'+(selection?.netIds?.length?' highlighted':'')+(page.path===currentFile()?' current':''));rect.setAttribute('x',page.x);rect.setAttribute('y',page.y);rect.setAttribute('width',page.w);rect.setAttribute('height',page.h);rect.setAttribute('rx','12');
           const clip=document.createElementNS('http://www.w3.org/2000/svg','clipPath'),clipRect=document.createElementNS('http://www.w3.org/2000/svg','rect'),clipId='sheetTreeLabel'+index,lines=labels[index];clip.setAttribute('id',clipId);for(const [key,value]of Object.entries({x:page.x+14,y:page.y+12,width:page.w-28,height:page.h-24}))clipRect.setAttribute(key,value);clip.append(clipRect);defs.append(clip);label.setAttribute('clip-path',`url(#${clipId})`);
           if(labelCounts.get(lines.join('\n'))>1){const suffix=' · '+(index+1);lines[lines.length-1]=miniElide(lines.at(-1),page.w-28-miniTextWidth(suffix))+suffix;}
-          lines.forEach((text,lineIndex)=>{const span=document.createElementNS('http://www.w3.org/2000/svg','tspan');span.setAttribute('x',page.x+page.w/2);span.setAttribute('y',page.y+page.h/2+(lineIndex-(lines.length-1)/2)*36);span.textContent=text;label.append(span);});tooltip.textContent=page.label===page.path?page.path:page.label+'\n'+page.path;
-          const navigate=()=>{if(miniMaximized){miniMaximized=false;syncMiniatureSize();}const target=opened&&composition?.pages.find(p=>p.path===page.path);if(target&&overviewView){overviewFitted=false;overviewView.viewport.camera.bbox={x:target.x-12,y:target.y-14,w:target.w+24,h:target.h+28};overviewView.draw();}else{if(opened)close();workspace.followSheet?.(page.path);}};
-          node.onclick=()=>{if(miniSuppressClick){miniSuppressClick=false;return;}navigate();};node.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();navigate();}});node.append(rect,label,tooltip);svg.append(node);
+          lines.forEach((text,lineIndex)=>{const span=document.createElementNS('http://www.w3.org/2000/svg','tspan');span.setAttribute('x',page.x+page.w/2);span.setAttribute('y',page.y+page.h/2+(lineIndex-(lines.length-1)/2)*36);span.textContent=text;label.append(span);});tooltip.textContent=(page.label===page.path?page.path:page.label+'\n'+page.path)+(occurrences.length>1?'\n'+occurrences.map(p=>p.label).join('\n'):'');
+          const navigate=(instanceId)=>{if(miniMaximized){miniMaximized=false;syncMiniatureSize();}if(instanceId){if(opened)close();workspace.followSheet?.(page.path,undefined,{instancePath:instanceId});return;}const target=opened&&composition?.pages.find(p=>p.path===page.path);if(target&&overviewView){overviewFitted=false;overviewView.viewport.camera.bbox={x:target.x-12,y:target.y-14,w:target.w+24,h:target.h+28};overviewView.draw();}else{if(opened)close();workspace.followSheet?.(page.path);}};
+          const chooseOccurrence=()=>{if(occurrences.length<=1){navigate();return;}const picker=document.createElement('section'),back=document.createElement('button'),heading=document.createElement('strong');picker.className='sheet-tree-instance-picker';picker.setAttribute('aria-label','Choose sheet occurrence');back.type='button';back.textContent='← Sheet tree';back.onclick=()=>miniBody.replaceChildren(svg);heading.textContent=page.label+' · '+occurrences.length+' occurrences';picker.append(back,heading);for(const occurrence of occurrences){const item=document.createElement('button');item.type='button';item.textContent=occurrence.label;item.title=occurrence.label;item.setAttribute('data-instance-id',occurrence.id);item.onclick=()=>{miniBody.replaceChildren(svg);navigate(occurrence.id);};picker.append(item);}miniBody.replaceChildren(picker);back.focus?.();};
+
+          node.onclick=()=>{if(miniSuppressClick){miniSuppressClick=false;return;}chooseOccurrence();};node.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();chooseOccurrence();}});node.append(rect,label,tooltip);if(branchColors.has(page.path))for(const [colorIndex,color]of branchColors.get(page.path).entries()){const dot=document.createElementNS('http://www.w3.org/2000/svg','circle');dot.setAttribute('cx',page.x+12+colorIndex*14);dot.setAttribute('cy',page.y+12);dot.setAttribute('r','5');dot.setAttribute('fill',color);dot.setAttribute('pointer-events','none');node.append(dot);}svg.append(node);
         }
         miniBody.replaceChildren();miniBody.append(svg);
       };
       renderMiniature();
       const rebuild=async()=>{
         const generation=++ticket,allEntries=workspace.overviewSheets(),entries=allEntries.filter(entry=>entry.sheet);
+        for(const {sheet} of entries){
+          if(!designs.has(sheet.path)){await new Promise(resolve=>setTimeout(resolve,0));if(!opened||generation!==ticket)return;}
+          buildSheet(sheet.path);
+        }
+        const projectNets=workspace.overviewNetworks();
         const active=entries.some(entry=>workspace.overviewSelection(entry.sheet.path).netActive);
         const limits=entries.flatMap(e=>workspace.overviewSelection(e.sheet.path).limits||[]);
         help.textContent=(connectedOnly&&active?'Connected sheets only · ':'All loaded sheets · ')+'Pan and zoom · select a net · double-click/tap a sheet to enter'+(entries.some(e=>e.instanceCount>1)?' · Choose a placement in Repeated sheets.':'')+(entries.some(e=>e.instanceTruncated)?' · Instance counts capped at 4,096 placements.':'')+(limits.length?' · '+[...new Set(limits)].join(' '):'');
         const shown=connectedOnly&&active?entries.filter(entry=>workspace.overviewSelection(entry.sheet.path).netIds.length):entries,rendered=[];
         for(const entry of shown){
           if(!opened||generation!==ticket)return;
-          const path=entry.sheet.path,design=buildSheet(path),selection=workspace.overviewSelection(path);
-          if(!overviewNets.has(design)){await new Promise(resolve=>setTimeout(resolve,0));if(!opened||generation!==ticket)return;overviewNets.set(design,KiCadNetModel.build([files.find(file=>file.path===path)],new Map([[path,design]])).nets);}
-          const nets=overviewNets.get(design);
+          const path=entry.sheet.path,design=designs.get(path),selection=workspace.overviewSelection(path);
+          const nets=projectNets.filter(net=>net.path===path);
           const placements=(entry.placements||[]).filter(p=>!connectedOnly||!active||!selection.instanceIds?.length||selection.instanceIds.includes(p.id));
           let front=placements.find(p=>p.id===frontInstances.get(path))||placements[0];const signature=JSON.stringify(selection.instanceIds||[]);if(active&&signature!==frontSelections.get(path)&&selection.instanceIds?.length&&!selection.instanceIds.includes(front?.id))front=placements.find(p=>selection.instanceIds.includes(p.id))||front;frontSelections.set(path,signature);if(front)frontInstances.set(path,front.id);
           rendered.push({path,label:entry.instanceCount>1?path:(entry.sheet.label||path),instanceCount:placements.length||entry.instanceCount,totalInstanceCount:entry.instanceCount,instances:placements.map(p=>p.label),placements:front?[front,...placements.filter(p=>p!==front)]:placements,instanceId:front?.id,instanceLabel:entry.instanceCount>1?front?.label:null,design,groups:KiCadReviewWorkspace.sheetPageHighlights(nets,workspace.overviewSelection(path,front?.id),design,path)});
@@ -492,10 +532,10 @@
           overviewView=KiCadOwnedCanvas.mount(surface,{dark,pcb:false,acceleration:'off',showTerminalNumbers:canvas.showTerminalNumbers});overviewView.canvas.addEventListener('wheel',()=>{overviewFitted=false;},{passive:true});overviewView.canvas.addEventListener('pointerdown',event=>{if(event.button===1||event.button===2)overviewFitted=false;});
           const baseDraw=overviewView.draw.bind(overviewView);overviewView.draw=()=>{
             baseDraw();if(!composition)return;const ctx=overviewView.ctx;if(!ctx)return;
-            if(hierarchyToggle.getAttribute('aria-pressed')==='true')globalThis.KiCadSheetHierarchyLinks?.draw(overviewView,hierarchyGraph,dark,{opacity:composition.highlighted.length ? .32 : .7});
+            if(hierarchyToggle.getAttribute('aria-pressed')==='true')globalThis.KiCadSheetHierarchyLinks?.draw(overviewView,hierarchyGraph,dark,{opacity:composition.highlighted.length ? .1 : .18,familyColors:true,labels:false});
             if(netLinksToggle.getAttribute('aria-pressed')==='true'){if(globalThis.KiCadSheetHierarchyLinks)KiCadSheetHierarchyLinks.draw(overviewView,{links:composition.airwires},dark,{color:dark?'#edc14b':'#926900',kind:'net',opacity:.9});else for(const wire of composition.airwires)overviewView.paint(wire);}
           };
-          overviewView.canvas.addEventListener('pointermove',event=>{overviewPointer={x:event.clientX,y:event.clientY};});
+          overviewView.canvas.addEventListener('pointermove',event=>{overviewPointer={x:event.clientX,y:event.clientY};const rect=overviewView.canvas.getBoundingClientRect(),at=overviewView.viewport.camera.screen_to_world({x:event.clientX-rect.left,y:event.clientY-rect.top}),page=composition?.pages.find(page=>at.x>=page.x&&at.x<=page.x+page.w&&at.y>=page.y-32&&at.y<=page.y+page.h);overviewView.canvas.title=page?`${page.label}\n${page.path}${page.instanceCount>1?'\n'+page.instanceCount+' instances':''}`:'';});
           overviewView.addEventListener('kicad:select',event=>{const hit=overviewView.selected;if(hit?.sourcePath&&hit.uuid){const netLike=['wire','junction','pin','label','global_label','hierarchical_label','sheet-pin'].includes(hit.kind),objectOnly=event.detail?.individual||['part','pin'].includes($('selectionMode').value);if(!objectOnly&&($('selectionMode').value==='net'||netLike)&&workspace.selectOverviewNet?.(hit.sourcePath,hit.uuid,hit.sourceInstanceId,event.detail?.multi||$('multiHighlight').checked))return;workspace.selectOverviewObject?.(hit.sourcePath,hit.uuid);}});
           overviewView.canvas.addEventListener('dblclick',event=>{
             const rect=overviewView.canvas.getBoundingClientRect(),at=overviewView.viewport.camera.screen_to_world({x:event.clientX-rect.left,y:event.clientY-rect.top});
@@ -513,7 +553,7 @@
       ($('sheetHome')?.parentElement||$('frameControls')).append(toggle);back.onclick=close;fitAll.onclick=fitOverview;
       const resizeOverview=()=>{positionMiniature();placeOverviewPopovers();if(opened&&overviewFitted)requestAnimationFrame(()=>{if(opened&&overviewFitted)fitOverview();});};globalThis.addEventListener?.('resize',resizeOverview);
       const miniResize=typeof ResizeObserver==='function'?new ResizeObserver(()=>positionMiniature()):null;miniResize?.observe(host);
-      sheetOverview={openNetMap(){connectedOnly=true;connectedToggle.setAttribute('aria-pressed','true');netLinksToggle.setAttribute('aria-pressed','true');hierarchyToggle.setAttribute('aria-pressed','false');return opened?rebuild():open();},highlightPointerNet(multi=false){if(!overviewView)return false;let hit=overviewView.selected;if(overviewPointer){const rect=overviewView.canvas.getBoundingClientRect(),at=overviewView.viewport.camera.screen_to_world({x:overviewPointer.x-rect.left,y:overviewPointer.y-rect.top});hit=overviewView.query?.(at)?.[0]||hit;}return Boolean(hit?.sourcePath&&hit.uuid&&workspace.selectOverviewNet?.(hit.sourcePath,hit.uuid,hit.sourceInstanceId,multi));},fitHighlights(){if(!overviewView||!composition)return false;const box=globalThis.KiCadOwnedCanvas?.bounds?.(composition.highlighted);if(!box)return false;overviewFitted=false;const margin=Math.max(8,Math.max(box.w,box.h)*.08);overviewView.viewport.camera.bbox={x:box.x-margin,y:box.y-margin,w:Math.max(.01,box.w)+margin*2,h:Math.max(.01,box.h)+margin*2};overviewView.draw();return true;},setTheme(value){if(overviewView){overviewView.dark=Boolean(value);overviewView.draw();}},setTerminalNumbers(visible){if(overviewView){overviewView.showTerminalNumbers=Boolean(visible);overviewView.draw();}},open,close,isOpen:()=>opened,toggle:()=>opened?close():open(),refreshTree:renderMiniature,refresh(){renderMiniature();if(opened)return rebuild();},dispose(){miniResize?.disconnect();document.removeEventListener?.('pointerdown',dismissOverviewPopovers);globalThis.removeEventListener?.('resize',resizeOverview);close();$('unselect').removeEventListener('click',clearOverviewSelection);$('clearHighlights').removeEventListener('click',clearOverviewSelection);gallery.remove();toggle.remove();miniature.remove();miniShow.remove();}};globalThis.KiCadSheetOverview=sheetOverview;
+      sheetOverview={openNetMap(){connectedOnly=false;connectedToggle.setAttribute('aria-pressed','false');netLinksToggle.setAttribute('aria-pressed','true');hierarchyToggle.setAttribute('aria-pressed','true');return opened?rebuild():open();},highlightPointerNet(multi=false){if(!overviewView)return false;let hit=overviewView.selected;if(overviewPointer){const rect=overviewView.canvas.getBoundingClientRect(),at=overviewView.viewport.camera.screen_to_world({x:overviewPointer.x-rect.left,y:overviewPointer.y-rect.top});hit=overviewView.query?.(at)?.[0]||hit;}return Boolean(hit?.sourcePath&&hit.uuid&&workspace.selectOverviewNet?.(hit.sourcePath,hit.uuid,hit.sourceInstanceId,multi));},fitHighlights(){if(!overviewView||!composition)return false;const box=globalThis.KiCadOwnedCanvas?.bounds?.(composition.highlighted);if(!box)return false;overviewFitted=false;const margin=Math.max(8,Math.max(box.w,box.h)*.08);overviewView.viewport.camera.bbox={x:box.x-margin,y:box.y-margin,w:Math.max(.01,box.w)+margin*2,h:Math.max(.01,box.h)+margin*2};overviewView.draw();return true;},setTheme(value){if(overviewView){overviewView.dark=Boolean(value);overviewView.draw();}},setTerminalNumbers(visible){if(overviewView){overviewView.showTerminalNumbers=Boolean(visible);overviewView.draw();}},open,close,isOpen:()=>opened,toggle:()=>opened?close():open(),refreshTree:renderMiniature,refresh(){renderMiniature();if(opened)return rebuild();},dispose(){miniResize?.disconnect();document.removeEventListener?.('pointerdown',dismissOverviewPopovers);globalThis.removeEventListener?.('resize',resizeOverview);close();$('unselect').removeEventListener('click',clearOverviewSelection);$('clearHighlights').removeEventListener('click',clearOverviewSelection);gallery.remove();toggle.remove();miniature.remove();miniShow.remove();}};globalThis.KiCadSheetOverview=sheetOverview;
     addEventListener('keydown',event=>{if(event.key==='Escape'&&opened){event.preventDefault();if(guide.open||stacks.open){guide.open=stacks.open=false;return;}close();}});
     }
 

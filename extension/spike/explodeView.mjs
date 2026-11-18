@@ -2,7 +2,7 @@
 export function createExplodeView(THREE,plan,{maxGap=4}={}){
  const layers=[...(plan.layers||[])].filter(l=>typeof l.name==='string'&&Number.isFinite(l.z)).sort((a,b)=>b.z-a.z).slice(0,64),ranks=new Map(layers.map((l,i)=>[l.name,(layers.length-1)/2-i]));
  const positions=new WeakMap(),matrices=new WeakMap();let amount=0;
- const offset=layer=>(ranks.get(layer)||0)*maxGap*amount/100;
+ const offset=layer=>(ranks.get(layer==='F.SilkS'?'F.Cu':layer==='B.SilkS'?'B.Cu':layer)||0)*maxGap*amount/100;
  const componentOffset=side=>offset(side==='back'?'B.Cu':'F.Cu')+(side==='back'?-1:1)*maxGap*amount/100*1.5;
  const substrateOpacity=()=>1-.88*amount/100;
  const nearest=z=>layers.reduce((best,l)=>!best||Math.abs(l.z-z)<Math.abs(best.z-z)?l:best,null)?.name;

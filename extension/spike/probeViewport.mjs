@@ -8,7 +8,7 @@ import {createTerminalAnnotations} from './terminalLabels.mjs';
 import {createNetInspection} from './netInspection.mjs';
 
 export function probeLayerVisible(record,layers){
- if(!layers||!record)return true;
+ if(!layers||!record||record.type==='Board')return true;
  const source=Array.isArray(record.layers)&&record.layers.length?record.layers:record.layer?[record.layer]:[];
  if(!source.length)return true; // Board substrate and unlayered model context.
  return source.some(layer=>layers.has(layer)||layer==='*.Cu'&&[...layers].some(name=>name.endsWith('.Cu'))||layer==='*.Mask'&&[...layers].some(name=>name.endsWith('.Mask')));
@@ -124,7 +124,7 @@ export function createSharedProbeViewport({THREE,OrbitControls,host,source,sourc
    }
   }
   if(netActive){netInspection.group.updateWorldMatrix(true,true);netInspection.group.traverse(object=>{if(!object.geometry||!visible(object))return;if(!object.geometry.boundingBox)object.geometry.computeBoundingBox();if(object.geometry.boundingBox)union.union(box.copy(object.geometry.boundingBox).applyMatrix4(object.matrixWorld));});}
-  selectionBounds=union.isEmpty()?null:union;tree.root.traverse(object=>{if(!object.material)return;if(!normalMaterials.has(object))normalMaterials.set(object,object.material);if(object.isInstancedMesh){if(!normalInstanceColors.has(object))normalInstanceColors.set(object,object.instanceColor);object.instanceColor=selectionBounds&&selectionDim?null:normalInstanceColors.get(object);}object.material=selectionBounds&&selectionDim?(object.isMesh?dimMaterial:object.isLine?dimLineMaterial:normalMaterials.get(object)):normalMaterials.get(object);});
+  selectionBounds=union.isEmpty()?null:union;tree.root.traverse(object=>{if(!object.material)return;if(!normalMaterials.has(object))normalMaterials.set(object,object.material);if(object.isInstancedMesh){if(!normalInstanceColors.has(object))normalInstanceColors.set(object,object.instanceColor);object.instanceColor=selectionBounds&&selectionDim?null:normalInstanceColors.get(object);}object.material=selectionBounds&&selectionDim&&object.userData.record?.type!=='Silkscreen'?(object.isMesh?dimMaterial:object.isLine?dimLineMaterial:normalMaterials.get(object)):normalMaterials.get(object);});
   selectionStats=netActive?{matched,highlighted:netState.tracks+netState.pads+netState.vias+netState.platedPads+netState.fills+netState.boundaries,limited:netState.omitted>0||netState.sourceLimited}:{matched,highlighted:count,limited:matched>count};return selectionStats;
  }
  function projectAnchor(){if(!alive||!selectionBounds)return null;camera.updateMatrixWorld();const point=(selectionPoint?.clone()||selectionBounds.getCenter(new THREE.Vector3())).project(camera),w=Math.max(1,host.clientWidth||320),h=Math.max(1,host.clientHeight||240),rect=host.getBoundingClientRect?.()||{left:0,top:0};return{x:rect.left+(point.x+1)*w/2,y:rect.top+(1-point.y)*h/2,visible:point.z>=-1&&point.z<=1&&Math.abs(point.x)<=1&&Math.abs(point.y)<=1};}

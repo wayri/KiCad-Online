@@ -3,6 +3,15 @@ const assert = require("node:assert/strict");
 const { parse } = require("../design-diff.js");
 const { build } = require("../schematic-renderer.js");
 
+test('saved text and text-box links retain page targets and resolved web URLs without unsafe schemes',()=>{
+ const source='(kicad_sch (text "Power sheet" (at 10 10) (effects (font (size 1 1)) (href "#3")) (uuid page-link)) (text "Docs https://example.com/a and https://example.org/b" (at 10 20) (effects (font (size 1 1))) (uuid urls)) (text_box "Open manual" (at 10 30) (size 30 10) (effects (font (size 1 1)) (href "${MANUAL}")) (uuid box)) (text "Bad" (at 10 50) (effects (font (size 1 1)) (href "javascript:alert(1)")) (uuid unsafe)))';
+ const ast=parse(source),before=JSON.stringify(ast),design=build(ast,'links.kicad_sch',{textVariables:{MANUAL:'https://example.com/manual'}});
+ assert.deepEqual(design.primitives.find(p=>p.uuid==='page-link').links,[{kind:'sheet',page:'3',target:'#3'}]);
+ assert.equal(design.primitives.find(p=>p.uuid==='urls').links.length,2);
+ for(const item of design.primitives.filter(p=>p.uuid==='box'))assert.equal(item.links[0].target,'https://example.com/manual');
+ assert.equal(design.primitives.find(p=>p.uuid==='unsafe').links,undefined);assert.equal(JSON.stringify(ast),before);
+});
+
 const render = (source, path = "hardware/root.kicad_sch") => build(parse(source), path);
 const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-6, `${actual} != ${expected}`);
 
@@ -186,6 +195,44 @@ test('PNG validation blocks external data, corrupt chunks, oversized decoded ima
  const large=pngFixture(4000,4000),budget=render('(kicad_sch '+Array.from({length:3},(_,i)=>`(image (at ${i} 0) (data "${large.toString('base64')}"))`).join(' ')+')');assert.equal(budget.primitives.filter(p=>p.type==='image').length,1);assert.match(budget.warnings.join(' '),/16 megapixel/);
 });
 
+test('native PNG trailers and compressed ancillary metadata never reach browser decoding',()=>{
+ const png=pngFixture(),metadata=pngFixture(3,2,null,[['iCCP',Buffer.from('profile\0\0compressed')],['zTXt',Buffer.from('comment\0\0compressed')]]);
+ // Older KiCad demo sheets contain 1024 or 1025 bytes following IEND.
+ const trailer=Buffer.alloc(1025,0x61),data=Buffer.concat([metadata,trailer]);
+ const chunks=data.toString('base64').match(/.{1,76}/g).map(part=>JSON.stringify(part)).join(' ');
+ const result=render(`(kicad_sch (image (at 4 5) (data ${chunks})))`);
+ assert.equal(result.warnings.some(warning=>warning.includes('image was not rendered')),false);
+ assert.equal(result.primitives.find(p=>p.type==='image')?.dataUrl,'data:image/png;base64,'+png.toString('base64'));
+});
+
+test('bounded inline BMPs and legacy hexadecimal bitmap blocks share image validation',()=>{
+ const bmp=Buffer.alloc(62);
+ bmp.write('BM');bmp.writeUInt32LE(bmp.length,2);bmp.writeUInt32LE(54,10);bmp.writeUInt32LE(40,14);
+ bmp.writeInt32LE(2,18);bmp.writeInt32LE(1,22);bmp.writeUInt16LE(1,26);bmp.writeUInt16LE(24,28);
+ const modern=render(imageSource(bmp)).primitives.find(p=>p.type==='image');
+ assert.equal(modern?.dataUrl,'data:image/bmp;base64,'+bmp.toString('base64'));
+ assert.deepEqual([modern.pixelWidth,modern.pixelHeight],[2,1]);
+ const hex=bmp.toString('hex').match(/.{2}/g).join(' ');
+ const { parse: parseLegacy }=require('../legacy-kicad.js');
+ const legacy=build(parseLegacy(`EESchema Schematic File Version 4
+$Bitmap
+Pos 1000 2000
+Scale 2
+Data
+${hex}
+EndData
+$EndBitmap
+$EndSCHEMATC`));
+ const image=legacy.primitives.find(p=>p.type==='image');
+ assert.equal(image?.dataUrl,modern.dataUrl);
+ near((image.points[0].x+image.points[2].x)/2,25.4);
+ near((image.points[0].y+image.points[2].y)/2,50.8);
+ const invalid=Buffer.from(bmp);invalid.writeUInt32LE(1,30);
+ assert.equal(render(imageSource(invalid)).primitives.some(p=>p.type==='image'),false);
+ const external=render('(kicad_sch (image (at 0 0) (file "picture.bmp")))');
+ assert.match(external.warnings.join(' '),/No inline bitmap data/);
+});
+
 test("bare and list effect flags hide fields and style text without treating no as yes", () => {
   const source = `(kicad_sch (lib_symbols (symbol "Demo:Flags"
     (pin_numbers (hide))
@@ -356,4 +403,30 @@ test("KiCad overbars preserve plain prefixes/suffixes and native measured spans"
   const label=r.primitives.find(p=>p.uuid === "label" && p.type === "text");
   assert.equal(label.text,"ENABLE");assert.equal(label.rawText,"~{ENABLE}");
   assert.equal(r.primitives.filter(p=>p.uuid === "label" && p.kind === "text-overbar").length,1);
+});
+
+
+test('saved lib_name selects embedded overrides across rotation and mirror states',()=>{
+ for(const angle of [0,90,180,270])for(const mirror of ['', 'x', 'y']){
+  const place=`(at 50 60 ${angle}) ${mirror?'(mirror '+mirror+')':''} (unit 1) (uuid placed)`;
+  const library='(lib_symbols (symbol "Lib:Original" (symbol "Original_1_1" (circle (center 7 9) (radius 2)))) (symbol "SavedOverride" (symbol "SavedOverride_1_1" (polyline (pts (xy 1 2) (xy 3 4))))))';
+  const overridden=render(`(kicad_sch ${library} (symbol (lib_id "Lib:Original") (lib_name "SavedOverride") ${place}))`);
+  const direct=render(`(kicad_sch ${library} (symbol (lib_id "SavedOverride") ${place}))`);
+  assert.deepEqual(overridden.primitives,direct.primitives,`${angle} mirror ${mirror}`);
+  assert.equal(overridden.primitives.some(p=>p.type==='circle'),false);
+  assert.ok(overridden.primitives.some(p=>p.type==='line'||p.type==='polyline'));
+ }
+ const missingOriginal=render('(kicad_sch (lib_symbols (symbol "Saved" (symbol "Saved_1_1" (circle (center 0 0) (radius 1))))) (symbol (lib_id "Missing:Original") (lib_name "Saved") (at 10 20) (uuid alias)))');
+ assert.ok(missingOriginal.primitives.some(p=>p.type==='circle'&&p.uuid==='alias'));
+ assert.equal(missingOriginal.warnings.some(w=>/unavailable|No drawable/.test(w)),false);
+});
+
+
+test('saved embedded override also drives source snapshots and semantic comparison',()=>{
+ const model=require('../design-model.js'),diff=require('../design-diff.js');
+ const source=radius=>`(kicad_sch (lib_symbols (symbol "Original" (symbol "Original_1_1" (circle (center 0 0) (radius 1)))) (symbol "Saved" (symbol "Saved_1_1" (circle (center 0 0) (radius ${radius})))) ) (symbol (lib_id "Original") (lib_name "Saved") (at 10 20) (unit 1) (uuid alias)))`;
+ const project=model.buildProject([{path:'root.kicad_sch',content:source(2)}]);
+ assert.equal(project.objects.find(o=>o.uuid==='alias').saved.library.id,'Saved');
+ const before=diff.projectObjects([{path:'root.kicad_sch',content:source(2)}]),after=diff.projectObjects([{path:'root.kicad_sch',content:source(3)}]);
+ assert.notEqual(JSON.stringify(before),JSON.stringify(after),'an overridden body change remains a semantic source change');
 });
