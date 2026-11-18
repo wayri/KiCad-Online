@@ -32,6 +32,48 @@ function harness(overrides={}){
 const thread=(number=1,extra={})=>({kind:'issue',number,title:'Review power stage',state:'open',id:String(number),author:'owner',body:'Root description',createdAt:'2026-10-27T04:00:00.000Z',updatedAt:'2026-10-27T04:00:00.000Z',comments:[{id:'12',author:'reviewer',body:'Check **U3**',createdAt:'2026-10-27T04:10:00.000Z',updatedAt:'2026-10-27T04:10:00.000Z',canReply:true,canEdit:false}],capabilities:{create:true,reply:true,edit:true,reactions:false},...extra});
 const event=(key,extra={})=>({key,preventDefault(){this.prevented=true;},...extra});
 
+test('GitLab annotation-card replies use the fetched note, preserve its anchor and wait for Send',async()=>{
+ const h=harness({provider:'gitlab'}),scope={provider:'gitlab',host:'https://gitlab.example.org',repository:'group/sub/project',ref:'main',file:'board.kicad_pcb'};
+ h.setScope(scope);
+ const issueUrl=scope.host+'/'+scope.repository+'/-/issues/42',url=issueUrl+'#note_12';
+ const row={...thread().comments[0],url},issue=thread(42,{url:issueUrl,comments:[row]});
+ const note={anchor:{...scope,position:{x:3,y:4}},github:{number:42,url}};
+ h.api.render(issue);
+ for(const foreign of [issueUrl+'#note_99',url.replace('/42#','/41#'),url.replace('gitlab.example.org','other.example.org')]){
+  assert.throws(()=>h.api.replyToAnnotation({...note,github:{number:42,url:foreign}}),/unavailable/);
+ }
+ assert.throws(()=>h.api.replyToAnnotation({...note,anchor:{...note.anchor,ref:'another'}}),/drawing or issue changed/);
+ h.type('Existing draft');
+ assert.throws(()=>h.api.replyToAnnotation(note),/current chat draft/);
+ assert.equal(h.api.draft().text,'Existing draft');h.api.discard();
+ h.api.replyToAnnotation(note);assert.equal(h.api.draft().replyTo,'12');assert.equal(h.requests.length,0);
+ h.type('Check this location');await h.find('chat-send').onclick();
+ assert.equal(h.confirmations.length,1);const {type,payload}=h.requests[0];
+ assert.equal(type,'chat-message-write');assert.equal(payload.action,'reply');assert.equal(payload.replyTo,'12');
+ assert.deepEqual(payload.thread,{kind:'issue',number:42});assert.deepEqual(payload.annotation.anchor.position,{x:3,y:4});
+ assert.equal(payload.annotation.text,'Check this location');h.api.dispose();
+});
+
+test('local GitLab reply anchors require the matching workspace binding and remain local in transit',async()=>{
+ const provider={provider:'gitlab',host:'https://gitlab.example.org'},local={repository:'local/workspace',ref:'workspace',file:'board.kicad_pcb'};
+ const remote={...provider,repository:'group/sub/project',ref:'a'.repeat(40),file:local.file},url=provider.host+'/'+remote.repository+'/-/issues/8';
+ const note={anchor:{...local,position:{x:3,y:4}},github:{number:8,url:url+'#note_12'}};
+ const issue=thread(8,{url,comments:[{...thread().comments[0],url:note.github.url}]});
+ for(const workspaceProvider of [undefined,{...provider,host:'https://other.example.org'},provider]){
+  const h=harness({provider:'gitlab',workspaceProvider,comments:comments.forWorkspace(local,remote)});h.setScope({...local,...provider});h.api.render(issue);
+  if(workspaceProvider!==provider)assert.throws(()=>h.api.replyToAnnotation(note),/drawing or issue changed/);
+  else{
+   for(const anchor of [{...note.anchor,ref:'different'},{...note.anchor,file:'other.kicad_sch'},{...note.anchor,repository:'foreign/project'},{...note.anchor,...provider},{...note.anchor,...provider,host:'https://other.example.org'}]){
+    assert.throws(()=>h.api.replyToAnnotation({...note,anchor}),/drawing or issue changed/);
+   }
+   h.api.replyToAnnotation(note);h.type('Keep this workspace location');await h.find('chat-send').click();
+   const {payload}=h.requests[0];assert.equal(payload.host,remote.host);assert.equal(payload.replyTo,'12');
+   assert.deepEqual(payload.annotation.anchor,note.anchor);
+  }
+  h.api.dispose();
+ }
+});
+
 test('opt-in Enter review honors newline, IME composition and existing confirmation boundaries',async()=>{
  const h=harness({enterToSend:true,confirmSend:async()=>false});h.api.render(thread());const input=h.type('Review this');
  for(const extra of [{shiftKey:true},{isComposing:true},{keyCode:229},{altKey:true}]){const key=event('Enter',extra);input.onkeydown(key);assert.equal(key.prevented,undefined);}

@@ -736,6 +736,7 @@
     function confirmThreadState({thread,state}){return new Promise(resolve=>{const dialog=make('dialog'),header=make('header'),body=make('section'),footer=make('footer'),verb=state==='closed'?'Close':'Reopen';dialog.className='comment-post-review chat-send-review';dialog.setAttribute('aria-label','Review thread state change');let done=false;const finish=value=>{if(done)return;done=true;dialog.close?.();dialog.remove();resolve(value);};header.append(make('strong',verb+' '+thread.kind+' #'+thread.number),button('Close',()=>finish(false)));body.append(make('p',providerName+' · '+(collaboration?.repository||options.pullRepository||repository)),make('strong',thread.title||''),make('p','This changes the provider thread for everyone with access.'));footer.append(button('Cancel',()=>finish(false)),button(verb+' '+thread.kind,()=>finish(true)));dialog.append(header,body,footer);dialog.addEventListener('cancel',event=>{event.preventDefault();finish(false);});dialog.addEventListener('click',event=>{if(event.target===dialog)finish(false);});document.body.append(dialog);dialog.showModal();});}
     function commentTagSuggestions({query='' }={}){return root.KiCadCommentCompose.rankSuggestions([...new Set([...notes,...remoteNotes].flatMap(note=>note.tags||[]))],query,'tag');}
     if(remoteAvailable&&root.KiCadChatPanel){chatPanel=root.KiCadChatPanel.mount({document,host:root,container:threadMessages,provider,repository:options.pullRepository||repository,comments:KiCadReviewComments,request,getScope:chatScope,enterToSend:true,browserSession:Boolean(browserReviewTransport.reviewTransport),onTags:commentTagSuggestions,
+      workspaceProvider:collaboration?.provider==='gitlab'?providerContext:undefined,
       createAnnotation:(text,{id,severity,state,capture})=>{if(repository!=='local/workspace'&&options.pullRepository&&options.pullRepository!==repository)throw Error('This conversation is in the base repository while the drawing is from a fork. Send text here, or attach context in the source repository.');return KiCadReviewComments.validateComment({id,createdAt:new Date().toISOString(),text,severity,state,threadType:loadedThread?.kind||'issue',anchor:anchor(),...(capture?{capture}:{})});},
       onLocate:locateChatAnchor,onRead:(kind,number,{refresh=false}={})=>readThread(kind,number,{refresh,history:!refresh}),onSaveDraft:saveChatDraft,
       confirmThreadState,
@@ -1535,7 +1536,18 @@
         actions.append(goTo,
           button(unread?"Mark read":"Mark unread",()=>markRead(note,unread)));
         if(note.github){actions.append(safetyActions(note.github.author,note.github.url));const link=make("a",`Open ${providerName} thread`);link.href=note.github.url;link.target="_blank";link.rel="noopener noreferrer";actions.append(link);if(remoteAvailable)actions.append(button('View thread',()=>readThread(note.github.source.startsWith('discussion')?'discussion':'issue',note.github.number)));
-          if(remoteAvailable)actions.append(button('Reply',()=>{const type=provider==='gitlab'||note.github.source.startsWith('discussion')?'discussion':'issue';editComment({id:crypto.randomUUID(),createdAt:new Date().toISOString(),text:'',severity:'info',state:'open',threadType:type,anchor:{...note.anchor}});$("editorDestination").value=provider==='gitlab'||type==='issue'?'existing-issue':'existing-discussion';$("editorThreadNumber").value=String(note.github.number);editorDestinationChanged();commentStatus(`Reply draft for ${providerName} ${type} #${note.github.number}. Enter your text, then Comment.`);}));
+          if(remoteAvailable)actions.append(button('Reply',async()=>{
+            if(provider==='gitlab'&&note.github.url.includes('#')){
+              try{
+                const issue=await readThread('issue',note.github.number);
+                if(!issue)return;
+                if(!chatPanel?.replyToAnnotation)throw Error('The GitLab reply composer is unavailable.');
+                chatPanel.replyToAnnotation(note);
+              }catch(error){showThreadNotice(error.message);commentStatus(error.message,true);}
+              return;
+            }
+            const type=provider==='gitlab'||note.github.source.startsWith('discussion')?'discussion':'issue';editComment({id:crypto.randomUUID(),createdAt:new Date().toISOString(),text:'',severity:'info',state:'open',threadType:type,anchor:{...note.anchor}});$("editorDestination").value=provider==='gitlab'||type==='issue'?'existing-issue':'existing-discussion';$("editorThreadNumber").value=String(note.github.number);editorDestinationChanged();commentStatus(`Reply draft for ${providerName} ${type} #${note.github.number}. Enter your text, then Comment.`);
+          }));
         }
         else if(!note.remoteRefs?.length) {const draft=button(`Open ${providerName} composer`,async()=>{try{editComment(note);await prepareWebsiteHandoff();}catch(error){commentStatus(error.message,true);}});draft.className="github-draft-action";draft.hidden=!websiteHandoffAvailable;actions.append(button("Edit",()=>editComment(note)),draft,
           button("Delete",async()=>{try{await request("comment-delete",{...scope(note.anchor.file),id:note.id});await refreshComments();options.onCommentsChanged?.();commentStatus("Local comment deleted.");}catch(error){commentStatus(error.message,true);}}));

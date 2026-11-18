@@ -819,6 +819,35 @@ test('Reply to a remote annotation retains its drawing anchor and selects the ex
  assert.equal(view.get('editorDestination').value,'existing-discussion');assert.equal(view.get('editorThreadNumber').value,'17');assert.equal(view.get('commentText').value,'');assert.equal(view.get('commentAnchor').textContent,'Selected point');assert.match(view.get('commentAnchor').title,/3.00, 4.00/);assert.equal(calls.some(m=>m.type==='github-publish-comment'),false);
 });
 
+test('Reply on a GitLab note card opens the fetched issue and passes its exact note to the chat composer',async()=>{
+ const calls=[],replies=[],host='https://gitlab.example.org',repository='group/sub/project',issueUrl=host+'/'+repository+'/-/issues/17';
+ const note={id:'remote-note',text:'Check alignment',createdAt:'2026-10-04T00:00:00Z',threadType:'discussion',anchor:{provider:'gitlab',host,repository,ref:'main',file:'board.kicad_pcb',position:{x:3,y:4}},github:{provider:'gitlab',source:'discussion',number:17,state:'open',author:'alice',url:issueUrl+'#note_123'}};
+ const chatPanel={mount(){return{render:()=>true,replyToAnnotation:target=>replies.push(target),dispose(){}};}};
+ const view=workspaceRuntime(async m=>{
+  calls.push(m);
+  if(m.type==='comment-remote-list')return{notes:[note],warnings:[]};
+  if(m.type==='github-thread-read')return{kind:'issue',number:17,state:'open',title:'Check alignment',url:issueUrl,body:'Root',comments:[]};
+  return [];
+ },{provider:'gitlab',host,repository,chatPanel});
+ await view.get('refreshGitHub').click();
+ const actions=view.get('commentList').children[0].children.at(-1);
+ await action(actions,'Reply').click();
+ const read=calls.find(m=>m.type==='github-thread-read');assert.equal(read.number,17);assert.equal(read.repository,repository);assert.equal(read.host,host);
+ assert.equal(replies.length,1);assert.equal(replies[0].github.url,issueUrl+'#note_123');assert.equal(replies[0].anchor.position.y,4);
+ assert.equal(calls.some(m=>['comment-publish','chat-message-write'].includes(m.type)),false);view.workspace.dispose();
+});
+
+test('GitLab chat obtains a local drawing binding only from the VS Code collaboration context',()=>{
+ const collaboration={provider:'gitlab',host:'https://gitlab.example.org',repository:'group/sub/project',ref:'a'.repeat(40),prefix:''};
+ for(const bound of [false,true]){
+  const chat=captureChat(),settings=bound?{vscode:{collaboration},repository:'local/workspace',ref:'workspace'}:collaboration;
+  const view=workspaceRuntime(undefined,{chatPanel:chat.panel,...settings});
+  if(bound)assert.deepEqual({...chat.options.workspaceProvider},{provider:'gitlab',host:collaboration.host});
+  else assert.equal(chat.options.workspaceProvider,undefined);
+  view.workspace.dispose();
+ }
+});
+
 test('net review drafts preserve the selected saved net name in formatted GitHub context',async()=>{
  let notes=[];const view=workspaceRuntime(async m=>{if(m.type==='comment-list')return notes;if(m.type==='comment-save'){notes=[m.comment];return m.comment;}return[];});view.load();view.get('netList').children[0].click();view.get('newComment').click();view.get('commentText').value='Review this net';view.get('editorPreview').click();assert.match(view.get('editorMarkdown').textContent,/\| Net \| SIGNAL \|/);await view.get('saveComment').click();assert.equal(notes[0].anchor.kind,'net');assert.equal(notes[0].anchor.netName,'SIGNAL');
 });

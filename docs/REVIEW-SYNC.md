@@ -96,11 +96,12 @@ ordinary comments retain their existing repository scopes. In VS Code, opening a
 board obtains a GitHub session with repository and project scopes through its built-in
 account flow. GitLab browser sign-in uses the existing PKCE flow when a public app
 ID is configured for that server, or an expiring access token. A publisher GitLab
-OAuth application is not bundled: registering its public ID and exact browser
-redirect URI remains a deployment prerequisite for one-click OAuth login. No client
+public Application ID is bundled, with an Android callback documented. Registering
+the exact browser redirect URI remains a deployment prerequisite for browser OAuth
+login; the Android registration alone does not prove browser login works. No client
 secret belongs in the extension. Self-hosted servers require their own registration.
 
-Open conversations refresh about every ten seconds while visible; failures back
+Open conversations refresh about every three seconds while visible; failures back
 off to five minutes. Background annotation refresh backs off to two minutes.
 Refresh keeps drafts, pasted image previews and reading position. Participant
 buttons highlight multiple authors, without indicating whether they are online.
