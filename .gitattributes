@@ -14,3 +14,7 @@ extension/vendor/occt/* -text whitespace=cr-at-eol
 
 # Preserve bytes in the generated worker containing the pinned STEP importer
 extension/step-worker-vscode.js -text whitespace=cr-at-eol
+
+# Preserve hashes of native KiCad/ngspice verification evidence.
+extension/tests/fixtures/simulation/native/*.wbk -text whitespace=cr-at-eol
+extension/tests/fixtures/simulation/native/*.raw -text whitespace=cr-at-eol

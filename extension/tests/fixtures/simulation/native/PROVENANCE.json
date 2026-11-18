@@ -1,0 +1,41 @@
+{
+  "source": "KiCad 10.0.6 generic_models/generic_opamp_bip",
+  "dataLicense": "CC-BY-SA-4.0",
+  "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/",
+  "workbookUnchanged": true,
+  "solver": "ngspice-46 (KiCad bundled shared library)",
+  "execution": "native CLI netlist + native shared solver; saved result viewer",
+  "files": [
+    {
+      "path": "native-opamp.wbk",
+      "bytes": 1486,
+      "sha256": "fc6896b976300983cd2147e0375752a2cca951a10037e938c4ad30891c8efaf4"
+    },
+    {
+      "path": "native-opamp-transient.raw",
+      "bytes": 104711,
+      "sha256": "e3c5893a52535cda226cf4a3f41b9bc07d31e8ffd586283ba1f14f9692f308dd"
+    },
+    {
+      "path": "native-opamp-ac.raw",
+      "bytes": 15826,
+      "sha256": "2474dc8e5b85ccdfa8d926744751f20482d800fb4425b759c1e05850150ef679"
+    },
+    {
+      "path": "smps-com.wbk",
+      "bytes": 1139,
+      "sha256": "294a7db955b9af2db5b61380bac0a2dea42bfd79a770d854edb22571b328a1e3",
+      "source": "KiCad 10.0.6 demos/simulation/power_supplies/boost/smps-com.wbk",
+      "dataLicense": "CC-BY-SA-4.0",
+      "workbookUnchanged": true
+    },
+    {
+      "path": "Class-D.wbk",
+      "bytes": 1195,
+      "sha256": "8d19fd5aa1d9bc561455c357b95416157c8daa967a26d5f9639b004ab55a9d1c",
+      "source": "KiCad 10.0.6 demos/simulation/class-d/Class-D.wbk",
+      "dataLicense": "CC-BY-SA-4.0",
+      "workbookUnchanged": true
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 # Saved analysis and simulation results
 
-In KiCad Online, open **Project → Analysis & simulation**, then choose a saved report. Reports imported with a project are retained in its offline copy. Standalone supported report files can also open directly. In the browser extension, choose **Analysis** in the project viewer. Results are read-only: this feature does not run KiCad, ngspice or WayriCAD solvers.
+In KiCad Online, open **Project → Analysis & simulation**, then choose a saved report. Reports imported with a project are retained in its offline copy. Standalone supported report files can also open directly. In the browser extension, choose **Analysis** in the project viewer. Use KiCad, ngspice or the producing WayriCAD tool to run analyses and export numerical results. The viewer reads saved settings and samples and treats saved analysis commands as text.
 
 The viewer has Graphs, Data, Report and Source views. Select traces and linear/logarithmic axes for waveforms; point at a graph to read values. Thermal maps retain missing cells as gaps. Mechanical meshes can be rotated by dragging. Search Report for source hashes, assumptions, warnings, coverage and findings. Large property lists and tables load in batches.
 
@@ -21,7 +21,17 @@ values, or net identities are never inferred. Net waveform popups retain the sou
 family label in both schematic/layout and 3D views. Viewing and probing saved results
 does not execute either KiCad or wayriCAD plugins or solvers.
 
-## Inspect and compare saved results
+## Open a KiCad simulation workbook
+
+Include the `.wbk` and its ASCII SPICE `.raw`, CSV or TSV exports in the same project. Open the workbook, select a workbook tab, then choose its export from **Saved result**. Each tab has its own binding. Result files are read when selected from the same project revision. Use the export from the intended run. Opening an ASCII RAW file directly gives you its saved plots without a workbook.
+
+In **Graphs**, choose visible signals and a cursor signal. Pan or zoom the plot, use **Fit** to reset the view, and set **Cursor A** and **Cursor B** to compare saved samples. You can step a cursor through saved samples with the arrow keys. AC plots provide magnitude, dB, phase, and real/imaginary views. For nested DC sweeps, select a sweep to compare samples at repeated x values. **Locate net** sends the exact saved voltage net name to the chosen drawing. Data, Report and Source describe the selected project file.
+
+The workspace restores the first matching saved cursor A and B for display. A cursor outside the result range retains its saved x position and has no numerical y readout. **Save workbook** downloads a copy. Modern workbook export preserves untouched cursor records and unknown fields. The viewer reports settings that the workbook format cannot store and exports legacy workbooks as their original text. Keep the result exports alongside the workbook.
+
+The workbook workspace accepts up to 64 files, one workbook per workspace, an 8 MiB workbook and 128 MiB of total input. Individual result files are limited to 64 MiB. Plot summaries preserve extrema and gaps within the drawing budget. Cursors read the retained samples.
+
+## Inspect other saved results
 
 On a graph, select **Probe signal** for a waveform, then tap to inspect a saved sample. Choose **Mark A**, tap the first point, then **Mark B** and tap the second. The viewer retains both readouts and shows B minus A. Waveforms report the saved axis and signal name; thermal and PI fields show X/Y in millimetres, distance and the change in the saved field unit. **Clear probes** starts again. Changing plots, files or probe signals clears prior probes so unrelated results cannot be compared accidentally.
 
@@ -48,16 +58,16 @@ For a PCB layout in KiCad Online, tap **Measure** in the drawing toolbar. Tap tw
 | Other WayriCAD tools | Generic saved JSON fields/record tables and CSV/TSV tables, including manufacturing checks, heater summaries and BOM-style exports. A specialised plot requires saved numerical data; the viewer does not invent missing fields or grids. |
 | KiCad `.wbk` | JSON workbooks (versions 6–8 and retained unknown fields), plus legacy line-oriented versions 1–5: commands, signals, cursors and display settings. No fabricated waveforms. |
 | KiCad plot CSV / TSV | Numeric columns plotted against the first numeric column. Semicolon export and trailing empty column supported; saved display names retained. |
-| ngspice ASCII `.raw` | Real and complex samples; complex traces displayed as real/imaginary components. Binary RAW is explicitly unsupported; export ASCII RAW or KiCad CSV. |
+| ngspice ASCII `.raw` | Real and complex samples, with workbook-defined gain and phase or selectable complex views. Export binary RAW to ASCII RAW or KiCad CSV before opening it here. |
 | HTML / text reports | Inert report text and HTML tables. Scripts, external assets and interactive embedded HTML plots are not executed; open the companion JSON/CSV for plots. |
-
-KiCad workbooks contain simulation setup, not the waveform samples needed to recreate plots. Export simulated plot data as CSV in KiCad and include it with the project. Changing the workbook here does not rerun a simulation.
 
 The saved-result viewer bounds each source at 64 MiB, tabular data at 200,000 rows / four million cells, and SPICE data at four million values. Eye plots display all saved contexts up to 512 traces. Source preview is limited to 512,000 characters; report-property inspection is limited to 4,000 fields. Native import/download and repository discovery retain their separate project budgets. Unsupported schemas remain searchable as saved JSON rather than being treated as new analysis results.
 
 Current source opens saved reports in a dedicated VS Code panel rather than a nested frame. The selected voltage trace can locate its exact net in the original drawing session. No CSP permissions were expanded for this feature. See [saved waveform linking](REVISION-REVIEW.md#link-saved-samples-to-a-net) for matching requirements and limits.
 
 ## Format evidence
+
+KiCad 10.0.6 supplied the original op-amp workbook and the SPICE netlist for transient, AC and nested DC sample checks using its bundled ngspice-46 shared library. The KERO reference covers only the isolated R1/C3 timing branch with an ideal test source. The saved KERO circuit lacks models for a full native simulation. The fixture record includes numerical references, cursor comparisons, and source and result hashes. [Native simulation fixtures](../extension/tests/fixtures/simulation/native/README.md)
 
 Adapters were checked against WayriCAD develop commit `1b0590d016266a3c98264a1dda0a2f02abc2a5ac`, including the public QuickTherm example. Synthetic tests reproduce the documented PI, SI, mechanical and transient contracts; they do not establish numerical solver accuracy.
 

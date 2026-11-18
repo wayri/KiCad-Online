@@ -1,0 +1,303 @@
+{
+  "kicad_version": "10.0.6",
+  "ngspice_version": [
+    "stdout ** ngspice-46 shared library",
+    "stdout ** ngspice-46 : Circuit level simulation program"
+  ],
+  "source_sha256": {
+    "ngspice.dll": "3238d82f02b6d08d8703a28ea894bcfdf59906dd4a59ad2e93eeec532a0454a3",
+    "kicad-cli.exe": "393525236969434e24bc710334efe244fb285ef6596a1aea8e74353ef4db5477",
+    "Simulation_SPICE.sp": "1cb937dac5a88382aecb4b474539c6290619444d8439f3d9c294c0629603ffcf",
+    "generic_opamp_bip.kicad_sch": "0a1824083e713c018304357c507fccf7a824d41ad953811710ed1a91f845850b",
+    "generic_opamp_bip.kicad_pro": "0bb4d0ebdba1d9e7ee2c6ef2ea76523268b6cad875967d7f4660c3cf4b409c48",
+    "generic_opamp_bip.wbk": "fc6896b976300983cd2147e0375752a2cca951a10037e938c4ad30891c8efaf4",
+    "KERO.kicad_sch": "1b7049141da6ba6fa7413dc043ed129c30528bff330965dc43b04ea2e6a74372",
+    "source-manifest.json": "4c67343585fddff0161aa7f39cae19ff758acffecb571138e5401b412eae38c4"
+  },
+  "netlists": {
+    "kero-as-saved.cir": "8a60ad98c9891a217c5667823224bc4b4be6ce759e399416fb0cac2aeaa8c393",
+    "generic-models.cir": "de6c2130003d33a147d3397ccc0ba5e91e87edcc55ef9b4e1c655759bdac07a3",
+    "kero-timing-branch.cir": "377c961d3390812cb63a7aea0aa8db8830204fad47a501558d32d4a30ebf2a88"
+  },
+  "datasets": {
+    "native-opamp-transient": {
+      "command": ".tran 10u 10m",
+      "plot": "tran1",
+      "x": "time",
+      "count": 1010,
+      "raw_sha256": "e3c5893a52535cda226cf4a3f41b9bc07d31e8ffd586283ba1f14f9692f308dd",
+      "signals": [
+        "v(/in)",
+        "v(/out)",
+        "v(/outb)"
+      ],
+      "repeated_x": 0,
+      "descending_steps": 0,
+      "nonfinite_values": 0
+    },
+    "native-opamp-ac": {
+      "command": ".ac dec 10 1 100Meg",
+      "plot": "ac1",
+      "x": "frequency",
+      "count": 81,
+      "raw_sha256": "2474dc8e5b85ccdfa8d926744751f20482d800fb4425b759c1e05850150ef679",
+      "signals": [
+        "v(/in)",
+        "v(/out)",
+        "v(/outb)"
+      ],
+      "repeated_x": 0,
+      "descending_steps": 0,
+      "nonfinite_values": 0
+    },
+    "generic-dc": {
+      "command": ".dc v3 -0.1 0.1 0.05 v2 4 5 1",
+      "plot": "dc1",
+      "x": "v-sweep",
+      "count": 10,
+      "raw_sha256": "08e0bad70e17a1c527b320b2f54d04074728cb9a35e74477a1c91b3b28a9a483",
+      "signals": [
+        "v(/in)",
+        "v(/out)",
+        "v(/outb)"
+      ],
+      "repeated_x": 5,
+      "descending_steps": 1,
+      "nonfinite_values": 0
+    },
+    "timing-tran": {
+      "command": ".tran 0.01 2",
+      "plot": "tran2",
+      "x": "time",
+      "count": 226,
+      "raw_sha256": "e91904b4bd90fa165f90ce0dfc42d2dda14e18b544960b216fb031e816908110",
+      "signals": [
+        "v(/out)",
+        "v(/timing)"
+      ],
+      "repeated_x": 0,
+      "descending_steps": 0,
+      "nonfinite_values": 0
+    },
+    "timing-ac": {
+      "command": ".ac lin 3 0.07957747154594767 0.238732414637843",
+      "plot": "ac2",
+      "x": "frequency",
+      "count": 3,
+      "raw_sha256": "4eadac603c113d4e8087494bd801acc0f2fd0fcfc0ce1e2f1a193bf2214937b3",
+      "signals": [
+        "v(/out)",
+        "v(/timing)"
+      ],
+      "repeated_x": 0,
+      "descending_steps": 0,
+      "nonfinite_values": 0
+    },
+    "timing-dc": {
+      "command": ".dc vtest 0 1 0.25",
+      "plot": "dc2",
+      "x": "v-sweep",
+      "count": 5,
+      "raw_sha256": "764d366e3c570ec4fafaed0c2658ec8271c178a5279e649aebf40471194e8d6d",
+      "signals": [
+        "v(/out)",
+        "v(/timing)"
+      ],
+      "repeated_x": 0,
+      "descending_steps": 0,
+      "nonfinite_values": 0
+    }
+  },
+  "comparisons": [
+    {
+      "dataset": "native-opamp-transient",
+      "component": "v(/in)",
+      "index": 33,
+      "x": 0.0002471143025685134,
+      "actual": 0.09998356311831419,
+      "expected": 0.09998356311831419,
+      "absolute_tolerance": 1e-09,
+      "unit": "V"
+    },
+    {
+      "dataset": "native-opamp-ac",
+      "component": "v(/in) real",
+      "index": 30,
+      "x": 1000.000000000002,
+      "actual": 1.0,
+      "expected": 1.0,
+      "absolute_tolerance": 1e-12,
+      "unit": "V"
+    },
+    {
+      "dataset": "native-opamp-ac",
+      "component": "v(/out) gain",
+      "index": 30,
+      "x": 1000.000000000002,
+      "actual": 19.998984153199164,
+      "expected": 20.0,
+      "absolute_tolerance": 0.01,
+      "unit": "dBV"
+    },
+    {
+      "dataset": "generic-dc",
+      "component": "v(/in)",
+      "index": 0,
+      "x": -0.1,
+      "actual": -0.1,
+      "expected": -0.1,
+      "absolute_tolerance": 1e-12,
+      "unit": "V"
+    },
+    {
+      "dataset": "generic-dc",
+      "component": "v(/in)",
+      "index": 1,
+      "x": -0.05,
+      "actual": -0.05,
+      "expected": -0.05,
+      "absolute_tolerance": 1e-12,
+      "unit": "V"
+    },
+    {
+      "dataset": "generic-dc",
+      "component": "v(/in)",
+      "index": 2,
+      "x": 0.0,
+      "actual": 0.0,
+      "expected": 0.0,
+      "absolute_tolerance": 1e-12,
+      "unit": "V"
+    },
+    {
+      "dataset": "generic-dc",
+      "component": "v(/in)",
+      "index": 3,
+      "x": 0.05,
+      "actual": 0.05,
+      "expected": 0.05,
+      "absolute_tolerance": 1e-12,
+      "unit": "V"
+    },
+    {
+      "dataset": "generic-dc",
+      "component": "v(/in)",
+      "index": 4,
+      "x": 0.1,
+      "actual": 0.1,
+      "expected": 0.1,
+      "absolute_tolerance": 1e-12,
+      "unit": "V"
+    },
+    {
+      "dataset": "generic-dc",
+      "component": "v(/in)",
+      "index": 5,
+      "x": -0.1,
+      "actual": -0.1,
+      "expected": -0.1,
+      "absolute_tolerance": 1e-12,
+      "unit": "V"
+    },
+    {
+      "dataset": "generic-dc",
+      "component": "v(/in)",
+      "index": 6,
+      "x": -0.05,
+      "actual": -0.05,
+      "expected": -0.05,
+      "absolute_tolerance": 1e-12,
+      "unit": "V"
+    },
+    {
+      "dataset": "generic-dc",
+      "component": "v(/in)",
+      "index": 7,
+      "x": 0.0,
+      "actual": 0.0,
+      "expected": 0.0,
+      "absolute_tolerance": 1e-12,
+      "unit": "V"
+    },
+    {
+      "dataset": "generic-dc",
+      "component": "v(/in)",
+      "index": 8,
+      "x": 0.05,
+      "actual": 0.05,
+      "expected": 0.05,
+      "absolute_tolerance": 1e-12,
+      "unit": "V"
+    },
+    {
+      "dataset": "generic-dc",
+      "component": "v(/in)",
+      "index": 9,
+      "x": 0.1,
+      "actual": 0.1,
+      "expected": 0.1,
+      "absolute_tolerance": 1e-12,
+      "unit": "V"
+    },
+    {
+      "dataset": "timing-tran",
+      "component": "v(/timing)",
+      "index": 124,
+      "x": 0.9967781520000008,
+      "actual": 0.6309362461146192,
+      "expected": 0.6309333957842647,
+      "absolute_tolerance": 2e-05,
+      "unit": "V"
+    },
+    {
+      "dataset": "timing-ac",
+      "component": "v(/timing) real",
+      "index": 1,
+      "x": 0.15915494309189537,
+      "actual": 0.49999999999999983,
+      "expected": 0.4999999999999999,
+      "absolute_tolerance": 1e-10,
+      "unit": "V"
+    },
+    {
+      "dataset": "timing-ac",
+      "component": "v(/timing) imag",
+      "index": 1,
+      "x": 0.15915494309189537,
+      "actual": -0.5,
+      "expected": -0.5,
+      "absolute_tolerance": 1e-10,
+      "unit": "V"
+    },
+    {
+      "dataset": "timing-ac",
+      "component": "v(/timing) gain",
+      "index": 1,
+      "x": 0.15915494309189537,
+      "actual": -3.0102999566398125,
+      "expected": -3.0102999566398125,
+      "absolute_tolerance": 1e-09,
+      "unit": "dBV"
+    },
+    {
+      "dataset": "timing-ac",
+      "component": "v(/timing) phase",
+      "index": 1,
+      "x": 0.15915494309189537,
+      "actual": -45.000000000000014,
+      "expected": -45.00000000000001,
+      "absolute_tolerance": 1e-08,
+      "unit": "deg"
+    },
+    {
+      "dataset": "timing-dc",
+      "component": "v(/timing)",
+      "index": 2,
+      "x": 0.5,
+      "actual": 0.5,
+      "expected": 0.5,
+      "absolute_tolerance": 1e-10,
+      "unit": "V"
+    }
+  ]
+}

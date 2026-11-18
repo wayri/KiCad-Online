@@ -1,0 +1,106 @@
+[
+  {
+    "a": {
+      "dataset": "native-opamp-transient",
+      "axis": "time",
+      "signal": "v(/in)",
+      "index": 33,
+      "x": 0.0002471143025685134,
+      "x_unit": "s",
+      "projection": "real",
+      "y": 0.09998356311831419,
+      "y_unit": "V"
+    },
+    "b": {
+      "dataset": "native-opamp-transient",
+      "axis": "time",
+      "signal": "v(/in)",
+      "index": 83,
+      "x": 0.0007471143025685147,
+      "x_unit": "s",
+      "projection": "real",
+      "y": -0.0999835631183142,
+      "y_unit": "V"
+    },
+    "delta_x": 0.0005000000000000013,
+    "delta_y": -0.19996712623662838
+  },
+  {
+    "a": {
+      "dataset": "native-opamp-ac",
+      "axis": "frequency",
+      "signal": "v(/out)",
+      "index": 30,
+      "x": 1000.000000000002,
+      "x_unit": "Hz",
+      "projection": "gain",
+      "y": 19.998984153199164,
+      "y_unit": "dBV"
+    },
+    "b": {
+      "dataset": "native-opamp-ac",
+      "axis": "frequency",
+      "signal": "v(/out)",
+      "index": 40,
+      "x": 10000.00000000003,
+      "x_unit": "Hz",
+      "projection": "gain",
+      "y": 19.99320198061075,
+      "y_unit": "dBV"
+    },
+    "delta_x": 9000.000000000027,
+    "delta_y": -0.005782172588414625
+  },
+  {
+    "a": {
+      "dataset": "native-opamp-ac",
+      "axis": "frequency",
+      "signal": "v(/out)",
+      "index": 30,
+      "x": 1000.000000000002,
+      "x_unit": "Hz",
+      "projection": "phase",
+      "y": 179.78981200986982,
+      "y_unit": "deg"
+    },
+    "b": {
+      "dataset": "native-opamp-ac",
+      "axis": "frequency",
+      "signal": "v(/out)",
+      "index": 40,
+      "x": 10000.00000000003,
+      "x_unit": "Hz",
+      "projection": "phase",
+      "y": 177.89905277809558,
+      "y_unit": "deg"
+    },
+    "delta_x": 9000.000000000027,
+    "delta_y": -1.8907592317742399
+  },
+  {
+    "a": {
+      "dataset": "generic-dc",
+      "axis": "v(v-sweep)",
+      "signal": "v(/out)",
+      "index": 1,
+      "x": -0.05,
+      "x_unit": "V",
+      "projection": "real",
+      "y": 0.499834792699804,
+      "y_unit": "V"
+    },
+    "b": {
+      "dataset": "generic-dc",
+      "axis": "v(v-sweep)",
+      "signal": "v(/out)",
+      "index": 6,
+      "x": -0.05,
+      "x_unit": "V",
+      "projection": "real",
+      "y": 0.49983490268768,
+      "y_unit": "V"
+    },
+    "delta_x": 0.0,
+    "delta_y": 1.0998787597360504e-07
+  }
+]

@@ -12,6 +12,7 @@ VENDOR_ASSETS = ('spike-board3d.bundle.js', 'SPIKE-ENGINE-NOTICE.md',
                  'occt/license.occt-import-js.txt', 'occt/license.occt.txt', 'occt/NOTICE.md',
                  'occt/OCCT_LGPL_EXCEPTION.txt', 'occt/EMSCRIPTEN-LICENSE.txt')
 RENDERER_ASSETS += ('ui-foundation.css','analysis-simulation.js','analysis-simulation.css','revision-actions.js','overview-routing.js')
+RENDERER_ASSETS += ('simulation-workbook.js', 'simulation-workspace.js', 'bom-import.js')
 RENDERER_ASSETS += ('pdf-tools.js','pdf-viewer.html','pdf-viewer.css','pdf-viewer.js')
 VENDOR_ASSETS += _PDF_VENDOR
 RENDERER_ASSETS += ('product-version.js', 'product-info.js', 'chunked-replies.js')

@@ -1,0 +1,7 @@
+{
+  "files": ["native-opamp.wbk", "native-opamp-transient.raw", "native-opamp-ac.raw"],
+  "bindings": {
+    "tab-0": {"path": "native-opamp-transient.raw", "plotIndex": 0},
+    "tab-1": {"path": "native-opamp-ac.raw", "plotIndex": 0}
+  }
+}
