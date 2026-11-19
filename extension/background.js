@@ -1138,6 +1138,20 @@ async function openFromAction(tab) {
   }catch(error){if(error.code==='WORKSPACE_PRESENTATION_FAILED')throw error;return open({error:error.message});}
 }
 
+// Browser-owned toolbar menu. The update check and its result stay in Settings.
+const UPDATE_MENU_ID = 'kicad-online-check-for-updates';
+const updateMenu = globalThis.browser?.menus || chrome.contextMenus;
+if (updateMenu?.create && updateMenu.onClicked) {
+  chrome.runtime.onInstalled?.addListener(() => {
+    updateMenu.create({ id: UPDATE_MENU_ID, title: 'Check for updates', contexts: ['action'] },
+      () => { void chrome.runtime.lastError; });
+  });
+  updateMenu.onClicked.addListener(({ menuItemId }) => {
+    if (menuItemId !== UPDATE_MENU_ID) return;
+    void chrome.tabs.create({ url: chrome.runtime.getURL('options.html#check-for-updates') });
+  });
+}
+
 chrome.action.onClicked.addListener(async tab => {
   try {
     const result=await openFromAction(tab);

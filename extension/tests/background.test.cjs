@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 
 const extensionOrigin = 'chrome-extension://test-id/';
 const calls = { created: [], updated: [], messages: [], removed: [], windows: [] };
-let messageListener, actionListener;
+let messageListener, actionListener, installListener, menuListener, menu;
 const localStore = new Map(), sessionStore = new Map();
 const storageArea = (store) => ({
   get: async (key) => ({ [key]: store.get(key) }),
@@ -27,8 +27,11 @@ global.chrome = {
     id: 'test-id',
     getURL: (path) => extensionOrigin + path,
     openOptionsPage: async () => { calls.optionsOpened = (calls.optionsOpened || 0) + 1; },
+    onInstalled: { addListener: (listener) => { installListener = listener; } },
     onMessage: { addListener: (listener) => { messageListener = listener; } }
   },
+  contextMenus: { create: (item, callback) => { menu = item; callback(); },
+    onClicked: { addListener: (listener) => { menuListener = listener; } } },
   action: { onClicked: { addListener: (listener) => { actionListener = listener; } },
     setBadgeText: async value => { calls.badge = value.text; },
     setBadgeBackgroundColor: async value => { calls.badgeColor = value.color; },
@@ -43,6 +46,17 @@ global.chrome = {
   windows: { create: async (options) => { calls.windows.push(options); return { id: 41 }; } }
 };
 const background = require('../background.js');
+
+test('toolbar update action opens only the fixed Settings update route', () => {
+  installListener({ reason: 'update' });
+  assert.equal(menu.title, 'Check for updates');
+  assert.deepEqual(menu.contexts, ['action']);
+  const before = calls.created.length;
+  menuListener({ menuItemId: 'unrelated' });
+  assert.equal(calls.created.length, before);
+  menuListener({ menuItemId: menu.id, pageUrl: 'https://example.test/' });
+  assert.deepEqual(calls.created.splice(before), [{ url: extensionOrigin + 'options.html#check-for-updates' }]);
+});
 test('remote fork requests are viewer-only and preserve their selected-commit scope',async t=>{
  const original=KiCadGitHubReviewApi.forkRevision;let received;
  KiCadGitHubReviewApi.forkRevision=async value=>{received=value;return {created:true,partial:false};};t.after(()=>KiCadGitHubReviewApi.forkRevision=original);

@@ -76,6 +76,11 @@
   const links=d.createElement('p');links.style.cssText='display:flex;gap:12px;flex-wrap:wrap;font-size:13px';
   for(const [key,label] of [['chrome','Chrome Web Store'],['firefox','Firefox Add-ons']]){const a=d.createElement('a');a.href=stores[key];a.textContent=label;a.target='_blank';a.rel='noopener noreferrer';links.append(a);}
   host.append(button,status,links);
+  if(host.id==='check-for-updates'&&root.location?.hash==='#check-for-updates'){
+   host.scrollIntoView?.({block:'center'});
+   button.focus?.({preventScroll:true});
+   if(!info().development&&updateRuntime()?.requestUpdateCheck)void button.onclick();
+  }
  }
  function showAbout(){
   const d=root.document;if(!d)return;const existing=d.getElementById('pocketKiViewAbout');if(existing){existing.focus();return existing;}

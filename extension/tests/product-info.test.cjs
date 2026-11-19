@@ -103,3 +103,24 @@ test('browser update events surface one alert and keep pending guidance through 
  await button.onclick();
  assert.match(status.textContent,/Version 0\.12\.104 is ready/);
 });
+
+test('toolbar deep link starts one check and shows the result in Settings',async()=>{
+ function node(tag){
+  return {tag,children:[],attributes:new Map(),style:{},
+   setAttribute(key,value){this.attributes.set(key,value);},
+   hasAttribute(key){return this.attributes.has(key);},
+   append(...items){this.children.push(...items);}};
+ }
+ const host=node('div');
+ host.id='check-for-updates';
+ let checks=0;
+ const api=load({
+  location:{hash:'#check-for-updates'},
+  document:{createElement:node,querySelectorAll:selector=>selector==='[data-product-updates]'?[host]:[]},
+  browser:{runtime:{requestUpdateCheck:async()=>{checks++;return {status:'no_update'};}}}
+ });
+ api.decorate();
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(checks,1);
+ assert.match(host.children[1].textContent,/No update is available/);
+});

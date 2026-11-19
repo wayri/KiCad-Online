@@ -53,7 +53,8 @@
     "offscreen",
     "identity",
     "scripting",
-    "activeTab"
+    "activeTab",
+    "contextMenus"
   ],
   "sandbox": {
     "pages": [
