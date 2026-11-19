@@ -1,6 +1,6 @@
 import {createExplodeView} from './explodeView.mjs';
 import {projectionCamera,resizeProjection,fitProjection} from './cameraProjection.mjs';
-import {selectionMatcher,selectionNetNames,selectableRecord,tapGesture} from './selectionState.mjs';
+import {selectionMatcher,selectionNetNames,pickSavedGeometry,tapGesture} from './selectionState.mjs';
 import {boardViewPresets,boardViewPreset} from './viewPresets.mjs';
 import {boxFitDistance} from './fitPolicy.mjs';
 import {probeViewportPlan,boardClipRange} from './renderQuality.mjs';
@@ -135,7 +135,7 @@ export function createSharedProbeViewport({THREE,OrbitControls,host,source,sourc
  function setSelection(value={}){if(!alive)return {matched:0,highlighted:0,limited:false};currentSelection=value||{};selectionPoint=null;const result=selectedBounds();invalidate();return result;}
  function pick(event){const rect=renderer.domElement.getBoundingClientRect();if(!(rect.width>0&&rect.height>0))return;pointer.set((event.clientX-rect.left)/rect.width*2-1,-(event.clientY-rect.top)/rect.height*2+1);camera.updateMatrixWorld();scene.updateMatrixWorld(true);raycaster.setFromCamera(pointer,camera);
   const individual=Boolean(event.shiftKey&&!event.ctrlKey&&!event.metaKey),pickMode=individual?'object':mode;
-  const hit=raycaster.intersectObjects([...tree.pickables,...(netInspection?.group.children.flatMap(group=>group.children)||[])].filter(visible),false).find(hit=>selectableRecord(hit.object.userData.records?.[hit.instanceId]||hit.object.userData.record,pickMode)),record=hit?(hit.object.userData.records?.[hit.instanceId]||hit.object.userData.record):null;
+  const result=pickSavedGeometry(raycaster,tree.pickables.filter(visible),(netInspection?.group.children.flatMap(group=>group.children)||[]).filter(visible),pickMode),hit=result?.hit,record=result?.record||null;
   setSelection(!record?{}:!individual&&mode==='net'&&record.net?{netNames:[record.net]}:record.type==='Component'||typeof record.library==='string'?{references:[record.ref]}:{uuids:[record.uuid||record.id]});onSelect?.(record,{individual});selectionPoint=hit?.point?.clone()||null;invalidate();
  }
  const down=event=>gesture.down(event),move=event=>gesture.move(event),up=event=>{if(gesture.up(event)&&event.button===0)pick(event);},cancel=event=>gesture.cancel(event),lost=event=>{event.preventDefault();contextLost=true;if(frame)caf(frame);frame=0;},restored=()=>{contextLost=false;invalidate();};

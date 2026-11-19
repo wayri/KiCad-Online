@@ -203,7 +203,7 @@ const imageCapture={mime:'image/png',dataUrl:'data:image/png;base64,iVBORw0KGgoA
 async function chooseImage(h,file={type:'image/png'}){h.find('chat-attach-image').onclick();const picker=h.byId('chatImageInput');picker.files=[file];return picker.onchange();}
 test('Attach image opens an accessible native chooser and uses the shared normalization and send review',async()=>{
  const h=harness();let normalized;h.host.KiCadCommentCompose={normalizeCapture:async blob=>{normalized=blob;return imageCapture;}};h.api.render(thread());const button=h.find('chat-attach-image'),picker=h.byId('chatImageInput');
- assert.equal(button.parentElement,h.find('chat-composer-options'));assert.equal(picker.type,'file');assert.equal(picker.accept,'image/png,image/jpeg,image/webp');assert.equal(picker.hidden,true);assert.equal(picker.getAttribute('aria-label'),'Choose image to attach');const file={type:'image/jpeg'};
+ assert.equal(button.parentElement,h.find('chat-compose-tools'));assert.equal(picker.type,'file');assert.equal(picker.accept,'image/png,image/jpeg,image/webp');assert.equal(picker.hidden,true);assert.equal(picker.getAttribute('aria-label'),'Choose image to attach');const file={type:'image/jpeg'};
  await chooseImage(h,file);assert.equal(picker.clicked,1);assert.equal(normalized,file);assert.equal(h.api.draft().capture.width,10);assert.equal(h.api.draft().annotation.anchor.file,'board.kicad_pcb');assert.equal(h.requests.length,0);assert.equal(h.confirmations.length,0);assert.equal(h.byId('chatCapturePreview').hidden,false);
  h.options.confirmSend=async()=>false;await h.find('chat-send').onclick();assert.equal(h.requests.length,0);assert.equal(h.api.hasDraft(),true);
  h.options.confirmSend=async value=>{h.confirmations.push(value);return true;};await h.find('chat-send').onclick();assert.equal(h.requests.at(-1).payload.body,'Screenshot');assert.ok(h.requests.at(-1).payload.annotation.capture);assert.equal(h.confirmations.length,1);
@@ -312,14 +312,15 @@ test('an old failed refresh cannot overwrite a newly enabled polling schedule',a
  let finish;const h=harness();h.api.render(thread());h.options.onRead=()=>new Promise(resolve=>{finish=resolve;});const checkbox=h.byId('chatAutoRefresh');checkbox.checked=true;checkbox.onchange();const pending=tick(h);await new Promise(setImmediate);
  checkbox.checked=false;checkbox.onchange();checkbox.checked=true;checkbox.onchange();const restarted=latestTimer(h);finish(false);await pending;assert.equal(latestTimer(h),restarted);assert.equal(latestTimer(h).delay,3000);
 });
-test('compact chat shows only its header icons and +/Send strip until tools are requested',()=>{
+test('compact chat keeps attachment, formatting and draft tools above the message',()=>{
  let back=0,settings=0,close=0;const h=harness({onBack:()=>back++,onSettings:()=>settings++,onClose:()=>close++,onAccount:()=>{}});h.api.render(thread());
- assert.equal(h.byId('chatMessageText').rows,2);assert.equal(h.find('chat-search').hidden,true);assert.equal(h.find('chat-options-menu').hidden,true);assert.equal(h.find('chat-composer-options').hidden,true);
- assert.deepEqual(h.find('chat-compose-actions').children.map(node=>node.className),['chat-attachment-toggle','chat-format-toggle','chat-send']);
+ assert.equal(h.byId('chatMessageText').rows,2);assert.equal(h.find('chat-search').hidden,true);assert.equal(h.find('chat-options-menu').hidden,true);assert.equal(h.find('chat-composer-options'),undefined);
+ assert.deepEqual(h.find('chat-compose-actions').children.map(node=>node.className),['chat-send']);
+ const toolbar=h.find('chat-compose-tools'),body=h.find('chat-composer-body');assert.ok(body.children.indexOf(toolbar)<body.children.indexOf(h.byId('chatMessageText')));assert.equal(h.find('chat-attach-image').parentElement,toolbar);assert.equal(h.find('chat-format-toggle').parentElement,toolbar);
  assert.deepEqual(h.find('chat-header').children.map(node=>node.className),['chat-back','chat-heading','review-state-badge chat-thread-badge','chat-options-toggle']);
  assert.equal(h.find('chat-thread-meta').parentElement,h.find('chat-options-menu'));assert.equal(h.find('chat-search-toggle').parentElement,h.find('chat-options-menu'));assert.equal(h.find('chat-close').parentElement,h.find('chat-options-menu'));assert.equal(h.find('chat-format-tools').hidden,true);assert.equal(h.find('chat-send').getAttribute('aria-label'),'Review and send');
  assert.equal(h.find('chat-refresh').parentElement,h.find('chat-options-menu'));assert.equal(h.find('chat-account').parentElement,h.find('chat-options-menu'));assert.equal(h.byId('chatAutoRefresh').parentElement.parentElement,h.find('chat-options-menu'));
- assert.equal(h.find('chat-save-draft').parentElement,h.find('chat-composer-options'));assert.equal(h.find('chat-attach-context').parentElement.parentElement,h.find('chat-composer-options'));
+ assert.equal(h.find('chat-save-draft').parentElement,toolbar);assert.equal(h.find('chat-attach-context').parentElement.parentElement,toolbar);
  assert.equal(h.find('chat-back').textContent,'‹');assert.equal(h.find('chat-back').getAttribute('aria-label'),'Conversations');assert.equal(h.find('chat-close').getAttribute('aria-label'),'Close conversation pane');
  h.find('chat-back').onclick();h.find('chat-close').onclick();assert.equal(back,1);assert.equal(close,1);
  h.find('chat-options-toggle').onclick();assert.equal(h.find('chat-options-menu').hidden,false);h.find('chat-settings').onclick();assert.equal(settings,1);assert.equal(h.find('chat-options-menu').hidden,true);
@@ -342,11 +343,11 @@ test('optional pane pin action stays in More, follows host state and never sends
 test('tool popovers dismiss outside or Escape, search resets on close, and closing options does not stop enabled polling',()=>{
  const h=harness();h.api.render(thread());h.find('chat-options-toggle').onclick();h.byId('chatAutoRefresh').checked=true;h.byId('chatAutoRefresh').onchange();const polling=latestTimer(h);
  h.events.get('pointerdown')({target:h.doc.body});assert.equal(h.find('chat-options-menu').hidden,true);assert.equal(latestTimer(h),polling);
- h.find('chat-attachment-toggle').onclick();assert.equal(h.find('chat-composer-options').hidden,false);assert.equal(h.find('chat-attachment-toggle').getAttribute('aria-expanded'),'true');h.find('chat-options-toggle').onclick();assert.equal(h.find('chat-composer-options').hidden,true);
+ h.find('chat-options-toggle').onclick();
  const escape=event('Escape');h.events.get('keydown')(escape);assert.equal(escape.prevented,true);assert.equal(h.find('chat-options-menu').hidden,true);
  h.find('chat-search-toggle').onclick();assert.equal(h.find('chat-search').hidden,false);h.find('chat-search').value='no match';h.find('chat-search').oninput();assert.ok(h.find('chat-empty'));
  h.find('chat-search-toggle').onclick();assert.equal(h.find('chat-search').hidden,true);assert.equal(h.find('chat-search').value,'');assert.equal(h.find('chat-empty'),undefined);
- h.find('chat-attachment-toggle').onclick();assert.equal(h.api.closeMenus(),true);assert.equal(h.api.closeMenus(),false);
+ h.find('chat-options-toggle').onclick();assert.equal(h.api.closeMenus(),true);assert.equal(h.api.closeMenus(),false);
 });
 test('message safety actions live in accessible collapsed disclosures and close outside or on Escape',()=>{
  const h=harness({safetyActions:()=>{const actions=h.doc.createElement('div'),report=h.doc.createElement('button');report.textContent='Report user';actions.append(report);return actions;}});h.api.render(thread());

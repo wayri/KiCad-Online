@@ -362,6 +362,26 @@ test('policy row diagnostics contain only bounded structural enums and preserve 
   assert.deepEqual(treeData(objects,sha,'').items,[]);
  }
 });
+test('policy checks compact folder links only when the filename cell proves the full relative tree path',async()=>{
+ const {documentObjects}=require('../github-session-reader.js'),policy='.kicad-review-policy.json',rootUrl='https://github.com/'+repo;
+ for(const [route,path,label,expected] of [
+  ['tree','design/boards','design/boards','default'],
+  ['tree',policy+'/child',policy+'/child','regular saved file'],
+  ['tree','design/boards','boards','GITHUB_POLICY_ROWS'],
+  ['blob','design/boards','design/boards','GITHUB_POLICY_ROWS']
+ ]){
+  const link={textContent:label,getAttribute:()=>'/'+repo+'/'+route+'/'+sha+'/'+path};
+  const row={querySelector:()=>({querySelectorAll:()=>[link]}),querySelectorAll:s=>s==='a[href]'?[link]:[]};
+  const readme={textContent:'README.md',getAttribute:()=>'/'+repo+'/blob/'+sha+'/README.md'};
+  const normal={querySelector:()=>({querySelectorAll:()=>[readme]}),querySelectorAll:s=>s==='a[href]'?[readme]:[]};
+  const table={textContent:'Files',querySelectorAll:()=>[normal,row]};
+  const doc={querySelectorAll:()=>[],querySelector:s=>s.startsWith('table[')?table:s.includes('ref-picker')?{textContent:'main'}:null};
+  const api=create({location:{href:rootUrl},parseHTML:(_,url)=>url===rootUrl?[...deferredRoot,{githubWebsiteAccount:'reviewer'}]:documentObjects(doc,url),fetch:async url=>response(url.endsWith('.atom')?headFeed():'html',url,url.endsWith('.atom')?'application/atom+xml':'text/html')});
+  const result=api.read({repository:repo,ref:'HEAD',action:'policy'});
+  if(expected==='default')assert.deepEqual(await result,{sha,source:'default',account:'reviewer'});
+  else await assert.rejects(result,error=>error.code===expected||error.message.includes(expected));
+ }
+});
 test('native table policy diagnostics distinguish headers, filename cells and link identity without names',()=>{
  const {documentObjects}=require('../github-session-reader.js'),href='https://github.com/'+repo+'/tree/'+sha,source='/'+repo+'/blob/'+sha+'/README.md',link=(url,text='README.md')=>({textContent:text,getAttribute:()=>url});
  const row=links=>({querySelector:()=>({querySelectorAll:()=>links}),querySelectorAll:s=>s==='a[href]'?links:[]}),valid=row([link(source)]);

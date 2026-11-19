@@ -1,17 +1,25 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 global.KiCadGitHub=require('../parsing.js');const launch=require('../project-launch.js');
 async function ui(response,search='?source=https%3A%2F%2Fgithub.com%2Fowner%2Frepo&ref=HEAD'){
- const nodes=new Map(),requests=[],replaced=[],events=new Map(),stages=[],warnings=[];let hidden=0;
+ const nodes=new Map(),requests=[],replaced=[],events=new Map(),stages=[],warnings=[],diagnostics=[];let hidden=0;
  const node=()=>({textContent:'',hidden:false,className:'',children:[],replaceChildren(){this.children=[];},append(n){this.children.push(n);},addEventListener(type,fn){this[type]=fn;}});
  const document={getElementById:id=>{if(!nodes.has(id))nodes.set(id,node());return nodes.get(id);},createElement:node};
- vm.runInNewContext(fs.readFileSync(require.resolve('../project-launcher.js'),'utf8'),{document,console:{warn:(...args)=>warnings.push(args.join(' '))},addEventListener:(name,fn)=>events.set(name,fn),KiCadLoading:{indicator:(host,options)=>{assert.equal(options.fullscreen,true);return{show:stage=>stages.push(stage),hide:()=>hidden++,dispose(){}};}},location:{search,replace:url=>replaced.push(url)},URLSearchParams,KiCadProjectLaunch:launch,chrome:{runtime:{getURL:p=>'moz-extension://test/'+p,sendMessage:async m=>{requests.push(m);return response;}}}});
- await new Promise(setImmediate);return{nodes,requests,replaced,stages,hidden,events,warnings};
+ vm.runInNewContext(fs.readFileSync(require.resolve('../project-launcher.js'),'utf8'),{document,console:{warn:(...args)=>warnings.push(args.join(' ')),debug:(...args)=>diagnostics.push(args.join(' '))},addEventListener:(name,fn)=>events.set(name,fn),KiCadLoading:{indicator:(host,options)=>{assert.equal(options.fullscreen,true);return{show:stage=>stages.push(stage),hide:()=>hidden++,dispose(){}};}},location:{search,replace:url=>replaced.push(url)},URLSearchParams,KiCadProjectLaunch:launch,chrome:{runtime:{getURL:p=>'moz-extension://test/'+p,sendMessage:async m=>{requests.push(m);return response;}}}});
+ await new Promise(setImmediate);return{nodes,requests,replaced,stages,hidden,events,warnings,diagnostics};
 }
 test('single detected project replaces launcher with pinned standalone viewer',async()=>{
  const view=await ui({ok:true,result:{sha:'a'.repeat(40),projects:['design/board.kicad_pro']}});
  assert.equal(view.replaced.length,1);const url=new URL(view.replaced[0]);assert.equal(url.pathname,'/project-viewer.html');assert.equal(url.searchParams.get('head'),'a'.repeat(40));assert.equal(url.searchParams.get('file'),'design/board.kicad_pro');
  assert.equal(view.requests[0].type,'repository-detect');assert.equal(view.requests[0].source,'https://github.com/owner/repo');
  assert.match(view.stages[0],/Finding KiCad projects/);assert.equal(view.hidden,1);assert.equal(typeof view.events.get('pagehide'),'function');
+});
+test('KERO website discovery keeps fallback diagnostics out of extension warnings',async()=>{
+ const fallback='Read through the GitHub website. Saved file sizes and API history are unavailable.';
+ const view=await ui({ok:true,result:{sha:'a'.repeat(40),projects:['KERO.kicad_pro','encoder/Encoder.kicad_pro'],warnings:[fallback]}},'?source=https%3A%2F%2Fgithub.com%2Fwayri%2FKERO&ref=HEAD');
+ assert.equal(view.nodes.get('launchProjects').children.length,2);
+ assert.equal(view.nodes.get('launchDetails').textContent,'wayri/KERO');
+ assert.deepEqual(view.warnings,[]);
+ assert.deepEqual(view.diagnostics,['KiCad Online project discovery: '+fallback]);
 });
 test('multiple projects and partial listings remain selectable without hiding omissions',async()=>{
  for(const result of [{sha:'b'.repeat(40),projects:['a.kicad_pro','b.kicad_pro']},{sha:'b'.repeat(40),projects:['a.kicad_pro'],truncated:true}]){
@@ -34,7 +42,7 @@ test('nested folder without an injected content-script hint asks the worker to r
 
 
 test('partial empty inventory is distinct from no project and offers a cache-refresh retry',async()=>{
- const view=await ui({ok:true,result:{sha:'a'.repeat(40),projects:[],truncated:true,warnings:['Organization policy blocked an ancillary directory.']}});assert.equal(view.nodes.get('launchTitle').textContent,'Project discovery incomplete');assert.equal(view.nodes.get('launchRetry').hidden,false);assert.match(view.nodes.get('launchDetails').textContent,/Partial listing/);assert.doesNotMatch(view.nodes.get('launchDetails').textContent,/Organization policy/);assert.match(view.warnings[0],/Organization policy/);assert.equal(view.requests[0].refresh,false);await view.nodes.get('launchRetry').click();assert.equal(view.requests[1].refresh,true);
+ const view=await ui({ok:true,result:{sha:'a'.repeat(40),projects:[],truncated:true,warnings:['Organization policy blocked an ancillary directory.']}});assert.equal(view.nodes.get('launchTitle').textContent,'Project discovery incomplete');assert.equal(view.nodes.get('launchRetry').hidden,false);assert.match(view.nodes.get('launchDetails').textContent,/Partial listing/);assert.doesNotMatch(view.nodes.get('launchDetails').textContent,/Organization policy/);assert.deepEqual(view.warnings,[]);assert.match(view.diagnostics[0],/Organization policy/);assert.equal(view.requests[0].refresh,false);await view.nodes.get('launchRetry').click();assert.equal(view.requests[1].refresh,true);
 });
 
 test('denied website reads offer local rendering without requesting account authorization',async()=>{

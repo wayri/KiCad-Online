@@ -325,11 +325,12 @@ test('comment anchors round-trip through scaled and offset drawing panes',async(
 });
 
 test('drawing tools and draft actions are visible without menus; destination settings never publish',async()=>{
- const calls=[],view=workspaceRuntime(async m=>{calls.push(m);return[];});view.load();view.get('newComment').click();view.get('commentText').value='Keep my draft';
+ const calls=[],view=workspaceRuntime(async m=>{calls.push(m);return[];});view.load();view.get('newComment').click();
  for(const id of ['pointComment','areaComment','captureComment'])assert.equal(view.get(id).parentElement.id,'commentDrawingTools');
- for(const id of ['saveComment','cancelComment'])assert.equal(view.get(id).parentElement.id,'commentPostRow');
+ const editor=view.get('commentEditor'),top=view.get('commentComposeTop');assert.ok(editor.children.indexOf(top)<editor.children.indexOf(view.get('commentText')));
+ for(const id of ['saveComment','cancelComment'])assert.equal(view.get(id).parentElement.parentElement,top);
  assert.equal(view.get('commentDrawingTools').hidden,false);assert.equal(view.get('captureStatus').hidden,true);
- await chooseDestination(view);assert.equal(view.get('confirmCommentPost').textContent,'Done');await view.get('confirmCommentPost').click();assert.equal(view.get('commentText').value,'Keep my draft');assert.equal(calls.some(m=>m.type==='comment-save'||m.type==='github-publish-comment'||m.type==='open-comment-draft'),false);view.workspace.dispose();
+ await chooseDestination(view);assert.equal(view.get('confirmCommentPost').textContent,'Done');view.get('commentText').value='Keep my draft';await view.get('confirmCommentPost').click();assert.equal(view.get('commentText').value,'Keep my draft');assert.equal(calls.some(m=>m.type==='comment-save'||m.type==='github-publish-comment'||m.type==='open-comment-draft'),false);view.workspace.dispose();
 });
 
 test('comment areas render pass-through geometry and Ctrl-click selects the smallest matching area',async()=>{
@@ -642,7 +643,7 @@ test('root navigation resolves an initially opened child and rejects reused-pare
 
 test('GitLab viewer isolates host context and exposes provider account and publication controls',async()=>{
  let notes=[];const calls=[];const view=workspaceRuntime(async message=>{calls.push(message);if(message.type==='comment-save'){notes=[message.comment];return message.comment;}if(message.type==='comment-list')return notes;if(message.type==='comment-policy-status')return{allowed:true,mode:'everyone'};return [];},{provider:'gitlab',host:'https://gitlab.example.com',repository:'group/sub/design'});view.load();await new Promise(resolve=>setImmediate(resolve));
- assert.equal(view.get('reviewSettings').hidden,false);assert.equal(view.get('showGitHub').textContent,'GitLab');assert.equal(view.get('postComment').attributes['aria-label'],'Review and send to GitLab');assert.equal(view.get('editorAccount').textContent,'GitLab account');assert.equal(view.get('repositoryIssues').href,'https://gitlab.example.com/group/sub/design/-/issues');
+ assert.equal(view.get('reviewSettings').hidden,false);assert.equal(view.get('showGitHub').textContent,'GitLab');assert.equal(view.get('postComment').attributes['aria-label'],'Send to GitLab');assert.equal(view.get('editorAccount').textContent,'GitLab account');assert.equal(view.get('repositoryIssues').href,'https://gitlab.example.com/group/sub/design/-/issues');
  view.get('newComment').click();view.get('commentText').value='Check layout';await view.get('saveComment').click();
  assert.match(view.get('commentList').textContent,/Publish to GitLab/);assert.doesNotMatch(view.get('commentList').textContent,/Publish to GitHub/);
  const saved=calls.find(message=>message.type==='comment-save');assert.equal(saved.provider,'gitlab');assert.equal(saved.host,'https://gitlab.example.com');assert.equal(saved.comment.anchor.provider,'gitlab');assert.equal(saved.comment.anchor.host,'https://gitlab.example.com');assert.equal(saved.comment.anchor.repository,'group/sub/design');
@@ -657,7 +658,7 @@ test('conversation catalog combines issues and discussions, filters by category 
  const category=view.get('commentConversationKind');assert.equal(category.value,'all');category.value='discussion';await category.onchange();
  assert.doesNotMatch(view.get('commentThreadReader').textContent,/Connector clearance/);assert.match(view.get('commentThreadReader').textContent,/Assembly review/);
  view.get('newConversation').click();assert.equal(view.get('editorThreadType').value,'discussion');assert.equal(view.get('editorDestination').value,'discussion');
- assert.equal(view.get('commentComposeTop').parentElement.id,'commentEditor');assert.equal(view.get('commentComposeTop').closest('#commentComposerMenu'),null);assert.equal(view.get('saveComment').parentElement.id,'commentPostRow');assert.equal(view.get('commentFormatting').hidden,true);
+ assert.equal(view.get('commentComposeTop').parentElement.id,'commentEditor');assert.equal(view.get('commentComposeTop').closest('#commentComposerMenu'),null);assert.equal(view.get('saveComment').parentElement.parentElement.id,'commentComposeTop');assert.equal(view.get('commentFormatting').hidden,true);
  assert.equal(calls.some(message=>['github-publish-comment','comment-publish','chat-message-write'].includes(message.type)),false);view.workspace.dispose();
 });
 
@@ -788,7 +789,7 @@ test('editor routes replies to the selected existing Issue or Discussion number'
 });
 
 test('failed direct publication preserves a saved editable draft and does not repeat the request',async()=>{
- let notes=[];const calls=[];const view=workspaceRuntime(async m=>{calls.push(m);if(m.type==='comment-list')return notes;if(m.type==='comment-save'){notes=[m.comment];return m.comment;}if(m.type==='github-publish-comment')throw new Error('Connect GitHub to publish');return[];});view.load();await new Promise(resolve=>setImmediate(resolve));view.get('newComment').click();view.get('commentText').value='Review';await sendComment(view);assert.equal(notes.length,1);assert.equal(notes[0].remoteRefs.length,0);assert.equal(view.get('commentEditor').hidden,false);assert.match(view.get('commentStatus').textContent,/draft remains saved/);assert.equal(calls.filter(m=>m.type==='github-publish-comment').length,1);
+ let notes=[];const calls=[];const view=workspaceRuntime(async m=>{calls.push(m);if(m.type==='comment-list')return notes;if(m.type==='comment-save'){notes=[m.comment];return m.comment;}if(m.type==='github-publish-comment')throw new Error('Connect GitHub to publish');return[];});view.load();await new Promise(resolve=>setImmediate(resolve));view.get('newComment').click();view.get('commentText').value='Review';await sendComment(view);assert.equal(notes.length,1);assert.equal(notes[0].remoteRefs.length,0);assert.equal(view.get('commentEditor').hidden,false);assert.match(view.get('commentStatus').textContent,/draft is saved/);assert.equal(calls.filter(m=>m.type==='github-publish-comment').length,1);
 });
 
 test('GitLab direct publication saves confirmed issue links and discussions target existing issues',async()=>{
@@ -850,6 +851,14 @@ test('GitLab chat obtains a local drawing binding only from the VS Code collabor
 
 test('net review drafts preserve the selected saved net name in formatted GitHub context',async()=>{
  let notes=[];const view=workspaceRuntime(async m=>{if(m.type==='comment-list')return notes;if(m.type==='comment-save'){notes=[m.comment];return m.comment;}return[];});view.load();view.get('netList').children[0].click();view.get('newComment').click();view.get('commentText').value='Review this net';view.get('editorPreview').click();assert.match(view.get('editorMarkdown').textContent,/\| Net \| SIGNAL \|/);await view.get('saveComment').click();assert.equal(notes[0].anchor.kind,'net');assert.equal(notes[0].anchor.netName,'SIGNAL');
+});
+
+test('a blocked policy check preserves the draft without offering recovery',async()=>{
+ let notes=[];const view=workspaceRuntime(async m=>{if(m.type==='comment-list')return notes;if(m.type==='comment-save'){notes=[m.comment];return m.comment;}if(m.type==='github-publish-comment')throw Error('Comment policy could not be checked. Nothing was posted.');return[];});
+ view.load();view.get('newComment').click();view.get('commentText').value='Check the thermal jumpers';await sendComment(view);
+ assert.equal(notes[0].text,'Check the thermal jumpers');assert.equal(view.get('commentEditor').hidden,false);
+ assert.match(view.get('commentStatus').textContent,/Nothing was posted\. Your draft is saved\./);
+ assert.equal(view.get('postComment').parentElement.querySelector('.publication-recovery'),null);view.workspace.dispose();
 });
 
 test('uncertain posting exposes a read-only recovery control and saves its confirmed link without another publication',async()=>{
@@ -1099,7 +1108,7 @@ test('check window reports blocked 3D navigation instead of claiming a successfu
 
 test('compact composer inserts an inline mention and derives title and mentions on save',async()=>{
  let notes=[];const calls=[];const view=workspaceRuntime(async m=>{calls.push(m);if(m.type==='comment-list')return notes;if(m.type==='comment-mention-users')return{users:[{login:'wayri',name:'Reviewer'}]};if(m.type==='comment-save'){notes=[m.comment];return m.comment;}return[];});view.load();await new Promise(r=>setImmediate(r));view.get('newComment').click();
- assert.equal(view.get('commentComposeTop').children.length,1);assert.equal(view.get('commentComposeTop').children[0].attributes['aria-label'],'Choose comment destination');assert.equal(view.get('editorTitleLabel').parentElement.hidden,true);assert.equal(view.get('editorDestination').value,'issue');
+ assert.equal(view.get('commentDrawingTools').parentElement,view.get('commentComposeTop'));assert.equal(view.get('commentComposeTop').children[0].attributes['aria-label'],'Choose comment destination');assert.equal(view.get('editorTitleLabel').parentElement.hidden,true);assert.equal(view.get('editorDestination').value,'issue');
  const box=view.get('commentText');box.value='Review title\nAsk @wa';box.selectionStart=box.value.length;box.dispatchEvent(new Event('input'));await new Promise(r=>setTimeout(r,240));assert.equal(view.get('inlineMentionSuggestions').hidden,false);view.get('inlineMentionSuggestions').children[0].click();assert.equal(box.value,'Review title\nAsk @wayri ');assert.equal(view.get('inlineMentionSuggestions').hidden,true);await view.get('saveComment').click();assert.deepEqual([...notes[0].mentions],['wayri']);assert.match(view.get('commentList').textContent,/Review title/);
 });
 
@@ -1332,6 +1341,19 @@ test('3D copper selection and paired net/group messages update both saved net an
  assert.ok(state.references.includes('R1'));assert.ok(state.netCodes.includes('1'));
  view.workspace.setScene(null);assert.equal(view.canvas.netHighlight.name,'SIGNAL');
 });
+test('3D net picking keeps saved names and numeric codes distinct and resolves exact pad identity',()=>{
+ const {savedNetFor3D}=require('../review-workspace.js'),path='board.kicad_pcb';
+ const gpio33={path,kind:'pcb',code:'24',name:'/GPIO33',uuids:['pad-five']};
+ const gpio32={path,kind:'pcb',code:'25',name:'/GPIO32',uuids:['pad-six']};
+ const numeric={path,kind:'pcb',code:'30',name:'24',uuids:[]};
+ const nets=[gpio33,gpio32,numeric];
+ assert.equal(savedNetFor3D(nets,path,{uuid:'pad-six',net:'/GPIO33'}),gpio32);
+ assert.equal(savedNetFor3D(nets,path,{net:'24'}),numeric);
+ assert.equal(savedNetFor3D(nets,path,{net:24}),gpio33);
+ assert.equal(savedNetFor3D([gpio33],path,{net:'24'}),null);
+ assert.equal(savedNetFor3D([gpio33,{...gpio32,uuids:['pad-five']}],path,{uuid:'pad-five',net:'/GPIO33'}),null);
+});
+
 test('3D selection obeys Part and Net filters instead of selecting hidden alternatives',()=>{
  const view=workspaceRuntime();view.load();view.workspace.setScene({setPopulation(){},setSelection(){}});view.get('objectList').children[0].click();
  view.get('selectionMode').value='part';view.workspace.select3D({net:1,uuid:'track'});assert.equal(view.get('selectedName').textContent,'R1');
@@ -1680,7 +1702,7 @@ test('next affected item keeps a selected marker and note beyond the first twent
 
 
 test('KiCad local composer shares visible review levels and primary save with the extension without remote publication',async()=>{
- const calls=[],view=workspaceRuntime(async m=>{calls.push(m);return[];},{localRuntime:true});view.load();view.get('addCommentTab').click();const top=view.get('commentComposeTop');assert.equal(top.parentElement.id,'commentEditor');assert.equal(top.closest('#commentComposerMenu'),null);assert.equal(view.get('saveComment').parentElement.id,'commentPostRow');assert.equal(view.get('commentPublishSettings').hidden,true);
+ const calls=[],view=workspaceRuntime(async m=>{calls.push(m);return[];},{localRuntime:true});view.load();view.get('addCommentTab').click();const top=view.get('commentComposeTop');assert.equal(top.parentElement.id,'commentEditor');assert.equal(top.closest('#commentComposerMenu'),null);assert.equal(view.get('saveComment').parentElement.parentElement.id,'commentComposeTop');assert.equal(view.get('commentPublishSettings').hidden,true);
  assert.ok(view.get('commentSeverity').children.some(n=>n.value==='level-1'));view.get('commentSeverity').value='level-1';view.get('commentSeverity').onchange();assert.ok(view.get('commentSeverity').className.includes('severity-level-1'));view.get('commentText').value='Inspect resistor\nCheck its rating';await view.get('saveComment').click();assert.equal(calls.find(m=>m.type==='comment-save').comment.severity,'level-1');assert.equal(calls.some(m=>m.type==='github-publish-comment'||m.type==='comment-publish'),false);view.workspace.dispose();
 });
 

@@ -24,6 +24,22 @@ export function selectionMatcher(selection = {}, board = {}) {
   ));
 }
 
+/** Highlight geometry reveals hidden copper, but may not intercept saved objects. */
+export function pickSavedGeometry(raycaster, native, revealed, mode) {
+  const pick = objects => {
+    if (!objects.length) return null;
+    for (const hit of raycaster.intersectObjects(objects, false)) {
+      const {records, record} = hit.object.userData;
+      const saved = records?.[hit.instanceId] || record;
+      if (selectableRecord(saved, mode)) return {hit, record:saved};
+    }
+    return null;
+  };
+  const source = pick(native);
+  if (source && source.record.type !== 'Board') return source;
+  return pick(revealed) || source;
+}
+
 /** Pinching or dragging must never become a tap when the final finger lifts. */
 export function tapGesture(limit = 6) {
   const pointers = new Map(); let blocked = false;

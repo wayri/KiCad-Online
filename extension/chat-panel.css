@@ -70,8 +70,8 @@
 .chat-catalog-more>summary{list-style:none;cursor:pointer;display:grid;place-items:center;min-height:32px;width:30px;font-size:20px}.chat-catalog-more>summary::-webkit-details-marker{display:none}
 .chat-catalog-more{position:relative;flex:0 0 30px;width:30px}.chat-catalog-menu{position:absolute;right:0;top:calc(100% + 5px);z-index:8;width:250px;max-width:calc(100vw - 44px);max-height:50dvh;overflow:auto;box-sizing:border-box;padding:7px;background:var(--raised);border:1px solid var(--line);border-radius:7px;box-shadow:0 6px 20px #0004}.chat-catalog-more[open]>summary{margin-left:auto}.chat-catalog-more button{display:block;width:100%;text-align:left;background:transparent;border:0}.chat-catalog-more input{width:100%;box-sizing:border-box}
 .chat-conversation-list{gap:0}.chat-conversation-list .chat-conversation{padding:10px 4px;border:0;border-bottom:1px solid var(--line);border-radius:0;gap:3px;width:100%;min-width:0}.chat-conversation strong{font-size:12px;line-height:1.5}.chat-conversation small{font-size:10px;line-height:1.4}.chat-open-number{font-size:10px;margin:2px 0}.chat-open-number summary{padding:5px 0}
-#commentsSidebar #commentEditor{position:relative;margin:4px 0;padding:7px;border:1px solid var(--line);border-radius:8px}#commentEditor #commentText{min-height:90px;max-height:200px;border:0;background:transparent;font-size:13px;line-height:1.5;padding:6px 2px}#commentEditor #commentAnchor{font-size:10px;color:var(--muted);margin:2px 0;overflow-wrap:anywhere}
-#commentPostRow{display:flex;align-items:center;gap:5px;margin:0}#commentPostRow #commentPublishSettings{margin:0 0 0 auto!important;padding:0!important;flex:0 0 auto}.comment-composer-menu>summary{list-style:none;cursor:pointer;display:grid;place-items:center;width:32px;min-height:32px;font-size:21px}.comment-composer-menu>summary::-webkit-details-marker{display:none}
+#commentsSidebar #commentEditor{position:relative;margin:4px 0;padding:7px;border:1px solid var(--line);border-radius:8px}#commentEditor #commentText{display:block;width:100%;min-height:60px;max-height:200px;border:0;background:transparent;font-size:13px;line-height:1.45;padding:7px 4px}#commentEditor #commentAnchor{font-size:10px;color:var(--muted);margin:2px 0;overflow-wrap:anywhere}
+#commentPostRow{display:flex;align-items:center;gap:5px;margin:0}#commentPostRow #commentPublishSettings{display:contents}.comment-composer-menu>summary{list-style:none;cursor:pointer;display:grid;place-items:center;width:32px;min-height:32px;font-size:21px}.comment-composer-menu>summary::-webkit-details-marker{display:none}
 .comment-composer-menu-body{position:fixed;z-index:2200;width:260px;max-width:calc(100vw - 16px);max-height:min(280px,calc(100dvh - 16px));overflow:auto;display:grid;gap:3px;padding:5px;background:var(--raised);border:1px solid var(--line);border-radius:8px;box-sizing:border-box;box-shadow:0 8px 24px #0004}.comment-composer-menu-body>button{font-size:12px;min-height:32px;width:100%;justify-content:flex-start;text-align:left;background:transparent;border-color:transparent}.comment-composer-menu-body label{font-size:10px}.comment-composer-menu-body .composer-image{padding:5px 0}.comment-composer-menu-body .comment-tools{margin:0 0 7px}.comment-composer-menu-body .comment-tools button{font-size:10px}
 @media(max-width:600px){#commentsPane.chat-active .chat-heading h2{display:block;white-space:nowrap;font-size:12px}#commentsPane.chat-active .chat-composer textarea{min-height:50px;height:50px;font-size:13px}#commentsPane.chat-active .chat-compose-actions .chat-send{font-size:22px;width:34px;min-height:34px}.chat-format-tools button{min-height:32px}.comment-composer-menu-body{max-height:45dvh}}
 .chat-panel .chat-options-menu{box-sizing:border-box;max-height:min(380px,calc(100% - 180px));overflow:auto}
@@ -172,8 +172,7 @@ body #commentsSidebar .comment-category-tabs>#commentSettingsButton{flex:0 0 28p
  .chat-panel .chat-keyboard-hint{display:none}
 }
 
-#commentPostRow #postComment.text-send{width:34px;min-width:34px;height:32px;min-height:32px;padding:0;font-size:16px}
-#commentPostRow #postComment.text-send .button-label{display:none}
+#commentPostRow #postComment{margin-left:auto;border-color:var(--accent);background:var(--selected)}
 
 /* Keep navigation fixed; only the conversation body scrolls beneath it. */
 #commentsSidebar #commentsPane{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden;padding:0}
@@ -200,10 +199,18 @@ body #commentsSidebar .comment-category-tabs>#commentSettingsButton{flex:0 0 28p
 #commentPins .drawing-comment-pin{border-radius:5px}
 
 /* Primary annotation tools stay visible rather than behind an attachment menu. */
-.comment-drawing-tools{display:flex;flex-wrap:wrap;gap:5px;margin:6px 0}
-.comment-drawing-tools>button{display:inline-flex;align-items:center;gap:5px;min-height:32px;padding:5px 8px;font-size:12px}
+.comment-compose-top,.chat-compose-tools{display:flex;flex-wrap:wrap;gap:3px;align-items:center;min-width:0;padding-bottom:4px;border-bottom:1px solid var(--line)}
+.comment-drawing-tools,.comment-draft-tools,.chat-compose-tools .chat-context-tools{display:flex;gap:2px;align-items:center}
+.comment-draft-tools{margin-left:auto}
+#commentEditor .composer-tool,#commentEditor .chat-format-toggle,#commentsPane .chat-compose-tools :is(.composer-tool,.chat-format-toggle){display:inline-grid;place-items:center;flex:none;width:28px;min-width:28px;height:28px;min-height:28px;padding:4px;border:1px solid transparent;border-radius:5px;background:transparent;color:var(--text)}
+#commentEditor .composer-tool:hover,#commentEditor .chat-format-toggle:hover,#commentsPane .chat-compose-tools button:hover,#commentEditor .composer-tool[aria-pressed=true]{border-color:var(--line);background:var(--selected)}
+#commentEditor .composer-tool .ui-icon,.chat-compose-tools .composer-tool .ui-icon{width:16px;height:16px;flex-basis:16px}
 #commentPostRow{flex-wrap:wrap}
-#commentPostRow>#saveComment,#commentPostRow>#cancelComment{min-height:32px;padding:5px 8px;font-size:12px;background:transparent}
+#commentPostRow #postComment{width:30px;min-height:30px;height:30px;margin-left:auto;border-color:var(--accent);background:var(--selected)}
+#commentPostRow .publication-recovery{flex-basis:100%;padding:4px 0;border:0;background:transparent;font-size:11px}
+#commentPostRow .publication-recovery summary{cursor:pointer;color:var(--muted)}
+.chat-compose-tools .chat-mention-source{flex:0 1 auto;margin-left:auto}
+.chat-composer .chat-compose-actions .chat-send{width:30px;min-width:30px;height:30px;min-height:30px;padding:0}
 
 /* Speech-bubble anchors retain a visible severity fill and a generous hit target. */
 #commentPins .pin{box-sizing:border-box;width:30px;height:26px;min-height:26px;border-radius:8px;border:2px solid #fff;color:#10232e;font:700 12px/1 system-ui;box-shadow:0 2px 6px #0007;z-index:2;cursor:pointer}

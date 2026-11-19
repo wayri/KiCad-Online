@@ -38,6 +38,20 @@
     const matches = reference && objects.filter((part) => part.path === file && part.reference === reference && !part.parentId);
     return matches?.length === 1 ? matches[0] : null;
   }
+  function savedNetFor3D(nets, path, record) {
+    if(!record)return null;
+    const local=nets.filter(net=>net.path===path&&net.kind==='pcb');
+    const uuid=record.uuid||record.id;
+    if(uuid){
+      const matches=local.filter(net=>net.uuids?.includes(uuid));
+      if(matches.length)return matches.length===1?matches[0]:null;
+    }
+    // SPIKE records carry a saved name. A numeric-looking name is still a name.
+    const name=typeof record.net==='string'?record.net:'';
+    const code=record.netCode??(Number.isSafeInteger(record.net)?record.net:null);
+    const matches=name?local.filter(net=>net.name===name):code==null||String(code)==='0'?[]:local.filter(net=>String(net.code)===String(code));
+    return matches.length===1?matches[0]:null;
+  }
   function touchNetIndex(nets, path) {
     const index=new Map();
     for(const net of nets)if(net.path===path)for(const primitive of net.primitives||[]){
@@ -608,20 +622,23 @@
     // Keep the legacy field IDs for drafts and transport, with a compact composer.
     const composeTop=make('div');composeTop.id='commentComposeTop';composeTop.className='comment-compose-top';
     const destinationBadge=button('New issue',()=>reviewPost(true));destinationBadge.className='comment-destination-badge';destinationBadge.setAttribute('aria-label','Choose comment destination');composeTop.append(destinationBadge);
-    const composeBox=$('commentText').closest?.('label')||$('commentText');$('commentText').placeholder='Write your comment… Use @ to mention someone or paste a screenshot.';
+    const composeBox=$('commentText');composeBox.placeholder='Write a comment…';composeBox.rows=3;composeBox.setAttribute('aria-label','Comment');
     $('commentText').setAttribute('aria-controls','inlineMentionSuggestions');$('commentText').setAttribute('aria-autocomplete','list');$('commentText').setAttribute('aria-expanded','false');
     const inlineMentions=make('div');inlineMentions.id='inlineMentionSuggestions';inlineMentions.className='inline-mention-suggestions';inlineMentions.setAttribute('role','listbox');inlineMentions.setAttribute('aria-label','Mention suggestions');inlineMentions.hidden=true;
     const legacyFields=make('div');legacyFields.hidden=true;const titleLabel=$('editorTitleLabel');const composerExtras=collapsible('Review options',[...['commentSeverity','commentState','commentTags'].map(id=>$(id).closest?.('label')||$(id)),$('editorAccount'),$('editorPreview')],false,'composer-options');composerExtras.id='commentComposerOptions';legacyFields.append(metadata,peopleGroup,titleLabel,$('editorThreadType').closest?.('label')||$('editorThreadType'),composerExtras);if(!remoteAvailable){destinationBadge.hidden=true;composeTop.append(composerExtras);}
-    const screenshotTools=make('div');screenshotTools.className='composer-image';screenshotTools.append($('captureComment'));const composerImagePreview=make('div');composerImagePreview.className='composer-image-preview';composerImagePreview.append(...['capturePreview','captureStatus','removeCapture'].map($));
-    const postRow=make('div');postRow.id='commentPostRow';postRow.className='comment-post-row';postRow.append($('editorDestination').closest?.('label')||$('editorDestination'),$('postComment'));
+    const composerImagePreview=make('div');composerImagePreview.className='composer-image-preview';composerImagePreview.append(...['capturePreview','captureStatus','removeCapture'].map($));
+    const postRow=make('div');postRow.id='commentPostRow';postRow.className='comment-post-row';
     const destinationDetails=make('div');destinationDetails.id='commentDestinationDetails';destinationDetails.append(...['editorNumberLabel','editorCategoryLabel','editorLoadCategories'].map($));
     const publishSettings=$('commentPublishSettings'),markdownPreview=$('editorMarkdown');
     const drawingTools=make('div');drawingTools.id='commentDrawingTools';drawingTools.className='comment-drawing-tools';drawingTools.setAttribute('role','toolbar');drawingTools.setAttribute('aria-label','Attach drawing location or screenshot');drawingTools.append($('pointComment'),$('areaComment'),$('captureComment'));
-    legacyFields.append(commentTools,screenshotTools,$('editorDestination').closest?.('label')||$('editorDestination'),destinationDetails);addHelp.hidden=true;
+    legacyFields.append(commentTools,$('editorDestination').closest?.('label')||$('editorDestination'),destinationDetails);addHelp.hidden=true;
     const composerFormats=make('div');composerFormats.id='commentFormatting';composerFormats.className='chat-format-tools';composerFormats.hidden=true;composerFormats.setAttribute('role','toolbar');composerFormats.setAttribute('aria-label','Comment formatting');
     const composerFormatToggle=button('Aa',()=>{composerFormats.hidden=!composerFormats.hidden;composerFormatToggle.setAttribute('aria-expanded',String(!composerFormats.hidden));$('commentText').focus();});composerFormatToggle.className='chat-format-toggle';composerFormatToggle.title='Formatting';composerFormatToggle.setAttribute('aria-label','Formatting');composerFormatToggle.setAttribute('aria-controls',composerFormats.id);composerFormatToggle.setAttribute('aria-expanded','false');
     for(const [label,name,prefix,suffix]of [['B','Bold','**','**'],['I','Italic','_','_'],['</>','Code','`','`'],['≡','Bulleted list','- ','']]){const format=button(label,()=>{const box=$('commentText'),start=box.selectionStart??box.value.length,end=box.selectionEnd??start,selected=box.value.slice(start,end)||'text';box.value=box.value.slice(0,start)+prefix+selected+suffix+box.value.slice(end);box.setSelectionRange?.(start+prefix.length,start+prefix.length+selected.length);$('editorTitle').value=root.KiCadCommentCompose?.titleFromText(box.value)||'';box.focus();});format.title=name;format.setAttribute('aria-label',name);format.onpointerdown=event=>event.preventDefault();composerFormats.append(format);}
-    publishSettings.replaceChildren($('postComment'));postRow.replaceChildren(composerFormatToggle,$('saveComment'),$('cancelComment'),publishSettings);$('commentEditor').replaceChildren($('commentAnchor'),composeTop,composerFormats,composeBox,inlineMentions,composerImagePreview,drawingTools,postRow,markdownPreview,legacyFields);
+    const draftTools=make('div');draftTools.className='comment-draft-tools';draftTools.append($('saveComment'),$('cancelComment'));
+    composeTop.append(drawingTools,composerFormatToggle,draftTools);
+    publishSettings.replaceChildren($('postComment'));postRow.append($('commentAnchor'),publishSettings);
+    $('commentEditor').replaceChildren(composeTop,composerFormats,composeBox,inlineMentions,composerImagePreview,postRow,markdownPreview,legacyFields);
     const threadReader=make('section');threadReader.id='commentThreadReader';threadReader.className='comment-thread-reader';threadReader.hidden=!remoteAvailable;
     const threadControls=make('div');threadControls.className='thread-read-controls';
     const threadKind=make('select');threadKind.id='commentThreadKind';threadKind.setAttribute('aria-label','Read thread type');for(const [value,label]of (provider==='gitlab'?[['issue','Issue']]:[['issue','Issue'],['discussion','Discussion']])){const option=make('option',label);option.value=value;threadKind.append(option);}threadKind.value='issue';
@@ -1043,7 +1060,7 @@
       if(selected?.path===path&&!['symbol','footprint','pad'].includes(selected.kind)&&selected.uuid)primitives.push(...(canvas?.primitives||[]).filter(p=>(p.pinUuid||p.uuid)===selected.uuid));
       const terminals=selectedPin?.path===path?selectedPin.primitives:[];
       const groups=[...nets,...(primitives.length?[{primitives}]:[]),...(terminals.length?[{primitives:terminals}]:[])],mode=highlightMode();
-      if(scene?.setSelection){scene.setNetHighlightColor?.(netHighlightColor);scene.setSelectionDim?.(mode!=='bright');const picked=[...parts,...(!selectedPin&&selected?.path===path?[selected]:[])];scene.setSelection({references:[...new Set(picked.map(o=>o.reference).filter(Boolean))],uuids:[...new Set([...picked.map(o=>o.uuid),...terminals.map(p=>p.uuid)].filter(Boolean))],netCodes:nets.map(n=>n.code).filter(n=>Number.isSafeInteger(n)||typeof n==='string'&&/^[0-9]+$/.test(n)),netNames:nets.map(n=>n.name)});}
+      if(scene?.setSelection){scene.setNetHighlightColor?.(netHighlightColor);scene.setSelectionDim?.(mode!=='bright');const picked=[...parts,...(!selectedPin&&selected?.path===path?[selected]:[])];scene.setSelection({references:[...new Set(picked.map(o=>o.reference).filter(Boolean))],uuids:[...new Set([...picked.map(o=>o.uuid),...(selectedPin?.sceneId?[selectedPin.sceneId]:terminals.map(p=>p.uuid))].filter(Boolean))],netCodes:nets.map(n=>n.code).filter(n=>Number.isSafeInteger(n)||typeof n==='string'&&/^[0-9]+$/.test(n)),netNames:nets.map(n=>n.name)});}
       if(canvas?.setNetHighlights)canvas.setNetHighlights(groups,{mode,selectionColor:parts.length&&!nets.length&&!terminals.length?'source':pcb&&netHighlightColor==='layer'?'layer':'accent'});else canvas?.setNetHighlight(groups[0]||null,{isolate:mode==='isolate'});
       if($('populationHighlight')){$('populationHighlight').hidden=!pcb;$('populationHighlight').setAttribute('aria-pressed',String(dnpHighlight));$('populationHighlight').title=`${dnpHighlight?'Hide':'Highlight'} DNP / DNI · ${objects.filter(o=>o.path===path&&['symbol','footprint'].includes(o.kind)&&o.populated===false).length} in selected assembly`;}
       const testpointToggle=$('highlightTestpoints');if(testpointToggle){const count=testpointsForPath(path).length;testpointToggle.setAttribute('aria-pressed',String(testpointHighlight));testpointToggle.title=`${testpointHighlight?'Hide':'Highlight'} testpoints · ${count} on this drawing`+(count>200?' (first 200 highlighted)':'');}
@@ -1107,17 +1124,27 @@
     }
     function cycleConnection(step){const nets=highlightedNets();const seen=new Set(),members=nets.flatMap(n=>n.members).filter(m=>m.position&&['pin','pad'].includes(m.kind)&&!seen.has(JSON.stringify([m.uuid,m.position]))&&seen.add(JSON.stringify([m.uuid,m.position])));if(!members.length){notice('Select a net or class to navigate its connections.');return;}connectionCursor=connectionCursor<0?(step<0?members.length-1:0):(connectionCursor+step+members.length)%members.length;const member=members[connectionCursor];activeConnection=member;focus(member.position);$('selectionStatus').textContent=`Connection ${connectionCursor+1}/${members.length}: ${member.reference||''} ${member.pin||member.pad||''}`;}
     function renderNetClasses(){const value=$('netClassSelect').value;$('netClassSelect').replaceChildren();const names=new Set();if(classConfig)for(const net of netModel.nets)if(net.path===currentFile())for(const name of root.KiCadProjectSearch.netClasses(net.name,classConfig))names.add(name);for(const name of [...names].sort()){const option=make('option',name);option.value=name;$('netClassSelect').append(option);}if(names.has(value))$('netClassSelect').value=value;$('highlightNetClass').disabled=!names.size;$('highlightNetClass').setAttribute('aria-pressed',String(pinnedClasses.has(JSON.stringify([currentFile(),$('netClassSelect').value]))));$('netClassStatus').textContent=classConfig?'Highlighted classes: '+([...pinnedClasses.values()].filter(c=>c.path===currentFile()).map(c=>c.name).join(', ')||'none')+'. '+(classConfig.warnings||[]).join(' '):'Import .kicad_pro in Project search to use saved net classes.';}
-    function selectTerminal(object,pinNumber,primitives,move=false,emit=true){
+    function selectTerminal(object,pinNumber,primitives,move=false,emit=true,sceneId=null){
       if(!object||!primitives?.length)return false;
       const identity=root.KiCadPairedReview?.partSelection?.(object,{objects,instancePath:options.getSheetInstance?.(object.path)}),tstampPath=identity?.tstampPath||root.KiCadPairedReview?.tstampPath?.(object);
       const message={kind:'pin',path:object.path,reference:object.reference,pinNumber:String(pinNumber),ownerUuid:object.uuid,...(tstampPath?{tstampPath}:{}),...(identity?.rootUuid?{rootUuid:identity.rootUuid}:{}),...(identity?.unitPaths?{unitPaths:identity.unitPaths}:{}),...(primitives[0].uuid?{uuid:primitives[0].uuid}:{}),...(object.kind==='footprint'&&root.KiCadPairedReview?.symbolUuid(object)?{symbolUuid:root.KiCadPairedReview.symbolUuid(object)}:{})};
       if(!root.KiCadPairedReview?.validSelection(message))return false;
-      selectedPin={...message,primitives};selected=object;selectedNet=null;highlightObjects=[];pinnedNets.clear();pinnedClasses.clear();nativePick=null;
+      selectedPin={...message,primitives,sceneId};selected=object;selectedNet=null;highlightObjects=[];pinnedNets.clear();pinnedClasses.clear();nativePick=null;
       const canvas=getCanvas();if(canvas)canvas.selected=null;updateHighlights();properties();
       showSimulation(netModel.nets.find(net=>net.path===object.path&&primitives.some(p=>net.primitives.includes(p)))||null);$('selectionStatus').textContent=object.reference+' · '+(pcb?'pad ':'pin ')+pinNumber;if(!root.KiCadAndroidRuntime)inspector('properties');
       const position=primitives[0].padCenter||primitives[0].start||object.position;if(move){if(scene)focusSceneGeometry(primitives,position,undefined,partBoardSide(object));else focusDrawingGeometry(primitives,position,partBoardSide(object));}if(emit)options.onSelection?.(message);getCanvas()?.draw();return true;
     }
     function chooseTerminal(choice,move=false){const {object,pinNumber,primitive}=choice,primitives=(getCanvas()?.design?.primitives||[]).filter(p=>!p.hidden&&!p.hole&&['pad','pin'].includes(p.kind)&&(p.ownerUuid||p.uuid)===object.uuid&&String(p.pinNumber??p.name??'')===String(pinNumber));return selectTerminal(object,pinNumber,primitives.length?primitives:[primitive],move);}
+    function select3DTerminal(object,pinNumber,record){
+      if(object?.parentId)object=objects.find(o=>o.id===object.parentId&&o.path===currentFile());
+      if(!object)return false;
+      const savedPadId=record.uuid&&record.uuid!==object.uuid?record.uuid:null;
+      const at=record.at;
+      const matches=(getCanvas()?.design?.primitives||[]).filter(p=>!p.hidden&&!p.hole&&p.kind==='pad'&&(p.ownerUuid||p.uuid)===object.uuid&&String(p.pinNumber??p.name??'')===String(pinNumber)&&
+        (savedPadId?p.uuid===savedPadId:!Array.isArray(at)||Math.hypot((p.padCenter?.x??Infinity)-at[0],(p.padCenter?.y??Infinity)-at[1])<1e-5));
+      if(!matches.length&&Array.isArray(at)&&!savedPadId)return false;
+      return selectTerminal(object,pinNumber,matches.length?matches:[record],false,true,savedPadId||record.id||null);
+    }
     function selectNet(net,move=false,toggle=true,multi=$('multiHighlight').checked,inspect=!root.KiCadAndroidRuntime,instanceId=null){
       selectedPin=null;
       overviewSource=net&&instanceId?{netId:net.id,instanceId}:null;
@@ -1438,6 +1465,7 @@
       const type=KiCadReviewComments.commentType(editor);if(type){editor.threadType=type;$("githubCommentType").value=type;chooseCommentType();setCommentCategory(type,false);} $("commentEditor").hidden = false; syncComposerAnchor(); $("commentText").value = editor.text; $("commentSeverity").value = editor.severity || "info";$("commentState").value=editor.state||"open";$("commentTags").value=(editor.tags||[]).join(", ");$("commentMentions").value=(editor.mentions||[]).map(login=>"@"+login).join(", ");
       inspector("comments","add"); $("commentText").focus();
       $("editorThreadType").value=editor.threadType||"issue";colorCommentControls();closeInlineMentions();releasePastePreview();pasteGeneration++;pasteBusy=false;$("editorTitle").value=root.KiCadCommentCompose?.titleFromText(editor.text)||"";configureEditorDestination();$("editorMarkdown").hidden=true;
+      if(!destinationBefore)$('commentPublishSettings').querySelector?.('.publication-recovery')?.remove();
       if(destinationBefore){$('editorDestination').value=destinationBefore.value;$('editorThreadNumber').value=destinationBefore.number;$('editorCategory').value=destinationBefore.category;editorDestinationChanged();}
       else if(conversation){editor.threadType=conversation.kind;$('editorThreadType').value=conversation.kind;$('githubCommentType').value=conversation.kind;configureEditorDestination();$('editorDestination').value='existing-'+conversation.kind;$('editorThreadNumber').value=String(conversation.number);editorDestinationChanged();}
       capturePreview();draw();
@@ -1507,11 +1535,15 @@
         const result=await request(recoveryNumber!==null?'github-recover-publication':provider==='gitlab'?'comment-publish':'github-publish-comment',{...recoveryMessage,confirmedSend:true,...(recoveryNumber!==null?{recoveryNumber}:{})});
         acceptedRef=result.remoteRef;const refs=[...(note.remoteRefs||[])];if(!refs.some(ref=>ref.url===result.remoteRef.url))refs.push(result.remoteRef);
         await request("comment-save",{comment:KiCadReviewComments.validateComment({...note,remoteRefs:refs,...(result.attachments?.length?{attachments:result.attachments}:{}),updatedAt:new Date(Math.max(Date.now(),Date.parse(note.updatedAt||note.createdAt)+1)).toISOString()}),expectedUpdatedAt:note.updatedAt||note.createdAt});await refreshComments();options.onCommentsChanged?.();$("githubCommentType").value=provider==="gitlab"?(note.threadType||"issue"):result.remoteRef.kind;chooseCommentType();$("commentDestination").value=provider==="gitlab"||result.remoteRef.kind==="issue"?"existing-issue":"existing-discussion";$("threadNumber").value=String(result.remoteRef.number);destinationChanged();await loadGitHub();if(result.recovered)action.closest('.publication-recovery')?.remove();commentStatus(`${result.recovered?'Recovered link to':'Posted to'} ${providerName} ${result.remoteRef.kind} #${result.remoteRef.number}. The linked conversation is saved below.`);await readThread(result.remoteRef.kind,result.remoteRef.number);return true;
-      }catch(error){if(acceptedRef){const refs=[...(note.remoteRefs||[])];if(!refs.some(ref=>ref.url===acceptedRef.url))refs.push(acceptedRef);const linked={...note,remoteRefs:refs};notes=notes.map(n=>n.id===note.id?linked:n);try{renderComments();}catch{}try{options.onCommentsChanged?.();}catch{}try{commentStatus(`Posted to ${providerName} ${acceptedRef.kind} #${acceptedRef.number}. Local linkage or readback needs retry: ${error.message}`);}catch{}return true;}commentStatus(error.message+` Your draft remains saved. If ${providerName} accepted the post but local saving failed, retry Publish to recover its confirmed link.`,true);
-        if(provider==='github'&&recoveryMessage&&recoveryNumber===null&&action.parentElement&&!action.parentElement.querySelector('.publication-recovery')){
-          const row=make('div');row.className='publication-recovery';const label=make('label','Already posted? Check thread number '),input=make('input');input.type='number';input.min='1';input.step='1';input.setAttribute('aria-label','GitHub thread number for publication recovery');if(recoveryMessage.number)input.value=String(recoveryMessage.number);label.append(input);
+      }catch(error){if(acceptedRef){const refs=[...(note.remoteRefs||[])];if(!refs.some(ref=>ref.url===acceptedRef.url))refs.push(acceptedRef);const linked={...note,remoteRefs:refs};notes=notes.map(n=>n.id===note.id?linked:n);try{renderComments();}catch{}try{options.onCommentsChanged?.();}catch{}try{commentStatus(`Posted to ${providerName} ${acceptedRef.kind} #${acceptedRef.number}. Local linkage or readback needs retry: ${error.message}`);}catch{}return true;}
+        const explanation=error.message||'Could not publish the comment.';
+        const knownUnsent=/\b(?:nothing was posted|no (?:comment was sent|issue was created|discussion was created))\b/i.test(explanation);
+        commentStatus(explanation+(/\bdraft\b/i.test(explanation)?'':' Your draft is saved.'),true);
+        if(knownUnsent&&recoveryNumber===null)action.parentElement?.querySelector('.publication-recovery')?.remove();
+        if(!knownUnsent&&provider==='github'&&recoveryMessage&&recoveryNumber===null&&action.parentElement&&!action.parentElement.querySelector('.publication-recovery')){
+          const row=make('details');row.className='publication-recovery';const label=make('label','GitHub thread number'),input=make('input');input.type='number';input.min='1';input.step='1';input.setAttribute('aria-label','GitHub thread number for publication recovery');if(recoveryMessage.number)input.value=String(recoveryMessage.number);label.append(input);
           const selected={value:publication?.value||$('commentDestination').value,title:recoveryMessage.title,number:recoveryMessage.number,category:recoveryMessage.categoryId};
-          const check=button('Recover published comment',()=>publishNote(note,check,selected,Number(input.value)));row.append(label,check,make('small','Read-only: checks for an exact annotation from the publishing account. It never creates another post.'));action.parentElement.append(row);
+          const check=button('Find comment',()=>publishNote(note,check,selected,Number(input.value)));row.append(make('summary','Find a previously posted comment'),label,check,make('small','This check never creates another post.'));action.parentElement.append(row);
         }
         return false;}finally{action.disabled=false;}
     }
@@ -1767,7 +1799,7 @@
     function inspectPointer(){const object=objectAt(pointerWorld);if(object)selectObject(object);properties();inspector('properties');}
     function highlightPointerNet(multi=$('multiHighlight').checked){
       if(root.KiCadSheetOverview?.isOpen?.()){if(!root.KiCadSheetOverview.highlightPointerNet?.(multi))notice('Point at a saved wire, pin or label in the net map.');return;}
-      if(scene){const record=scene.netAtPointer?.()||nativePick,net=record&&netModel.nets.find(n=>n.path===currentFile()&&(String(n.code)===String(record.net)||n.name===record.net));if(net)selectNet(net,false,true,multi);else notice('Point at a pad, via or track, or select a net to highlight.');return;}
+      if(scene){const record=scene.netAtPointer?.()||nativePick,net=savedNetFor3D(netModel.nets,currentFile(),record);if(net)selectNet(net,false,true,multi);else notice('Point at a pad, via or track, or select a net to highlight.');return;}
       const hits=hitsAt(pointerWorld),net=netModel.nets.find(n=>n.path===currentFile()&&hits.some(hit=>n.primitives.includes(hit.bbox?.primitive)));
       if(net)selectNet(net,false,true,multi);else {const pointed=objectAt(pointerWorld)||selected,linked=netsForObject(pointed);if(linked.length===1)selectNet(linked[0],false,true,multi);else if(linked.length){netFilterObject=pointed.id;navigate('nets');}else notice('Point at a saved wire, pin, pad or copper item to highlight its net.');}
     }
@@ -2043,7 +2075,7 @@
 
       try{
         if(pasteBusy)throw Error('Wait for the pasted screenshot to finish preparing.');
-        const note=editorNote();if(!force&&localStorage.getItem(rulesKey)===contentRulesVersion){const destination=$('editorDestination').value,number=Number($('editorThreadNumber').value);if(destination==='issue'||destination==='pull-request'||destination==='discussion'&&discussionCategories?.some(category=>category.id===$('editorCategory').value)||destination.startsWith('existing-')&&Number.isSafeInteger(number)&&number>0){void saveEditor(true);return;}}if(!remoteAvailable)throw Error(`${providerName} publication is unavailable in this viewer.`);
+        const note=force?editor:editorNote();if(!note)throw Error('Create or select a note first.');if(!force&&localStorage.getItem(rulesKey)===contentRulesVersion){const destination=$('editorDestination').value,number=Number($('editorThreadNumber').value);if(destination==='issue'||destination==='pull-request'||destination==='discussion'&&discussionCategories?.some(category=>category.id===$('editorCategory').value)||destination.startsWith('existing-')&&Number.isSafeInteger(number)&&number>0){void saveEditor(true);return;}}if(!remoteAvailable)throw Error(`${providerName} publication is unavailable in this viewer.`);
         if(!postReview){
           const dialog=make('dialog');dialog.id='commentPostReview';dialog.className='comment-post-review';dialog.setAttribute('aria-label','Review comment destination');
           const header=make('header'),body=make('section'),summary=make('p'),preview=make('p'),error=make('p'),actions=make('div');body.className='android-sheet-content';summary.className='hint';preview.className='comment-post-preview';error.setAttribute('role','status');error.className='error';actions.className='inspector-actions';
@@ -2087,7 +2119,10 @@
         if(!post||await publishNote(saved,$("postComment"),publication)){$("commentEditor").hidden=true;editor=null;showCommentTab("view");if(!post)commentStatus(remoteAvailable?`Saved locally only. Open this draft and choose Send to publish it to ${providerName}.`:"Annotation saved in the configured review store.");}
       }catch(error){commentStatus(error.message,true);}finally{$("saveComment").disabled=$("postComment").disabled=false;}
     }
-    $("postComment").classList.toggle("text-send",true);$("postComment").classList.toggle("icon-only",true);$("postComment").setAttribute('data-icon','send');$("postComment").textContent="Send";$("postComment").title="Publish to "+providerName;$("postComment").setAttribute("aria-label","Review and send to "+providerName);root.KiCadUIIcons?.decorate?.($("postComment"));$("commentPublishSettings").hidden=!remoteAvailable;$("saveComment").textContent=remoteAvailable?"Save draft":"Save comment";
+    for(const [id,icon,label]of [['pointComment','pin','Place comment point'],['areaComment','area','Draw comment area'],['captureComment','camera','Capture drawing area'],['saveComment','save',remoteAvailable?'Save draft':'Save comment'],['cancelComment','close','Close composer'],['postComment','send','Send to '+providerName]]){
+      const control=$(id);control.classList.toggle('composer-tool',true);control.classList.toggle('icon-only',true);control.setAttribute('data-icon',icon);control.textContent=label;control.title=label;control.setAttribute('aria-label',label);root.KiCadUIIcons?.decorate?.(control);
+    }
+    $('commentPublishSettings').hidden=!remoteAvailable;
     $("editorThreadType").onchange=()=>{if(editor)editor.threadType=$("editorThreadType").value;$("githubCommentType").value=$("editorThreadType").value;chooseCommentType();setCommentCategory($("editorThreadType").value,false);colorCommentControls();};$("editorDestination").onchange=editorDestinationChanged;
     $("editorAccount").onclick=$("reviewSettings").onclick;
     $("editorLoadCategories").onclick=()=>loadDiscussionCategories('editor',true);
@@ -2494,9 +2529,35 @@
       overviewSelection(path,instanceId){const graph=overviewConnectivity();return {netIds:graph?[...new Set(graph.matches.filter(m=>m.net.path===path&&(!instanceId||m.instanceId===instanceId)).map(m=>m.net.id))]:(netSheetMatches().get(path)||[]).map(n=>n.id),instanceIds:graph?[...new Set(graph.matches.filter(m=>m.net.path===path).map(m=>m.instanceId))]:[],limits:graph?.limits||[],uuids:highlightObjects.filter(o=>o.path===path).map(o=>o.uuid).filter(Boolean),mode:highlightMode(),netActive:graph?graph.active:netSheetMatches().size>0};},
       selectOverviewNet(path,uuid,instanceId,multi=$('multiHighlight').checked){const matches=netModel.nets.filter(n=>n.path===path&&n.uuids.includes(uuid));if(matches.length===1){selectNet(matches[0],false,multi,multi,false,instanceId);return true;}return false;},
       overviewNetLinks(){return overviewConnectivity()?.links||overviewNetLinks(netModel.nets,[...pinnedNets.values(),...(selectedNet?[selectedNet]:[])].filter(n=>n.kind==='schematic').map(n=>n.id),objects.filter(o=>o.kind==='sheet').map(o=>({path:o.path,target:sheetTarget(o),sheetId:o.uuid||o.id})));},
-      inspect3D(record){nativePick=record;const object=resolveObject(objects,rootFile,record);if(object)selectObject(object,false,false,true);else if(record?.net!=null){const net=netModel.nets.find(n=>n.path===currentFile()&&(String(n.code)===String(record.net)||n.name===record.net));if(net)selectNet(net,false,false,false,false);}properties();inspector("properties");},
-      select3D(record,gesture={}){nativePick=record;let object=resolveObject(objects,rootFile,record);const pinNumber=record?.pinNumber??(record?.type==='Pad'?record.name:null),individual=gesture.individual===true,mode=individual&&pinNumber!=null?'pin':$('selectionMode').value||'all';if(mode==='pin'){if(pinNumber==null)return;if(object?.parentId)object=objects.find(o=>o.id===object.parentId&&o.path===currentFile());if(object)chooseTerminal({object,pinNumber,primitive:record});return;}if(individual){const canonical={kind:'object',path:currentFile(),uuid:record?.uuid||record?.id};if(applyWindowSelection(canonical))options.onSelection?.(canonical);return;}if(mode==='part'&&record&&!object?.reference)return;const net=record&&netModel.nets.find(n=>n.path===currentFile()&&(String(n.code)===String(record.net)||n.name===record.net));if(net&&(mode==='net'||!object?.reference||object?.kind==='pad'||record?.type==='Pad')){selectNet(net,false,false);return;}if(mode==='net'&&record)return;if(object&&$('multiHighlight').checked){const index=highlightObjects.findIndex(o=>o.id===object.id);if(index<0)highlightObjects.push(object);else highlightObjects.splice(index,1);}selectObject(object,false,false,true);},
-      comment3D(record){let object=resolveObject(objects,rootFile,record);const pinNumber=record?.pinNumber??(record?.type==='Pad'?record.name:null);if(object&&pinNumber!=null){const position=object.position;if(object.parentId)object=objects.find(o=>o.id===object.parentId&&o.path===rootFile);if(object)editComment(null,anchor(position,{...object,kind:'pad',reference:object.reference+'.'+pinNumber,uuid:record.uuid||object.uuid}));return;}if(object){editComment(null,anchor(object.position,object));return;}const nets=record?.net!=null?netModel.nets.filter(n=>n.path===rootFile&&(String(n.code)===String(record.net)||n.name===record.net)):[];if(nets.length===1){editComment(null,KiCadReviewComments.normalizeAnchor({...anchor(null,{path:rootFile,kind:'drawing'}),kind:'net',netName:nets[0].name}));return;}notice("This 3D object has no unambiguous saved anchor; switch to 2D to place a comment.");},
+      inspect3D(record){nativePick=record;const object=resolveObject(objects,rootFile,record);if(object)selectObject(object,false,false,true);else if(record?.net!=null){const net=savedNetFor3D(netModel.nets,currentFile(),record);if(net)selectNet(net,false,false,false,false);}properties();inspector("properties");},
+      select3D(record,gesture={}){
+        nativePick=record;
+        const object=resolveObject(objects,rootFile,record),pinNumber=record?.pinNumber||(record?.type==='Pad'?record.name:null);
+        const individual=gesture.individual===true,mode=individual&&pinNumber!=null?'pin':$('selectionMode').value||'all';
+        if(mode==='pin'){
+          if(pinNumber==null||!select3DTerminal(object,pinNumber,record))updateHighlights();
+          return;
+        }
+        if(individual){
+          const canonical={kind:'object',path:currentFile(),uuid:record?.uuid||record?.id};
+          if(applyWindowSelection(canonical))options.onSelection?.(canonical);else updateHighlights();
+          return;
+        }
+        if(mode==='part'&&record&&!object?.reference){updateHighlights();return;}
+        const net=savedNetFor3D(netModel.nets,currentFile(),record);
+        if(net&&(mode==='net'||!object?.reference||object?.kind==='pad'||record?.type==='Pad')){selectNet(net,false,false);return;}
+        if(mode==='net'&&record){updateHighlights();return;}
+        if(record?.type==='Pad'&&pinNumber!=null){
+          if(!select3DTerminal(object,pinNumber,record))updateHighlights();
+          return;
+        }
+        if(object&&$('multiHighlight').checked){
+          const index=highlightObjects.findIndex(o=>o.id===object.id);
+          if(index<0)highlightObjects.push(object);else highlightObjects.splice(index,1);
+        }
+        selectObject(object,false,false,true);
+      },
+      comment3D(record){let object=resolveObject(objects,rootFile,record);const pinNumber=record?.pinNumber??(record?.type==='Pad'?record.name:null);if(object&&pinNumber!=null){const position=object.position;if(object.parentId)object=objects.find(o=>o.id===object.parentId&&o.path===rootFile);if(object)editComment(null,anchor(position,{...object,kind:'pad',reference:object.reference+'.'+pinNumber,uuid:record.uuid||object.uuid}));return;}if(object){editComment(null,anchor(object.position,object));return;}const net=savedNetFor3D(netModel.nets,rootFile,record);if(net){editComment(null,KiCadReviewComments.normalizeAnchor({...anchor(null,{path:rootFile,kind:'drawing'}),kind:'net',netName:net.name}));return;}notice("This 3D object has no unambiguous saved anchor; switch to 2D to place a comment.");},
       setScene(next){attach?.hideMagnifier?.();scene=next;fastPISession?.viewportChanged?.();applyObjectVisibility();if(simulationNet)showSimulation(simulationNet);scene?.setSelectionMode?.($('selectionMode').value||'all');$("measureButton").setAttribute("aria-pressed","false");$("highlightControls").hidden=Boolean(scene&&!scene.setSelection);$("highlightDnp").disabled=Boolean(scene);$("measureButton").disabled=Boolean(scene&&!scene.setMeasurementMode);for(const id of ["navLayers","pointComment","areaComment","drawCommentArea"])$(id).disabled=Boolean(scene);$("navNets").disabled=Boolean(scene&&!scene.setSelection);if(scene&&!["parts","files","bom"].includes(navigatorTab))navigate("parts");if(scene){setCommentMode(null);measureMode=false;measurePoints=[];getCanvas()?.canvas.classList?.toggle("ruler-mode",false);measurePreview=rulerSnap=boardMeasure=null;$("rulerControls").hidden=true;$("measureButton").setAttribute("aria-pressed","false");$("measurementStatus").textContent="";scene.setPopulation(objects.filter((item)=>item.kind==="footprint").map((item)=>({reference:item.reference,populated:item.populated})));}updateHighlights();draw();},
       dispose(){variableDialog?.remove();variableButton?.remove();variableResolvers.clear();navigationHelp?.dispose();fastPISession?.dispose();draftsmanSession?.dispose();reviewStatesDisposed=true;reviewThreadStates.clear();commentFocus?.dispose();cancelNativeOpen();root.removeEventListener?.('pagehide',cancelNativeOpen);projectFilesDisposed=true;objectVisibilityDisposed=true;root.removeEventListener?.('kicad-review:analysis-net-focus',analysisNetFocus);simulationTicket++;simulationView?.dispose();chatPanel?.dispose();conversationTicket++;if(root.KiCadChatDraft===chatDraftFacade){if(previousChatDraft)root.KiCadChatDraft=previousChatDraft;else delete root.KiCadChatDraft;}root.removeEventListener?.('pointerdown',outsideTouchPicker,true);dismissTouchPicker();netColorDisposed=true;netColorTicket++;threadTicket++;releasePastePreview();pasteGeneration++;mentionDisposed=true;mentionGeneration++;clearTimeout(mentionTimer);loadId++;remoteLoad++;netBuilder?.clear();reviewToolsObserver?.disconnect();sidebarObserver?.disconnect();root.removeEventListener?.('resize',layoutSidebars);root.removeEventListener?.('resize',ruleResize);ruleWindowObserver?.disconnect();for(const cleanup of resizeCleanups)cleanup();root.removeEventListener?.('keydown',reviewKeydown);narrowPanels.removeEventListener?.("change",keepDrawingVisible);navigation?.dispose();attach?.dispose();}}
   }
@@ -2505,6 +2566,6 @@
     const nearby=!constrain&&canvas.candidates?canvas.candidates({x:at.x-radius,y:at.y-radius,w:2*radius,h:2*radius}):all;
     return nearby.filter(p=>p.type!=='text'&&!p.frame&&canvas.geometryVisible?.(p)!==false&&(!p.layer||p.hole||canvas.visibleLayers.has(p.layer))&&(!canvas.focusedLayer||canvas.layerFocusMode!=='isolate'||p.hole||p.layer===canvas.focusedLayer||p.layer==='Edge.Cuts'));
   }
-  root.KiCadReviewWorkspace={mountNavigationHelp,measurementCandidates,mount,objectNetLookup,populationOverlayCache,resolveObject,touchNetIndex,touchNetCandidates,selectionCandidates,measurement,matchesSearch,sheetTarget,sheetEntries,sheetOverviewEntries,sheetHistory,rootSheetPath,sheetPageHighlights,overviewNetLinks,composeSheetOverview,refreshSheetOverview};
+  root.KiCadReviewWorkspace={mountNavigationHelp,measurementCandidates,mount,objectNetLookup,populationOverlayCache,resolveObject,savedNetFor3D,touchNetIndex,touchNetCandidates,selectionCandidates,measurement,matchesSearch,sheetTarget,sheetEntries,sheetOverviewEntries,sheetHistory,rootSheetPath,sheetPageHighlights,overviewNetLinks,composeSheetOverview,refreshSheetOverview};
   if(typeof module==="object"&&module.exports)module.exports=root.KiCadReviewWorkspace;
 })(globalThis);

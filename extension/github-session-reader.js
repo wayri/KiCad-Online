@@ -101,7 +101,15 @@
         }
       }
       else nameLinks.some(link=>{try{const u=new URL(link.getAttribute('href'),page),segments=u.pathname.split('/').filter(Boolean).map(decodeURIComponent),suffix=segments.slice(3).join('/'),path=suffix.slice(ref.length+1);
-        if(u.origin!==page.origin)return rejectRow('link-origin');if(u.search||u.hash)return rejectRow('link-query-hash');if(segments.slice(0,2).join('/')!==repository)return rejectRow('link-repository');if(!['tree','blob'].includes(segments[2]))return rejectRow('link-route');if(!suffix.startsWith(ref+'/'))return rejectRow('link-ref');if(!safePath(path))return rejectRow('link-path');if(path.split('/').slice(0,-1).join('/')!==directory)return rejectRow('link-nesting');if(String(link.textContent||'').trim()!==path.split('/').at(-1))return rejectRow('link-label');return false;
+        if(u.origin!==page.origin)return rejectRow('link-origin');if(u.search||u.hash)return rejectRow('link-query-hash');if(segments.slice(0,2).join('/')!==repository)return rejectRow('link-repository');if(!['tree','blob'].includes(segments[2]))return rejectRow('link-route');if(!suffix.startsWith(ref+'/'))return rejectRow('link-ref');if(!safePath(path))return rejectRow('link-path');const label=String(link.textContent||'').trim();
+        if(path.split('/').slice(0,-1).join('/')!==directory){
+          // The filename cell can link to a compact single-child folder chain.
+          // Its complete relative label and tree route identify the directory.
+          if(segments[2]!=='tree'||!safePath(label)||!label.includes('/')||path!==(directory?directory+'/':'')+label)return rejectRow('link-nesting');
+          if(items.has(path)&&items.get(path).contentType!=='directory')throw Error('Conflicting GitHub file table entry types.');
+          items.set(path,{path,contentType:'directory',name:label,hasSimplifiedPath:true});
+        }else if(label!==path.split('/').at(-1))return rejectRow('link-label');
+        return false;
       }catch{return rejectRow('link-format');}});
       for(const u of candidates){const segments=u.pathname.split('/').filter(Boolean).map(decodeURIComponent);if(segments.slice(0,2).join('/')!==repository||!['tree','blob'].includes(segments[2]))continue;
         const suffix=segments.slice(3).join('/');if(!suffix.startsWith(ref+'/'))continue;const path=suffix.slice(ref.length+1);if(!safePath(path))throw Error('Unsafe GitHub file table entry.');
@@ -209,7 +217,7 @@
           const objects=parseHTML(await bounded(response,8*1024*1024,controller.signal),url),accounts=[...new Set(objects.filter(item=>typeof item?.githubWebsiteAccount==='string').map(item=>item.githubWebsiteAccount))];
           if(accounts.length!==1)throw Object.assign(Error('The website account for repository policy could not be verified.'),{code:'GITHUB_POLICY_ACCOUNT'});
           const snapshot=await treeWithFeed(objects,repository,'HEAD','',controller.signal,true),account=accounts[0];
-          const entry=snapshot.items.find(item=>item.path==='.kicad-review-policy.json');
+          const entry=snapshot.items.find(item=>item.path.split('/')[0]==='.kicad-review-policy.json');
           if(!entry)return {sha:snapshot.sha,source:'default',account};
           if(entry.type!=='file')throw Error('Repository comment policy must be a regular saved file.');
           const saved=await read({repository,ref:snapshot.sha,action:'file',path:entry.path,limit:128*1024}).catch(error=>{if(error?.code==='GITHUB_SOURCE_TOO_LARGE')error.code='GITHUB_POLICY_TOO_LARGE';throw error;});

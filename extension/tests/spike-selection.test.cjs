@@ -75,3 +75,13 @@ test('orbit drags and two-finger camera gestures retain selection through the fi
  gesture.down(point(1,10));gesture.move(point(1,30));gesture.up(point(1,30));assert.equal(selected,'GND');
  gesture.down(point(1,10));gesture.down(point(2,30));gesture.up(point(2,30));gesture.up(point(1,10));assert.equal(selected,'GND');
 });
+
+test('selected-net overlay cannot intercept a different saved pad hit',async()=>{
+ const {pickSavedGeometry}=await helpers;
+ const selected={type:'Track',net:'/GPIO33'},pad={type:'Pad',ref:'EXT2',name:'6',net:'/GPIO32'};
+ const overlay={userData:{record:selected}},native={userData:{records:[{...pad,name:'5'},pad]}};
+ const raycaster={intersectObjects:objects=>objects.map(object=>({object,instanceId:1,distance:object===overlay?1:2}))};
+ assert.equal(pickSavedGeometry(raycaster,[native],[overlay],'net').record,pad);
+ assert.equal(pickSavedGeometry(raycaster,[],[overlay],'net').record,selected);
+ assert.equal(pickSavedGeometry(raycaster,[],[overlay],'pin'),null);
+});

@@ -124,6 +124,14 @@ test('hierarchy strokes remain visible when fit-to-all makes the final arrow seg
  assert.equal(strokes,2,'paper casing separates hierarchy and net crossings');assert.equal(labels,0);
 });
 
+test('all-sheet guides stroke shared rails once and draw open heads only when the approach fits',()=>{
+ const commands=[],strokes=[],ctx={globalAlpha:1,save(){},restore(){},beginPath(){},setLineDash(){},moveTo(x,y){commands.push(['M',x,y]);},lineTo(x,y){commands.push(['L',x,y]);},stroke(){strokes.push(this.globalAlpha);}};
+ const view={ctx,viewport:{camera:{world_to_screen:p=>p}}},from={x:8,y:0},joint={x:8,y:10},links=[{points:[from,joint,{x:8,y:19}]},{points:[from,joint,{x:20,y:10},{x:20,y:12}]}];
+ require('../sheet-hierarchy-links.js').drawGuides(view,{links},true,false);
+ assert.deepEqual(strokes,[.42]);assert.equal(commands.filter(([op])=>op==='M').length,3);
+ assert.deepEqual(commands.slice(3,6),[['M',5.5,14],['L',8,19],['L',10.5,14]]);
+});
+
 test('overview placement labels hide at far zoom and never cover pages or one another',()=>{
  const labels=[],ctx={globalAlpha:1,save(){},restore(){},beginPath(){},moveTo(){},lineTo(){},quadraticCurveTo(){},setLineDash(){},stroke(){},closePath(){},fill(){},measureText(){return {width:60};},fillRect(){},fillText(text){labels.push(text);}};
  const camera={zoom:.1,width:800,height:600,world_to_screen:p=>p},view={ctx,viewport:{camera}},edge={from:{x:0,y:0},to:{x:200,y:200},points:[{x:0,y:0},{x:0,y:100},{x:200,y:100},{x:200,y:200}],label:'16 placements',showLabel:true};

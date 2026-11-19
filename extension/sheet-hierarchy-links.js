@@ -6,7 +6,7 @@
   const MAX_LINKS = 512;
 
   function build(pages, options = {}) {
-    const headingGap = options.headingGap === 0 ? 0 : 16;
+    const headingGap = Number.isFinite(options.headingGap) ? Math.min(32,Math.max(0,options.headingGap)) : 16;
     const result = {links: [], omitted: 0, unresolved: 0};
     if (!Array.isArray(pages)) return result;
     const instances = new Map(), duplicates = new Set();
@@ -81,7 +81,7 @@
       const childPages = children.map(link => pages.find(page => page.path === link.childPath));
       const firstTop = Math.min(...childPages.map(page => page.y));
       const bottom = parent.y + parent.h;
-      if (firstTop - bottom < 24) {fallback.push(...children); continue;}
+      if (firstTop - bottom < Math.max(24,headingGap+8)) {fallback.push(...children); continue;}
       const peers=lanes.get(JSON.stringify([bottom,firstTop])),lane=peers.indexOf(children[0].parentPath);
       const rail = bottom + (firstTop - headingGap - bottom) * (lane+1)/(peers.length+1);
       const start = {x: parent.x + parent.w / 2, y: bottom};
@@ -94,7 +94,7 @@
       const intersects = routes.some(link => link.points.slice(1).some((to, index) => {
         const from = link.points[index];
         return pages.some(page => page !== parent && page.path !== link.childPath &&
-          (from.x === to.x ? from.x > page.x-4 && from.x < page.x+page.w+4 && Math.max(from.y,to.y)>page.y-12 && Math.min(from.y,to.y)<page.y+page.h+4 : from.y>page.y-12 && from.y<page.y+page.h+4 && Math.max(from.x,to.x)>page.x-4 && Math.min(from.x,to.x)<page.x+page.w+4));
+          (from.x === to.x ? from.x > page.x-4 && from.x < page.x+page.w+4 && Math.max(from.y,to.y)>page.y-headingGap && Math.min(from.y,to.y)<page.y+page.h+4 : from.y>page.y-headingGap && from.y<page.y+page.h+4 && Math.max(from.x,to.x)>page.x-4 && Math.min(from.x,to.x)<page.x+page.w+4));
       }));
       if (intersects) fallback.push(...children); else routedLinks.push(...routes);
     }
@@ -141,6 +141,32 @@
     return {a:from,b:{x:from.x+dx/3+nx*lift,y:from.y+dy/3+ny*lift},c:{x:from.x+2*dx/3+nx*lift,y:from.y+2*dy/3+ny*lift},d:to};
   }
   function netColor(name,dark=true){const palette=dark?['#65d9ff','#ffbf69','#c4a3ff','#6fe0ad','#ff91b8','#a6d875']:['#006aa6','#945400','#7444b3','#08794b','#ae3060','#517719'];let hash=0;for(const char of String(name||''))hash=(Math.imul(hash,31)+char.codePointAt(0))>>>0;return palette[hash%palette.length];}
+  function drawGuides(view, graph, dark, hasNetLinks) {
+    const ctx=view?.ctx,camera=view?.viewport?.camera;
+    if(!ctx||!camera||!graph?.links?.length)return;
+    ctx.save();
+    ctx.globalAlpha*=hasNetLinks ? .2 : .42;
+    ctx.strokeStyle=dark?'#92a9b7':'#536f81';
+    ctx.lineWidth=1.25;
+    ctx.lineJoin=ctx.lineCap='round';
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    for(const link of graph.links){
+      const points=(link.exteriorPoints||link.points||[link.from,link.to]).map(point=>camera.world_to_screen(point));
+      if(points.length<2||points.some(point=>!Number.isFinite(point.x)||!Number.isFinite(point.y)))continue;
+      ctx.moveTo(points[0].x,points[0].y);
+      for(const point of points.slice(1))ctx.lineTo(point.x,point.y);
+      const tip=points.at(-1),tail=points.at(-2),dx=tip.x-tail.x,dy=tip.y-tail.y,length=Math.hypot(dx,dy);
+      if(length<6)continue;
+      const ux=dx/length,uy=dy/length,head=Math.min(5,length*.6),wing=head*.5;
+      ctx.moveTo(tip.x-ux*head-uy*wing,tip.y-uy*head+ux*wing);
+      ctx.lineTo(tip.x,tip.y);
+      ctx.lineTo(tip.x-ux*head+uy*wing,tip.y-uy*head-ux*wing);
+    }
+    // Paint the shared rails once, including overlaps in the same path.
+    ctx.stroke();
+    ctx.restore();
+  }
   function draw(view, graph, dark = false, style = {}) {
     const ctx = view?.ctx, camera = view?.viewport?.camera;
     if (!ctx || !camera || !graph?.links?.length) return;
@@ -181,6 +207,6 @@
     ctx.restore();
   }
 
-  root.KiCadSheetHierarchyLinks = {build, draw, pathData,crossingPath,netCurve,netColor};
+  root.KiCadSheetHierarchyLinks = {build, draw, drawGuides, pathData,crossingPath,netCurve,netColor};
   if (typeof module === 'object' && module.exports) module.exports = root.KiCadSheetHierarchyLinks;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

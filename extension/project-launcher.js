@@ -26,7 +26,9 @@
    if(context.revisionKind==='pull'&&(result.pullNumber!==context.pullNumber||result.pullRepository!==context.repository))throw Error('The discovered pull request does not match the requested pull request.');
    const info={...context,sha:result.sha,...(result.headRepository?{headRepository:result.headRepository}:{}),...(result.base?{base:result.base}:{}),...(result.pullNumber?{pullNumber:result.pullNumber,pullRepository:result.pullRepository}:{})};
    const warnings=Array.isArray(result.warnings)?result.warnings.slice(0,8).map(value=>String(value).slice(0,400)).join(' '):'';
-   details.textContent=context.repository;if(warnings)console.warn('KiCad Online project discovery:',warnings);
+   details.textContent=context.repository;
+   // Successful fallback details belong in DevTools, outside Chrome's extension Errors list.
+   if(warnings)console.debug('KiCad Online project discovery:',warnings);
    for(const file of result.projects)KiCadProjectLaunch.viewerURL(info,file,p=>chrome.runtime.getURL(p));
    const files=result.projects.filter(file=>/\.(?:kicad_pro|pro)$/i.test(file));
    if(files.length===1&&!result.truncated){location.replace(KiCadProjectLaunch.viewerURL(info,files[0],p=>chrome.runtime.getURL(p)));return;}

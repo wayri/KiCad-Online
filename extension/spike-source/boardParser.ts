@@ -230,8 +230,8 @@ function propertyOf(node: Node, name: string): string {
   return stringAt(children(node, "property").find((value) => stringAt(value, 1).toLowerCase() === name.toLowerCase()), 2);
 }
 
-function transformPoint(point: Point, origin: Point, rotation: number, mirrored: boolean): Point {
-  const x = mirrored ? -point[0] : point[0];
+function transformPoint(point: Point, origin: Point, rotation: number): Point {
+  const x = point[0];
   const angle = -rotation * Math.PI / 180;
   const cos = Math.cos(angle);
   const sin = Math.sin(angle);
@@ -513,7 +513,8 @@ export function parseKicadBoard(source: string, preparedRoot?: Node, options: {z
       const rotation = numberAt(footprintAt, 3);
       const layer = layerOf(item);
       const mirrored = layer.startsWith("B.");
-      const transform = (point: Point) => transformPoint(point, origin, rotation, mirrored);
+      // Saved back-side footprints already encode their flip in local coordinates.
+      const transform = (point: Point) => transformPoint(point, origin, rotation);
       const reference = propertyOf(item, "Reference")
         || stringAt(children(item, "fp_text").find((text) => stringAt(text, 1) === "reference"), 2)
         || `REF${components.length + 1}`;

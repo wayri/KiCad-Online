@@ -41,7 +41,7 @@ import {sourceCopperPlan} from "./copperStack.mjs";
 import {createNetInspection} from "./netInspection.mjs";
 import {createSelectionAppearance} from "./selectionAppearance.mjs";
 import { createExplodeView } from './explodeView.mjs';
-import { selectionMatcher, selectionNetNames, selectableRecord, selectionGesture, holdGesture } from "./selectionState.mjs";
+import { selectionMatcher, selectionNetNames, pickSavedGeometry, selectionGesture, holdGesture } from "./selectionState.mjs";
 import { sphereFitDistance,boxFitDistance } from "./fitPolicy.mjs";
 import { qualityName, qualityViewport, graphicsProfile, boardOcclusion, boardClipRange, configureOcclusionDepth, studioMaterials, padHasMaskOpening, physicalColors, copperDepthPolicy, copperCapMaterials, configureCopperDepth, createLinearCopperMaterials } from "./renderQuality.mjs";
 import { createResultOverlay } from "./result3d.js";
@@ -844,7 +844,7 @@ export function mountBoard3D(container, source, options = {}) {
   function select(record, point, object, instanceId, gesture) {
     if(mechanical)return;
     const mode=options.getSelectionMode?.()||selectionMode;
-    setSelection(mode==='net'&&record.net?{netNames:[record.net]}:record.type==='Component'||typeof record.library==='string'?{references:[record.ref]}:{uuids:[record.uuid||record.id]});
+    setSelection(!gesture?.individual&&mode==='net'&&record.net?{netNames:[record.net]}:record.type==='Component'||typeof record.library==='string'?{references:[record.ref]}:{uuids:[record.uuid||record.id]});
     selected = { record, point: point.clone() };
     options.onSelect?.(record,gesture);
     inspector.replaceChildren();
@@ -868,22 +868,21 @@ export function mountBoard3D(container, source, options = {}) {
       const result = analysisOverlay.sample(raycaster.intersectObject(analysisOverlay.mesh, false)[0]);
       if (result) { options.onAnalysisProbe?.(result); return; }
     }
-    const visible = item => { for (let node = item; node; node = node.parent) if (!node.visible) return false; return true; };
-    const hits = raycaster.intersectObjects([...pickables,...netInspection.group.children].filter(mesh=>visible(mesh)&&(explode.get()===0||mesh!==substrate)), false);
-    const mode = event.shiftKey&&!event.ctrlKey&&!event.metaKey?'object':options.getSelectionMode?.() || selectionMode;
-    const hit = hits.find(hit=>selectableRecord(hit.object.userData.records?.[hit.instanceId] || hit.object.userData.record,mode));
-    if (!hit) { if(clearOnMiss)clearSelection(); return; }
-    const record = hit.object.userData.records?.[hit.instanceId] || hit.object.userData.record;
-    if (!record) return;
-    select(record, hit.point, hit.object, hit.instanceId,{individual:Boolean(event.shiftKey&&!event.ctrlKey&&!event.metaKey)});
+    const individual=Boolean(event.shiftKey&&!event.ctrlKey&&!event.metaKey);
+    const result=pickAtRay(individual?'object':options.getSelectionMode?.()||selectionMode);
+    if(!result){if(clearOnMiss)clearSelection();return;}
+    const {hit,record}=result;
+    select(record,hit.point,hit.object,hit.instanceId,{individual});
   }
   let pointerInside=false;
   function netAtPointer(){
     if(!active||!pointerInside||measuring)return null;
     raycaster.setFromCamera(pointer,camera);
+    return pickAtRay('net')?.record||null;
+  }
+  function pickAtRay(mode){
     const visible=item=>{for(let node=item;node;node=node.parent)if(!node.visible)return false;return true;};
-    const hit=raycaster.intersectObjects([...pickables,...netInspection.group.children].filter(mesh=>visible(mesh)&&(explode.get()===0||mesh!==substrate)),false).find(hit=>selectableRecord(hit.object.userData.records?.[hit.instanceId]||hit.object.userData.record,'net'));
-    return hit?(hit.object.userData.records?.[hit.instanceId]||hit.object.userData.record):null;
+    return pickSavedGeometry(raycaster,pickables.filter(mesh=>visible(mesh)&&(explode.get()===0||mesh!==substrate)),netInspection.group.children.filter(visible),mode);
   }
   renderer.domElement.addEventListener('pointerleave',()=>{pointerInside=false;});
   let selectionMode = 'all';

@@ -24,7 +24,7 @@ async function revision(query='',extraFiles=[],options={}){
   addEventListener:(type,callback)=>listeners.set(type,callback)};
  if(options.windowLink)context.KiCadWindowLink={mount(config){calls.linkOptions=config;return{publishTheme(value){(calls.linkThemes||=[]).push(value);},dispose(){}};}};
  if(options.realRender){context.KiCadFileCompatibility={...require('../file-compatibility.js'),mountStatus:()=>({refresh(){},dispose(){}})};context.KiCadNetModel=require('../net-model.js');context.KiCadPCBRenderer=require('../pcb-renderer.js');context.KiCadSchematicRenderer=require('../schematic-renderer.js');}
- if(options.android){context.KiCadNetModel=require('../net-model.js');context.KiCadAndroidUI={};context.setTimeout=(fn,ms)=>{const timer=setTimeout(fn,ms);if(ms>100)timer.unref();return timer;};context.requestAnimationFrame=fn=>setTimeout(fn,0);context.cancelAnimationFrame=clearTimeout;context.IntersectionObserver=class{constructor(callback){this.callback=callback;calls.overviewObserver=this;this.observed=[];}observe(node){this.observed.push(node);}disconnect(){this.observed=[];}};const mount=context.KiCadReviewWorkspace.mount;context.KiCadReviewWorkspace.mount=opts=>({...mount(opts),overviewNetworks:()=>context.KiCadNetModel.build(opts.files,opts.getDesigns()).nets,overviewSheets:()=>[{sheet:{path:initialFile,label:'Root'},depth:0},...extraFiles.map(file=>({sheet:{path:file.path,label:'Power supply'},depth:1}))],overviewSelection:path=>options.overviewSelection?.(path)||({netIds:[],uuids:[],mode:'dim'})});}
+ if(options.android){context.KiCadNetModel=require('../net-model.js');context.KiCadAndroidUI={};context.setTimeout=(fn,ms)=>{const timer=setTimeout(fn,ms);if(ms>100)timer.unref();return timer;};context.requestAnimationFrame=fn=>setTimeout(fn,0);context.cancelAnimationFrame=clearTimeout;context.IntersectionObserver=class{constructor(callback){this.callback=callback;calls.overviewObserver=this;this.observed=[];}observe(node){this.observed.push(node);}disconnect(){this.observed=[];}};const mount=context.KiCadReviewWorkspace.mount;context.KiCadReviewWorkspace.mount=opts=>({...mount(opts),overviewNetworks:()=>context.KiCadNetModel.build(opts.files,opts.getDesigns()).nets,overviewSheets:()=>[{sheet:{path:initialFile,label:'Root'},depth:0},...extraFiles.map(file=>({sheet:{path:file.path,label:'Power supply'},depth:1}))],overviewNetLinks:options.overviewNetLinks,overviewSelection:path=>options.overviewSelection?.(path)||({netIds:[],uuids:[],mode:'dim'})});}
  if(options.worker)context.KiCadLoading={indicator:(_host,config)=>{calls.stopLoading=config.onStop;return{show(){},hide(){},dispose(){}};},paint:async()=>{},run:async(_job,payload,prepare)=>{calls.workerPayload=payload;return {...prepare(),design:context.KiCadSchematicRenderer.build()};}};
  if(options.miniEntries){const mount=context.KiCadReviewWorkspace.mount;context.KiCadReviewWorkspace.mount=opts=>({...mount(opts),overviewSheets:()=>options.miniEntries,followSheet(path,netId,context){calls.followedSheet=path;calls.followedInstance=context?.instancePath;options.onFollowSheet?.(path,context);}});context.KiCadSheetHierarchyLinks=require('../sheet-hierarchy-links.js');}
  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../revision-viewer.js'),'utf8'),context);await tick();
@@ -248,12 +248,12 @@ test('sheet tree header drag and keyboard move the box within its drawing pane a
  v.context.KiCadSheetOverview.dispose();
 });
 
-test('shared overview keeps its full layout until Connected sheets only is requested',async()=>{
+test('shared overview filters highlighted sheets by default and restores all sheets when cleared',async()=>{
  let active=true;
  const v=await revision('',[{path:'sub/power.kicad_sch',content:'(kicad_sch)'},{path:'other.kicad_sch',content:'(kicad_sch)'}],{android:true,overviewSelection:path=>({netActive:active,netIds:active&&path!=='other.kicad_sch'?['VCC']:[],uuids:[],mode:'dim'})});
  await v.context.KiCadSheetOverview.open();
- assert.equal(v.canvas.design.primitives.filter(p=>p.type==='text').length,3);
- const heading=v.get('drawingHost').children.find(node=>node.id==='sheetOverview').children[0];await heading.children.find(node=>node.textContent==='Connected sheets only').click();assert.equal(v.canvas.design.primitives.filter(p=>p.type==='text').length,2);
+ assert.equal(v.canvas.design.primitives.filter(p=>p.type==='text').length,2);
+ const heading=v.get('drawingHost').children.find(node=>node.id==='sheetOverview').children[0],filter=heading.children.find(node=>node.textContent==='Connected sheets only');await filter.click();assert.equal(v.canvas.design.primitives.filter(p=>p.type==='text').length,3);await filter.click();
  active=false;await v.context.KiCadSheetOverview.refresh();
  assert.equal(v.canvas.design.primitives.filter(p=>p.type==='text').length,3);
  v.context.KiCadSheetOverview.close();
@@ -267,11 +267,11 @@ test('all-sheet highlight refresh retains geometry, camera and the miniature DOM
  v.context.KiCadSheetOverview.close();
 });
 
-test('net-map mode retains the full hierarchy and keeps light structural links enabled',async()=>{
- const v=await revision('',[{path:'child.kicad_sch',content:'(kicad_sch)'},{path:'other.kicad_sch',content:'(kicad_sch)'}],{android:true,overviewSelection:path=>({netActive:true,netIds:path==='other.kicad_sch'?[]:['POWER'],uuids:[],mode:'dim'})});
+test('net-map shows saved link endpoints and omits isolated net matches',async()=>{
+ const v=await revision('',[{path:'child.kicad_sch',content:'(kicad_sch)'},{path:'other.kicad_sch',content:'(kicad_sch)'}],{android:true,overviewSelection:()=>({netActive:true,netIds:['POWER'],uuids:[],mode:'dim'}),overviewNetLinks:()=>[{name:'POWER',from:{path:'root.kicad_sch',position:{x:10,y:10}},to:{path:'child.kicad_sch',position:{x:15,y:15}}}]});
  await v.context.KiCadSheetOverview.openNetMap();const heading=v.get('drawingHost').children.find(node=>node.id==='sheetOverview').children[0];
- assert.equal(v.context.KiCadSheetOverview.isOpen(),true);assert.equal(v.canvas.design.primitives.filter(p=>p.type==='text').length,3);
- for(const [label,pressed]of [['Connected sheets only','false'],['Net links','true'],['Hierarchy links','true']])assert.equal(heading.children.find(node=>node.textContent===label).getAttribute('aria-pressed'),pressed);
+ assert.equal(v.context.KiCadSheetOverview.isOpen(),true);assert.deepEqual(Array.from(v.canvas.design.overviewPages,p=>p.path),['root.kicad_sch','child.kicad_sch']);
+ for(const label of ['Connected sheets only','Net links','Hierarchy links'])assert.equal(heading.children.find(node=>node.textContent===label).getAttribute('aria-pressed'),'true');
  v.context.KiCadSheetOverview.close();
 });
 
@@ -507,7 +507,7 @@ test('minimap branch arrows retain their branch colour and expose parent identit
 
 test('miniature preserves canvas hierarchy order with compact cards and faint unselected canvas guides',async()=>{
  const miniEntries=miniatureEntries(4),v=await revision('',miniEntries.slice(1).map(e=>({path:e.sheet.path,content:'(kicad_sch)'})),{android:true,miniEntries}),mini=v.get('drawingHost').children.find(n=>n.className==='sheet-tree-miniature'),svg=mini.children[1].children[0],rects=svg.children.filter(n=>n.attributes.role==='button').map(n=>n.children[0].attributes),styles=[];
- v.canvas.ctx={};v.context.KiCadSheetHierarchyLinks={...v.context.KiCadSheetHierarchyLinks,draw:(_view,_graph,_dark,style)=>styles.push(style)};await v.context.KiCadSheetOverview.open();
+ v.canvas.ctx={};v.context.KiCadSheetHierarchyLinks={...v.context.KiCadSheetHierarchyLinks,drawGuides:(_view,graph,_dark,hasNetLinks)=>styles.push({graph,hasNetLinks})};await v.context.KiCadSheetOverview.open();
  assert.equal(v.canvas.design.overviewPages.length,rects.length);const canvasOrder=[...v.canvas.design.overviewPages].sort((a,b)=>a.y-b.y||a.x-b.x).map(page=>page.path),miniOrder=miniEntries.map((entry,index)=>({path:entry.sheet.path,x:Number(rects[index].x),y:Number(rects[index].y)})).sort((a,b)=>a.y-b.y||a.x-b.x).map(page=>page.path);assert.deepEqual(canvasOrder,miniOrder,'saved ancestry and sibling order are shared, paper dimensions are not');assert.ok(rects.every(rect=>Number(rect.width)===192&&Number(rect.height)===64));
- assert.ok(styles.some(style=>style.opacity<=.2&&style.familyColors&&style.labels===false));v.hide();
+ assert.ok(styles.some(({graph,hasNetLinks})=>graph.links.length&&hasNetLinks===false));v.hide();
 });
