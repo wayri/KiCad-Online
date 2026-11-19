@@ -11,7 +11,7 @@ async function revision(query='',extraFiles=[],options={}){
  const canvas={setNetHighlights(){},canvas:new Element(),viewport:{camera},document:null,visibleLayers:new Set(),addEventListener:(type,callback)=>canvasListeners.set(type,callback),resize(){},draw(){calls.draw++;},dispose(){calls.disposed++;},
   setDocument(design,file){this.design=design;this.document={filename:file};this.zoom_to_board();this.draw();},
   setWorksheetVisible(on){this.paperVisible=on;},zoom_to_board(){calls.board++;camera.bbox={x:92,y:192,w:16,h:16};},zoom_to_page(){calls.page++;camera.bbox={x:0,y:0,w:297,h:210};}};
- for(const name of ['focusLayer','restoreLayers','layerPreset'])canvas[name]=function(...args){if(name==='focusLayer'){if(!this.layerSnapshot)this.layerSnapshot=new Set(this.visibleLayers);this.focusedLayer=args[0];this.layerFocusMode=args[1];this.visibleLayers.add(args[0]);}else if(name==='layerPreset'){if(!this.layerSnapshot)this.layerSnapshot=new Set(this.visibleLayers);this.focusedLayer=null;this.visibleLayers=new Set(this.design.layers);}else{if(this.layerSnapshot)this.visibleLayers=new Set(this.layerSnapshot);this.layerSnapshot=null;this.focusedLayer=null;}};
+ for(const name of ['focusLayer','restoreLayers','layerPreset'])canvas[name]=function(...args){if(name==='focusLayer'){if(!this.layerSnapshot)this.layerSnapshot=new Set(this.visibleLayers);this.focusedLayer=args[0];this.layerFocusMode=args[1];this.layerPresetName=null;this.visibleLayers.add(args[0]);}else if(name==='layerPreset'){if(!this.layerSnapshot)this.layerSnapshot=new Set(this.visibleLayers);this.focusedLayer=null;this.layerPresetName=args[0];this.visibleLayers=new Set(this.design.layers.filter(layer=>args[0]!=='overview'||['F.Cu','B.Cu','F.SilkS','B.SilkS','Edge.Cuts'].includes(layer)));}else{if(this.layerSnapshot)this.visibleLayers=new Set(this.layerSnapshot);this.layerSnapshot=null;this.focusedLayer=null;this.layerPresetName=null;}};
  const initialFile=options.file||(options.pcb?'board.kicad_pcb':'root.kicad_sch');
  const context={Map,AbortController,setTimeout:(fn,ms)=>{const timer=setTimeout(fn,ms);if(ms>100)timer.unref();return timer;},clearTimeout,URL,URLSearchParams,console,location:{search:'?repository=wayri/board&ref=main&file='+initialFile+query},parent,
   document:{getElementById:get,body:new Element(),createElement:()=>new Element(),createElementNS:()=>new Element(),head:new Element()},
@@ -156,7 +156,7 @@ test('floating layer selector highlights with visible context, optionally isolat
  v.canvas.visibleLayers=new Set(['F.Cu','Edge.Cuts']);
  buttons[1].click();assert.equal(toggle.attributes['aria-expanded'],'true');assert.equal(toggle.textContent,'In1.Cu');assert.equal(v.canvas.focusedLayer,'In1.Cu');assert.equal(v.canvas.layerFocusMode,'dim');assert.equal(buttons[1].attributes['aria-pressed'],'true');assert.ok(v.canvas.visibleLayers.has('F.Cu'));assert.equal(mode.value,'dim');mode.value='isolate';mode.onchange();assert.equal(v.canvas.layerFocusMode,'isolate');mode.value='dim';mode.onchange();assert.equal(v.canvas.layerFocusMode,'dim');
  buttons.find(button=>button.dataset.layer==='All').click();assert.deepEqual([...v.canvas.visibleLayers],v.canvas.design.layers);assert.equal(v.canvas.focusedLayer,null);
- buttons.find(button=>button.dataset.layer==='Overview').click();assert.deepEqual([...v.canvas.visibleLayers],['F.Cu','Edge.Cuts']);assert.equal(v.canvas.layerSnapshot,null);
+ buttons.find(button=>button.dataset.layer==='Overview').click();assert.deepEqual([...v.canvas.visibleLayers],['F.Cu','B.Cu','Edge.Cuts']);assert.equal(v.canvas.layerPresetName,'overview');assert.equal(buttons.find(button=>button.dataset.layer==='Overview').attributes['aria-pressed'],'true');assert.equal(buttons.find(button=>button.dataset.layer==='All').attributes['aria-pressed'],'false');
  buttons.find(button=>button.dataset.layer==='Worksheet').click();assert.equal(v.canvas.paperVisible,true);buttons.find(button=>button.dataset.layer==='Worksheet').click();assert.equal(v.canvas.paperVisible,false);buttons.find(button=>button.dataset.layer==='Net names').click();assert.equal(v.canvas.showNetNames,true);assert.equal(v.get('showNetNames').checked,true);assert.equal(buttons.find(button=>button.dataset.layer==='Net names').attributes['aria-pressed'],'true');buttons.find(button=>button.dataset.layer==='Net names').click();assert.equal(v.canvas.showNetNames,false);
  await v.get('mode3d').click();assert.equal(bar.hidden,true);await v.get('mode3d').click();assert.equal(bar.hidden,false);
  const schematic=await revision();assert.equal(schematic.get('drawingHost').children.some(child=>child.id==='floatingLayerSelector'),false);
@@ -197,6 +197,20 @@ test('sheet tree floats below the drawing, minimizes, closes, reopens from setti
  assert.equal(svg.attributes.width,'100%');assert.ok(Number(svg.attributes.height)<=160);assert.ok(svg.children.some(child=>child.tagName==='defs'||child.children?.some(item=>item.attributes.id==='sheetTreeArrow')),'directional miniature arrow definition');
  assert.ok(node);const before={...v.camera.bbox};node.click();assert.notDeepEqual(v.camera.bbox,before);assert.equal(v.context.KiCadSheetOverview.isOpen(),true);
  v.context.KiCadSheetOverview.close();
+});
+
+test('KERO-sized miniature keeps five siblings in one compact rank despite mixed paper sizes',async()=>{
+ const names=['power','bank3','bank1','decoder','bank2'];
+ const files=[{path:'root.kicad_sch',content:'(kicad_sch (uuid root) (paper "A3") '+names.map((name,i)=>`(sheet (at ${i*30} 10) (uuid child${i}) (property "Sheetname" "${name}") (property "Sheetfile" "${name}.kicad_sch"))`).join(' ')+')'},...names.map((name,i)=>({path:name+'.kicad_sch',content:`(kicad_sch (uuid page${i}) (paper "${i%2?'A4':'A2'}"))`}))];
+ const miniEntries=miniatureEntries(6).map((entry,i)=>({...entry,sheet:{path:files[i].path,label:i?names[i-1]:'Encoder'},placements:entry.placements.map(p=>({...p,path:files[i].path}))}));
+ const v=await revision('',files.slice(1),{android:true,miniEntries});
+ const miniature=v.get('drawingHost').children.find(node=>node.className==='sheet-tree-miniature'),svg=miniature.children[1].children[0];
+ const cards=svg.children.filter(node=>node.attributes.role==='button'),rects=cards.map(node=>node.children.find(child=>child.attributes.width));
+ assert.equal(cards.length,6);assert.ok(cards.every(node=>!node.children.some(child=>child.attributes.r)),'navigator cards omit decorative dots');assert.ok(rects.every(rect=>rect.attributes.width==='192'&&rect.attributes.height==='64'),'paper formats never turn navigator cards into page-sized boxes');
+ const root=cards.find(node=>node.attributes['aria-label']==='Go to Encoder'),children=cards.filter(node=>node!==root);assert.ok(root);
+ assert.equal(new Set(children.map(node=>node.children.find(child=>child.attributes.width).attributes.y)).size,1,'siblings must not wrap to a false lower level');
+ const paths=svg.children.filter(node=>node.attributes['data-parent-path']);assert.equal(paths.length,5);assert.ok(paths.every(node=>node.attributes.d.startsWith('M ')));
+ v.hide();
 });
 test('Android all-sheet overview composes every loaded page on a single canvas',async()=>{
  const v=await revision('',[{path:'sub/power.kicad_sch',content:'(kicad_sch)'}],{android:true});
@@ -486,13 +500,13 @@ test('miniature collates repeated sheets with occurrence count and exact parent 
 
 test('minimap branch arrows retain their branch colour and expose parent identity',async()=>{
  const miniEntries=miniatureEntries(4),v=await revision('',miniEntries.slice(1).map(e=>({path:e.sheet.path,content:'(kicad_sch)'})),{android:true,miniEntries}),mini=v.get('drawingHost').children.find(n=>n.className==='sheet-tree-miniature'),svg=mini.children[1].children[0],links=svg.children.filter(n=>n.className==='sheet-tree-miniature-link'||n.attributes.class==='sheet-tree-miniature-link');
- assert.equal(links.length,3);for(const link of links){assert.equal(link.attributes['data-parent-path'],'root.kicad_sch');assert.match(link.style.stroke,/^#[0-9a-f]{6}$/i);const id=link.attributes['marker-end'].slice(5,-1),marker=svg.children[0].children.find(n=>n.attributes.id===id);assert.equal(marker.children[0].attributes.fill,link.style.stroke);assert.equal(marker.attributes.markerUnits,'strokeWidth');}v.hide();
+ assert.equal(links.length,3);for(const link of links){assert.equal(link.attributes['data-parent-path'],'root.kicad_sch');assert.match(link.style.stroke,/^#[0-9a-f]{6}$/i);const id=link.attributes['marker-end'].slice(5,-1),marker=svg.children[0].children.find(n=>n.attributes.id===id);assert.equal(marker.children[0].attributes.fill,link.style.stroke);assert.equal(marker.attributes.markerUnits,'userSpaceOnUse');assert.equal(marker.attributes.markerWidth,'7');}v.hide();
 });
 
 
-test('miniature and all-sheet view share page placement and faint unselected hierarchy guides',async()=>{
+test('miniature preserves canvas hierarchy order with compact cards and faint unselected canvas guides',async()=>{
  const miniEntries=miniatureEntries(4),v=await revision('',miniEntries.slice(1).map(e=>({path:e.sheet.path,content:'(kicad_sch)'})),{android:true,miniEntries}),mini=v.get('drawingHost').children.find(n=>n.className==='sheet-tree-miniature'),svg=mini.children[1].children[0],rects=svg.children.filter(n=>n.attributes.role==='button').map(n=>n.children[0].attributes),styles=[];
  v.canvas.ctx={};v.context.KiCadSheetHierarchyLinks={...v.context.KiCadSheetHierarchyLinks,draw:(_view,_graph,_dark,style)=>styles.push(style)};await v.context.KiCadSheetOverview.open();
- assert.equal(v.canvas.design.overviewPages.length,rects.length);for(const [index,page]of v.canvas.design.overviewPages.entries())assert.deepEqual([page.x,page.y,page.w,page.h],['x','y','width','height'].map(key=>Number(rects[index][key])));
+ assert.equal(v.canvas.design.overviewPages.length,rects.length);const canvasOrder=[...v.canvas.design.overviewPages].sort((a,b)=>a.y-b.y||a.x-b.x).map(page=>page.path),miniOrder=miniEntries.map((entry,index)=>({path:entry.sheet.path,x:Number(rects[index].x),y:Number(rects[index].y)})).sort((a,b)=>a.y-b.y||a.x-b.x).map(page=>page.path);assert.deepEqual(canvasOrder,miniOrder,'saved ancestry and sibling order are shared, paper dimensions are not');assert.ok(rects.every(rect=>Number(rect.width)===192&&Number(rect.height)===64));
  assert.ok(styles.some(style=>style.opacity<=.2&&style.familyColors&&style.labels===false));v.hide();
 });

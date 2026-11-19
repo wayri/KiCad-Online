@@ -724,7 +724,7 @@
       if(!bounds&&net&&!a.position)bounds=root.KiCadOwnedCanvas?.bounds(net.primitives.filter(p=>!p.hidden&&!p.frame))||null;
       const position=a.position||(a.area?{x:a.area.x+a.area.width/2,y:a.area.y+a.area.height/2}:object?.position)||(bounds?{x:bounds.x+bounds.w/2,y:bounds.y+bounds.h/2}:net?.members?.find(m=>m.position)?.position);
       if(!position){if(a.kind==='drawing'&&!a.uuid&&!a.objectId&&!a.reference&&!a.netName){$(scene?'fitDrawing':'fitPage')?.click();locatedComment=null;commentFocus?.hide();draw();return true;}notice('This comment has no saved point, area or unambiguous object location.');return false;}
-      const side=a.side||(String(object?.properties?.Layer||object?.layer||'').startsWith('B.')?'back':'front');
+      const side=a.side||(String(object?.properties?.Layer||object?.properties?.layer||object?.layer||'').startsWith('B.')?'back':'front');
       if(scene){if(!scene.focusPosition?.(position,{bounds,side}))return false;}
       else{
         canvas?.resize?.();const rect=canvas?.canvas?.getBoundingClientRect?.(),box=root.KiCadCommentFocus?.viewBox(position,bounds,{width:rect?.width,height:rect?.height,pcb});
@@ -970,7 +970,7 @@
         const section=collapsible('Connected nets',[],true,'property:connected-nets');section.className='property-group sidebar-section';
         for(const net of linked.slice(0,100)){
           const count=net.members.filter(member=>member.kind==='pin'||member.kind==='pad').length;
-          const row=button('',()=>selectNet(net,true));row.className='net-sheet-link';row.title=`Highlight ${netDisplayName(net)}`;row.setAttribute('aria-label',`Highlight net ${netDisplayName(net)}`);
+          const row=button('',()=>selectNet(net,!scene));row.className='net-sheet-link';row.title=`Highlight ${netDisplayName(net)}`;row.setAttribute('aria-label',`Highlight net ${netDisplayName(net)}`);
           row.append(make('strong',netDisplayName(net)),make('small',` · ${count} ${net.kind==='pcb'?'pad':'pin'}${count===1?'':'s'}`));section.append(row);
         }
         if(linked.length>100)section.append(make('p',`First 100 of ${linked.length} connected nets shown. Search the Nets explorer for other connections.`));
@@ -998,16 +998,28 @@
       const list=$("netList"),highlighted=new Set(highlightedNets().map(n=>n.id));list.replaceChildren();const query=$("netSearch").value.trim().toLowerCase(),path=currentFile()||rootFile,linked=netFilterObject?new Set(netsForObject(objects.find(o=>o.id===netFilterObject)).map(n=>n.id)):null;
       const nets=netModel.nets.filter(n=>n.path===path&&(!linked||linked.has(n.id))&&`${netDisplayName(n)} ${n.name} ${n.code} ${n.members.map(m=>m.reference).join(" ")}`.toLowerCase().includes(query));
       $("netCount").textContent=`${nets.length} net${nets.length===1?"":"s"}${nets.length>500?" · first 500":""}`;$("clearNet").disabled=!selectedNet&&!netFilterObject;
-      for(const net of nets.slice(0,500)){const row=button("",()=>selectNet(net,true));row.className="object-row net-row"+(selectedNet?.id===net.id||highlighted.has(net.id)?" selected":"");row.setAttribute("aria-pressed",String(selectedNet?.id===net.id||highlighted.has(net.id)));const dot=make("span");dot.className="net-chip";const copy=make("span");copy.className="row-copy";copy.append(make("strong",netDisplayName(net)),make("small",net.kind==="pcb"?`${net.stats.pads} pads · ${net.stats.tracks} tracks · ${net.stats.lengthMm.toFixed(1)} mm`:`${net.members.filter(m=>m.kind==="pin").length} pins · sheet-local`));row.append(dot,copy);row.title=netDisplayName(net);list.append(row);}
+      for(const net of nets.slice(0,500)){const row=button("",()=>selectNet(net,!scene));row.className="object-row net-row"+(selectedNet?.id===net.id||highlighted.has(net.id)?" selected":"");row.setAttribute("aria-pressed",String(selectedNet?.id===net.id||highlighted.has(net.id)));const dot=make("span");dot.className="net-chip";const copy=make("span");copy.className="row-copy";copy.append(make("strong",netDisplayName(net)),make("small",net.kind==="pcb"?`${net.stats.pads} pads · ${net.stats.tracks} tracks · ${net.stats.lengthMm.toFixed(1)} mm`:`${net.members.filter(m=>m.kind==="pin").length} pins · sheet-local`));row.append(dot,copy);row.title=netDisplayName(net);list.append(row);}
       if(!nets.length)list.append(make("p","No networks match this search."));
       const warnings=netModel.warnings.filter(message=>message.startsWith(path+": "));$("netWarnings").hidden=!warnings.length;$("netWarningCount").textContent=`${warnings.length} connectivity note${warnings.length===1?"":"s"}`;$("netWarningList").replaceChildren();for(const warning of warnings.slice(0,20))$("netWarningList").append(make("p",warning.slice(path.length+2)));if(warnings.length>20)$("netWarningList").append(make("p",`First 20 of ${warnings.length} notes shown.`));
     }
-    function focusSceneGeometry(primitives,position,reference){
+    function focusSceneGeometry(primitives,position,reference,preferredSide){
       if(!scene?.focusPosition)return false;const available=new Set(getCanvas()?.primitives||getCanvas()?.design?.primitives||[]),geometry=(primitives||[]).filter(p=>available.has(p)&&(!p.path||p.path===currentFile())&&!p.hidden&&!p.frame&&p.type!=='text'&&p.kind!=='footprint-hit'),bounds=root.KiCadOwnedCanvas?.bounds(geometry)||null;
       const at=bounds?{x:bounds.x+bounds.w/2,y:bounds.y+bounds.h/2}:position;if(!at||![at.x,at.y].every(Number.isFinite))return false;
-      const layers=geometry.map(p=>p.layer).filter(Boolean),side=layers.length&&layers.every(layer=>layer.startsWith('B.'))?'back':'front',layer=layers.length&&layers.every(value=>value===layers[0])?layers[0]:undefined;return Boolean(scene.focusPosition(at,{bounds,side,layer,...(reference?{reference}:{})}));
+      const layers=geometry.map(p=>p.layer).filter(Boolean),side=preferredSide||(layers.length&&layers.every(layer=>layer.startsWith('B.'))?'back':'front'),layer=layers.length&&layers.every(value=>value===layers[0])?layers[0]:undefined;return Boolean(scene.focusPosition(at,{bounds,side,layer,...(reference?{reference}:{})}));
     }
-    function focusNet(net){if(scene){if(!focusSceneGeometry(net.primitives,net.members?.find(member=>member.position)?.position))$('selectionStatus').textContent=`${netDisplayName(net)} · no saved geometry to locate`;return;}const canvas=getCanvas();canvas.resize();const visible=net.primitives.filter(p=>!p.hole&&canvas.geometryVisible?.(p)!==false&&(!p.layer||canvas.visibleLayers.has(p.layer))),box=root.KiCadOwnedCanvas?.bounds(visible);if(!box){$("selectionStatus").textContent=`${netDisplayName(net)} · no geometry on visible layers`;return;}const margin=Math.max(3,Math.max(box.w,box.h)*.1);canvas.viewport.camera.bbox={x:box.x-margin,y:box.y-margin,w:box.w+2*margin,h:box.h+2*margin};canvas.draw();}
+    function partBoardSide(object){const layer=object?.properties?.Layer||object?.properties?.layer||object?.layer;return typeof layer==='string'&&layer.startsWith('B.')?'back':typeof layer==='string'&&layer.startsWith('F.')?'front':undefined;}
+    function focusDrawingGeometry(primitives,position,side){
+      const canvas=getCanvas();if(!canvas)return false;canvas.resize();
+      const geometry=(primitives||[]).filter(p=>!p.hole&&!p.hidden&&!p.frame&&p.type!=='text'&&p.kind!=='footprint-hit'&&(!p.path||p.path===currentFile()));
+      if(pcb){
+        if(side){canvas.viewport.camera.flipped=side==='back';$('flipButton')?.setAttribute('aria-pressed',String(side==='back'));}
+        for(const primitive of geometry)if(typeof primitive.layer==='string'&&!primitive.layer.includes('*'))canvas.visibleLayers.add(primitive.layer);
+      }
+      const box=root.KiCadOwnedCanvas?.bounds(geometry);
+      if(box){const margin=Math.max(3,Math.max(box.w,box.h)*.15);canvas.viewport.camera.bbox={x:box.x-margin,y:box.y-margin,w:Math.max(.1,box.w)+margin*2,h:Math.max(.1,box.h)+margin*2};canvas.draw();return true;}
+      if(position&&[position.x,position.y].every(Number.isFinite)){focus(position);return true;}return false;
+    }
+    function focusNet(net){if(scene){if(!focusSceneGeometry(net.primitives,net.members?.find(member=>member.position)?.position))$('selectionStatus').textContent=`${netDisplayName(net)} · no saved geometry to locate`;return;}const layers=net.primitives.filter(p=>!p.hole&&!p.hidden&&p.layer?.endsWith('.Cu')).map(p=>p.layer),side=layers.length&&layers.every(l=>l.startsWith('B.'))?'back':layers.length&&layers.every(l=>l.startsWith('F.'))?'front':undefined;if(!focusDrawingGeometry(net.primitives,net.members?.find(member=>member.position)?.position,side))$('selectionStatus').textContent=`${netDisplayName(net)} · no saved geometry to locate`;}
     function highlightedNets(){const path=currentFile(),result=new Map([...pinnedNets.values()].filter(n=>n.path===path).map(n=>[n.id,n]));if(classConfig)for(const net of netModel.nets){if(net.path!==path)continue;if([...pinnedClasses.values()].some(c=>c.path===path&&root.KiCadProjectSearch.netClasses(net.name,classConfig).includes(c.name))&&result.size<200)result.set(net.id,net);}if(selectedNet&&!result.has(selectedNet.id)&&result.size<200)result.set(selectedNet.id,selectedNet);return [...result.values()];}
     function netSheetMatches(networks){
       const graph=overviewConnectivity(networks);if(graph){const result=new Map();for(const {net}of graph.matches){if(!result.has(net.path))result.set(net.path,[]);if(!result.get(net.path).some(n=>n.id===net.id))result.get(net.path).push(net);}return result;}
@@ -1047,14 +1059,14 @@
     function partSelection(object){
       if(!object||!['symbol','footprint','pad'].includes(object.kind)||!object.reference)return null;
       const source=object.kind==='pad'?objects.find(item=>item.id===object.parentId&&item.kind==='footprint')||object:object;
-      if(root.KiCadPairedReview?.partSelection)return root.KiCadPairedReview.partSelection(source);
+      if(root.KiCadPairedReview?.partSelection)return root.KiCadPairedReview.partSelection(source,{objects,instancePath:options.getSheetInstance?.(source.path)});
       const symbolUuid=root.KiCadPairedReview?.symbolUuid?.(source)||symbolUuidFromPath(source);
       return {kind:'part',reference:source.reference,path:source.path,...(source.uuid?{uuid:source.uuid}:{}),...(symbolUuid?{symbolUuid}:{})};
     }
     function emitHighlightGroup(){
       const items=new Map();for(const object of highlightObjects){const item=partSelection(object);if(item&&root.KiCadPairedReview?.validSelection(item))items.set(JSON.stringify(item),item);}
-      for(const net of highlightedNets()){const qualifiedNetName=root.KiCadPairedReview?.qualifiedNetName?.(net,objects);const item={kind:'net',netName:net.name,path:net.path,...(qualifiedNetName?{qualifiedNetName}:{})};if(root.KiCadPairedReview?.validSelection(item))items.set(JSON.stringify(item),item);}
-      options.onSelection?.({kind:'group',items:[...items.values()].slice(0,200)});
+      for(const net of highlightedNets()){const item=root.KiCadPairedReview.netSelection(net,objects,{instancePath:options.getSheetInstance?.(net.path)});if(root.KiCadPairedReview?.validSelection(item))items.set(JSON.stringify(item),item);}
+      const shared=root.KiCadPairedReview.groupSelection([...items.values()]);if(shared.omittedItems)notice(`${shared.omittedItems} selections exceed the shared selection budget.`);options.onSelection?.(shared.selection);
     }
     function highlightSheet(path,sheetObject=null,multi=$('multiHighlight').checked){
       const loaded=new Set(files.filter(f=>/\.(?:kicad_sch|sch)$/i.test(f.path)).map(f=>f.path)),paths=new Set();const pending=[path];
@@ -1085,25 +1097,25 @@
       if(/\.kicad_pcb$/i.test(object.path)!==pcb){request(root.KiCadVSCodeContext?'open-project-drawing':'open-viewer-window',{repository,ref,file:object.path}).catch(error=>notice(error.message));notice(`Opening ${object.path} in another viewer; this result belongs to the other drawing type.`);return;}
       if(['net','netclass'].includes(object.kind)){
         if(object.path!==currentFile())openSheet(object.path);
-        if(object.kind==='net'){const matches=netModel.nets.filter(n=>n.path===currentFile()&&n.name===object.netName);if(matches.length===1)selectNet(matches[0],true,true,multi);else notice('The saved network is missing or ambiguous on this drawing.');}
+        if(object.kind==='net'){const matches=netModel.nets.filter(n=>n.path===currentFile()&&n.name===object.netName);if(matches.length===1)selectNet(matches[0],move&&!scene,true,multi);else notice('The saved network is missing or ambiguous on this drawing.');}
         else{const key=JSON.stringify([object.path,object.className]),existed=pinnedClasses.has(key);if(!multi){pinnedNets.clear();pinnedClasses.clear();highlightObjects=[];selectedNet=null;}if(existed)pinnedClasses.delete(key);else pinnedClasses.set(key,{path:object.path,name:object.className});updateHighlights();renderNets();renderNetClasses();emitHighlightGroup();}
         navigation?.renderSearch();return;
       }
       let removed=false;if(multi){if(!highlightObjects.length&&selected&&selected.id!==object.id)highlightObjects.push(selected);const at=highlightObjects.findIndex(o=>o.id===object.id);if(at>=0){highlightObjects.splice(at,1);removed=true;}else if(highlightObjects.length<200)highlightObjects.push(object);}
       else{highlightObjects=[object];pinnedNets.clear();pinnedClasses.clear();}
-      selectObject(object,false,move,false,true,true);if(!multi)highlightObjects=[object];if(removed){selected=null;properties();}updateHighlights();renderObjects();emitHighlightGroup();navigation?.renderSearch();
+      selectObject(object,false,move&&!(scene&&object.kind==='pad'),false,true,true);if(!multi)highlightObjects=[object];if(removed){selected=null;properties();}updateHighlights();renderObjects();emitHighlightGroup();navigation?.renderSearch();
     }
     function cycleConnection(step){const nets=highlightedNets();const seen=new Set(),members=nets.flatMap(n=>n.members).filter(m=>m.position&&['pin','pad'].includes(m.kind)&&!seen.has(JSON.stringify([m.uuid,m.position]))&&seen.add(JSON.stringify([m.uuid,m.position])));if(!members.length){notice('Select a net or class to navigate its connections.');return;}connectionCursor=connectionCursor<0?(step<0?members.length-1:0):(connectionCursor+step+members.length)%members.length;const member=members[connectionCursor];activeConnection=member;focus(member.position);$('selectionStatus').textContent=`Connection ${connectionCursor+1}/${members.length}: ${member.reference||''} ${member.pin||member.pad||''}`;}
     function renderNetClasses(){const value=$('netClassSelect').value;$('netClassSelect').replaceChildren();const names=new Set();if(classConfig)for(const net of netModel.nets)if(net.path===currentFile())for(const name of root.KiCadProjectSearch.netClasses(net.name,classConfig))names.add(name);for(const name of [...names].sort()){const option=make('option',name);option.value=name;$('netClassSelect').append(option);}if(names.has(value))$('netClassSelect').value=value;$('highlightNetClass').disabled=!names.size;$('highlightNetClass').setAttribute('aria-pressed',String(pinnedClasses.has(JSON.stringify([currentFile(),$('netClassSelect').value]))));$('netClassStatus').textContent=classConfig?'Highlighted classes: '+([...pinnedClasses.values()].filter(c=>c.path===currentFile()).map(c=>c.name).join(', ')||'none')+'. '+(classConfig.warnings||[]).join(' '):'Import .kicad_pro in Project search to use saved net classes.';}
     function selectTerminal(object,pinNumber,primitives,move=false,emit=true){
       if(!object||!primitives?.length)return false;
-      const identity=root.KiCadPairedReview?.partSelection?.(object),tstampPath=identity?.tstampPath||root.KiCadPairedReview?.tstampPath?.(object);
-      const message={kind:'pin',path:object.path,reference:object.reference,pinNumber:String(pinNumber),ownerUuid:object.uuid,...(tstampPath?{tstampPath}:{}),...(identity?.rootUuid?{rootUuid:identity.rootUuid}:{}),...(primitives[0].uuid?{uuid:primitives[0].uuid}:{}),...(object.kind==='footprint'&&root.KiCadPairedReview?.symbolUuid(object)?{symbolUuid:root.KiCadPairedReview.symbolUuid(object)}:{})};
+      const identity=root.KiCadPairedReview?.partSelection?.(object,{objects,instancePath:options.getSheetInstance?.(object.path)}),tstampPath=identity?.tstampPath||root.KiCadPairedReview?.tstampPath?.(object);
+      const message={kind:'pin',path:object.path,reference:object.reference,pinNumber:String(pinNumber),ownerUuid:object.uuid,...(tstampPath?{tstampPath}:{}),...(identity?.rootUuid?{rootUuid:identity.rootUuid}:{}),...(identity?.unitPaths?{unitPaths:identity.unitPaths}:{}),...(primitives[0].uuid?{uuid:primitives[0].uuid}:{}),...(object.kind==='footprint'&&root.KiCadPairedReview?.symbolUuid(object)?{symbolUuid:root.KiCadPairedReview.symbolUuid(object)}:{})};
       if(!root.KiCadPairedReview?.validSelection(message))return false;
       selectedPin={...message,primitives};selected=object;selectedNet=null;highlightObjects=[];pinnedNets.clear();pinnedClasses.clear();nativePick=null;
       const canvas=getCanvas();if(canvas)canvas.selected=null;updateHighlights();properties();
       showSimulation(netModel.nets.find(net=>net.path===object.path&&primitives.some(p=>net.primitives.includes(p)))||null);$('selectionStatus').textContent=object.reference+' · '+(pcb?'pad ':'pin ')+pinNumber;if(!root.KiCadAndroidRuntime)inspector('properties');
-      const position=primitives[0].padCenter||primitives[0].start||object.position;if(move){if(scene)focusSceneGeometry(primitives,position);else if(position)focus(position);}if(emit)options.onSelection?.(message);getCanvas()?.draw();return true;
+      const position=primitives[0].padCenter||primitives[0].start||object.position;if(move){if(scene)focusSceneGeometry(primitives,position,undefined,partBoardSide(object));else focusDrawingGeometry(primitives,position,partBoardSide(object));}if(emit)options.onSelection?.(message);getCanvas()?.draw();return true;
     }
     function chooseTerminal(choice,move=false){const {object,pinNumber,primitive}=choice,primitives=(getCanvas()?.design?.primitives||[]).filter(p=>!p.hidden&&!p.hole&&['pad','pin'].includes(p.kind)&&(p.ownerUuid||p.uuid)===object.uuid&&String(p.pinNumber??p.name??'')===String(pinNumber));return selectTerminal(object,pinNumber,primitives.length?primitives:[primitive],move);}
     function selectNet(net,move=false,toggle=true,multi=$('multiHighlight').checked,inspect=!root.KiCadAndroidRuntime,instanceId=null){
@@ -1111,7 +1123,7 @@
       overviewSource=net&&instanceId?{netId:net.id,instanceId}:null;
       if(net&&multi){if(selectedNet&&!pinnedNets.has(selectedNet.id)&&pinnedNets.size<200)pinnedNets.set(selectedNet.id,selectedNet);if(toggle&&pinnedNets.has(net.id)){pinnedNets.delete(net.id);selectedNet=null;}else{if(pinnedNets.size>=200){notice('At most 200 networks can be highlighted.');return;}pinnedNets.set(net.id,net);selectedNet=net;}}
       else{pinnedNets.clear();pinnedClasses.clear();highlightObjects=[];selectedNet=net;}
-      selected=null;nativePick=null;connectionCursor=-1;activeConnection=null;updateHighlights();$('selectionStatus').textContent=selectedNet?`${netDisplayName(selectedNet)} · ${selectedNet.kind==='pcb'?'PCB net':'sheet network'}`:'Net highlight cleared';properties();renderNets();renderObjects();if(selectedNet){if(inspect)inspector('properties');if(move)focusNet(selectedNet);const qualifiedNetName=root.KiCadPairedReview?.qualifiedNetName?.(selectedNet,objects);if(!multi)options.onSelection?.({kind:'net',netName:selectedNet.name,path:selectedNet.path,...(qualifiedNetName?{qualifiedNetName}:{})});}if(multi)emitHighlightGroup();showSimulation(selectedNet);getCanvas()?.draw();
+      selected=null;nativePick=null;connectionCursor=-1;activeConnection=null;updateHighlights();$('selectionStatus').textContent=selectedNet?`${netDisplayName(selectedNet)} · ${selectedNet.kind==='pcb'?'PCB net':'sheet network'}`:'Net highlight cleared';properties();renderNets();renderObjects();if(selectedNet){if(inspect)inspector('properties');if(move)focusNet(selectedNet);if(!multi)options.onSelection?.(root.KiCadPairedReview.netSelection(selectedNet,objects,{instancePath:options.getSheetInstance?.(selectedNet.path)}));}if(multi)emitHighlightGroup();showSimulation(selectedNet);getCanvas()?.draw();
     }
     let netColorsEnabled=false,netColorCache=null,netColorTicket=0,netColorDisposed=false,netColorSnapshot=ref;
     const netColorKey=JSON.stringify(['net-class-colors',provider,host,repository,rootFile]);
@@ -1173,7 +1185,7 @@
       if (object.path !== currentFile()) {
         openSheet(object.path, object.position);return;
       }
-      if (scene) {if (!fromScene&&!scene.setSelection&&object.reference)scene.selectReference?.(object.reference);if(move){const geometry=(getCanvas()?.primitives||getCanvas()?.design?.primitives||[]).filter(p=>object.uuid&&(p.uuid===object.uuid||p.ownerUuid===object.uuid));focusSceneGeometry(geometry,object.position,object.reference);}}
+      if (scene) {if (!fromScene&&!scene.setSelection&&object.reference)scene.selectReference?.(object.reference);if(move){const geometry=(getCanvas()?.primitives||getCanvas()?.design?.primitives||[]).filter(p=>object.uuid&&(p.uuid===object.uuid||p.ownerUuid===object.uuid));focusSceneGeometry(geometry,object.position,object.reference,partBoardSide(object));}}
       else {
         const canvas = getCanvas();
         if (native && object.position && canvas?.layers?.query_point) {
@@ -1181,8 +1193,7 @@
           if (hit?.bbox) {programmaticPick=true;try{canvas.select(hit.bbox);}finally{programmaticPick=false;}}
         }
         if (move && object.position) {
-          const geometry=(canvas?.primitives||canvas?.design?.primitives||[]).filter(p=>p.uuid===object.uuid||p.ownerUuid===object.uuid),box=root.KiCadOwnedCanvas?.bounds(geometry);
-          if(box&&box.w&&box.h){canvas.resize();const margin=Math.max(3,Math.max(box.w,box.h)*.15);canvas.viewport.camera.bbox={x:box.x-margin,y:box.y-margin,w:box.w+margin*2,h:box.h+margin*2};canvas.draw();}else focus(object.position);
+          const geometry=(canvas?.primitives||canvas?.design?.primitives||[]).filter(p=>p.uuid===object.uuid||p.ownerUuid===object.uuid);focusDrawingGeometry(geometry,object.position,partBoardSide(object));
         }
       }
       updateHighlights();draw();
@@ -1223,11 +1234,11 @@
       if(selection?.kind==='pin'){
         if(!root.KiCadPairedReview?.validSelection(selection))return false;
         const fromSchematic=/\.(?:kicad_sch|sch)$/i.test(selection.path),part={kind:'part',path:selection.path,reference:selection.reference,...(fromSchematic?{uuid:selection.ownerUuid||selection.uuid}:selection.symbolUuid?{symbolUuid:selection.symbolUuid}:{})};
-        if(selection.tstampPath)part.tstampPath=selection.tstampPath;if(selection.rootUuid)part.rootUuid=selection.rootUuid;
+        if(selection.tstampPath)part.tstampPath=selection.tstampPath;if(selection.rootUuid)part.rootUuid=selection.rootUuid;if(selection.unitPaths)part.unitPaths=selection.unitPaths;
         const parent=root.KiCadPairedReview.relatedPart(objects,part);if(!parent.object){notice(parent.error);return false;}
         if(parent.object.path!==currentFile())openSheet(parent.object.path);
         const designs=new Map(options.getDesigns?.()||[]);designs.set(currentFile(),getCanvas()?.design);
-        const result=root.KiCadPairedReview.relatedPin(objects,designs,selection);if(!result.object){notice(result.error);return false;}
+        const result=root.KiCadPairedReview.relatedPin(objects,designs,selection);if(!result.object){notice(result.error);return false;}if(result.object.path!==currentFile())openSheet(result.object.path);
         notice('');return selectTerminal(result.object,result.pinNumber,result.primitives,true,false);
       }
 
@@ -1367,7 +1378,7 @@
       zones.append(button('Export board analytics JSON',()=>engineeringExport('board-analytics.json',JSON.stringify({schema:'pocket-kiview-board-analytics/v1',source:{provider,host,repository,ref,path},assemblyVariant:variant,assembly:{total:all.total,fitted:all.fitted,dnp:all.dnp,scope:$('bomAllSheets').checked?'all-loaded-drawings':path},board,savedRoutingReports,routing:routing?{status:routing.status,stats:routing.stats,warnings:routing.warnings,lines:routing.lines}:null},null,2),'application/json')));
       zones.append(make('h3','Track length by layer'));for(const item of board.layerTracks)zones.append(make('p',`${item.layer}: ${item.lengthMm.toFixed(3)} mm`));
       zones.append(make('h3','Track length by net'));
-      for(const item of board.netTracks.slice(0,300)){const link=button(`${item.name}: ${item.lengthMm.toFixed(3)} mm`,()=>{const net=netModel.nets.find(n=>n.path===path&&String(n.code)===item.code);if(net)selectNet(net,true,true);else notice('No selectable saved net.');});link.title=`${item.segments} segments · ${item.arcs} arcs`;zones.append(link);}
+      for(const item of board.netTracks.slice(0,300)){const link=button(`${item.name}: ${item.lengthMm.toFixed(3)} mm`,()=>{const net=netModel.nets.find(n=>n.path===path&&String(n.code)===item.code);if(net)selectNet(net,!scene,true);else notice('No selectable saved net.');});link.title=`${item.segments} segments · ${item.arcs} arcs`;zones.append(link);}
       if(board.netTracks.length>300)zones.append(make('small','First 300 nets shown; JSON export includes all nets.'));
       zones.append(make('h3','Placement review'));
       zones.append(make('p','Origins at zero, missing coordinates or outside the straight-edge envelope are review candidates. These do not establish that a component is unplaced.'));
@@ -1377,7 +1388,7 @@
       zones.append(make('h3','Routing review'));
       zones.append(button('Open saved DRC findings',()=>showRuleWindow()));
       for(const report of savedRoutingReports)zones.append(make('p',`${report.metadata.reportPath}: ${report.unconnectedFindings} saved unconnected findings · ${report.excludedUnconnectedFindings} excluded · ${report.metadata.date||'date unknown'}. Report revision is unverified; this is not a current unrouted-net count.`));
-      if(routing){zones.append(make('p',routing.warnings.join(' ')));const candidates=new Map();for(const line of routing.lines){if(!candidates.has(line.netId))candidates.set(line.netId,{line,count:0});candidates.get(line.netId).count++;}for(const {line,count} of [...candidates.values()].slice(0,300))zones.append(button(`${line.netName||'Net'} · ${count} candidate airwires`,()=>{const net=netModel.nets.find(n=>n.path===path&&n.id===line.netId);if(net)selectNet(net,true,true);showRatsnest=true;draw();}));if(candidates.size>300)zones.append(make('small','First 300 candidate nets shown; JSON export includes all computed candidates.'));}
+      if(routing){zones.append(make('p',routing.warnings.join(' ')));const candidates=new Map();for(const line of routing.lines){if(!candidates.has(line.netId))candidates.set(line.netId,{line,count:0});candidates.get(line.netId).count++;}for(const {line,count} of [...candidates.values()].slice(0,300))zones.append(button(`${line.netName||'Net'} · ${count} candidate airwires`,()=>{const net=netModel.nets.find(n=>n.path===path&&n.id===line.netId);if(net)selectNet(net,!scene,true);showRatsnest=true;draw();}));if(candidates.size>300)zones.append(make('small','First 300 candidate nets shown; JSON export includes all computed candidates.'));}
       zones.append(make('h3','Saved zone areas'));
       for(const layer of board.layerFill){const row=make('p',`${layer.layer}: ${layer.areaMm2.toFixed(3)} mm² saved fill sum`);zones.append(row);}
       for(const zone of board.zones.slice(0,300)){const row=button(`${zone.name} · ${zone.fillAreaMm2.toFixed(3)} mm² fill sum`,()=>{const object=objects.find(o=>o.path===currentFile()&&o.kind==='zone'&&o.uuid===zone.uuid);if(object){selectObject(object,true,true);highlightObjects=[object];updateHighlights();}else notice('Zone has no selectable saved UUID.');});row.title=`Outline sum ${zone.outlineAreaMm2.toFixed(3)} mm² · ${zone.layers.join(', ')||'no saved fill'}`;zones.append(row);}
@@ -2439,7 +2450,7 @@
         const point=canvas.viewport.camera.world_to_screen(position);
         return Number.isFinite(point?.x)&&Number.isFinite(point?.y)?{x:rect.left+point.x,y:rect.top+point.y}:null;
       },
-      onLocate:(entry,group)=>{const canonical=group.canonical;if(canonical?.kind==='part'||canonical?.kind==='pin'){const object=resolveObject(entry.objects||objects,entry.path,{...canonical,uuid:canonical.ownerUuid||canonical.uuid});if(object&&entry.path===currentFile()&&objects.includes(object)){if(canonical.kind==='pin')selectTerminal(object,canonical.pinNumber,group.primitives,true);else selectObject(object,false,true,false,false,false,false);}else if(root.KiCadPairedReview?.validSelection(canonical))options.onSelection?.(canonical);return;}if(entry.path!==currentFile()&&files.some(f=>f.path===entry.path))openSheet(entry.path);const net=netModel.nets.find(n=>n.path===entry.path&&n.id===group.id);if(net)selectNet(net,true,false,false,false,entry.instanceId||null);else if(root.KiCadPairedReview?.validSelection(canonical))options.onSelection?.(canonical);}});
+      onLocate:(entry,group)=>{const canonical=group.canonical;if(canonical?.kind==='part'||canonical?.kind==='pin'){const object=resolveObject(entry.objects||objects,entry.path,{...canonical,uuid:canonical.ownerUuid||canonical.uuid});if(object&&entry.path===currentFile()&&objects.includes(object)){if(canonical.kind==='pin')selectTerminal(object,canonical.pinNumber,group.primitives,true);else selectObject(object,false,true,false,false,false,false);}else if(root.KiCadPairedReview?.validSelection(canonical))options.onSelection?.(canonical);return;}if(entry.path!==currentFile()&&files.some(f=>f.path===entry.path))openSheet(entry.path);const net=netModel.nets.find(n=>n.path===entry.path&&n.id===group.id);if(net)selectNet(net,!scene,false,false,false,entry.instanceId||null);else if(root.KiCadPairedReview?.validSelection(canonical))options.onSelection?.(canonical);}});
     if(netQuickView){const quick=button('Probe views',()=>{if(!netQuickView.open())notice('Select a saved part, pin or net first. Probe views use saved drawing geometry.');});quick.id='netQuickViews';quick.setAttribute('data-icon','net-instances');$('frameControls').append(quick);resizeCleanups.push(()=>netQuickView.dispose());}
     const unselect=button('Unselect',clearSelection);unselect.id='unselect';unselect.setAttribute('aria-label','Unselect');unselect.title='Unselect objects; keep highlights';$('highlightControls').insertBefore(unselect,$('clearHighlights'));
     $('fitHighlights').onclick=()=>{if(root.KiCadSheetOverview?.isOpen?.())return root.KiCadSheetOverview.fitHighlights?.();const canvas=getCanvas(),box=root.KiCadOwnedCanvas?.bounds([...canvas.netPrimitives||[]]);if(box){canvas.resize();const margin=Math.max(3,Math.max(box.w,box.h)*.1);canvas.viewport.camera.bbox={x:box.x-margin,y:box.y-margin,w:box.w+margin*2,h:box.h+margin*2};canvas.draw();}};

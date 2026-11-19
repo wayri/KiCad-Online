@@ -11,6 +11,14 @@ function pages(sheets, links) {
 }
 const link = (path, target, uuid, label = uuid) => ({path, uuid, label, properties: {Sheetfile: target}});
 
+test('large repeated-sheet assemblies collate 1024 saved occurrences without duplicating navigator cards',()=>{
+ const placements=Array.from({length:1024},(_,i)=>link('root.kicad_sch','channel.kicad_sch','channel-'+i,'Channel '+i));
+ const entries=sheetOverviewEntries(['root.kicad_sch','channel.kicad_sch'].map(path=>({path,label:path,kind:'schematic'})),placements);
+ const mini=composeSheetOverview(entries.filter(e=>e.sheet).map(e=>({path:e.sheet.path,label:e.sheet.label,placements:e.placements,instanceCount:e.instanceCount,design:{page:{width:192,height:64},primitives:[],layers:[]},groups:[]})),[],false,{wrapWide:false});
+ assert.equal(mini.pages.length,2);assert.equal(mini.pages.find(p=>p.path==='channel.kicad_sch').instanceCount,1024);
+ const graph=build(mini.pages,{headingGap:0});assert.equal(graph.links.length,1);assert.equal(graph.links[0].count,1024);assert.equal(graph.links[0].childIds.length,1024);assert.equal(new Set(graph.links[0].childIds).size,1024);assert.equal(graph.omitted,0);assert.equal(graph.unresolved,0);assert.ok(graph.links[0].tree);
+});
+
 test('net curves retain exact endpoints with bounded arches and stable readable colours',()=>{
  const {netCurve,netColor}=require('../sheet-hierarchy-links.js');
  for(const to of [{x:300,y:80},{x:-300,y:80},{x:40,y:300},{x:40,y:-300}]){const from={x:0,y:0},curve=netCurve(from,to);assert.equal(curve.a,from);assert.equal(curve.d,to);assert.ok([curve.b.x,curve.b.y,curve.c.x,curve.c.y].every(Number.isFinite));const mid={x:(curve.a.x+3*curve.b.x+3*curve.c.x+curve.d.x)/8,y:(curve.a.y+3*curve.b.y+3*curve.c.y+curve.d.y)/8},length=Math.hypot(to.x,to.y),arch=Math.abs(to.x*mid.y-to.y*mid.x)/length;assert.ok(arch>=9&&arch<=48.000001,'curve forms a bounded arch away from its chord');}

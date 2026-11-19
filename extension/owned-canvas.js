@@ -239,7 +239,7 @@
 
       super();this.host=host;this.geometryBounds=new WeakMap();this.frameRequest=null;this.canvas=document.createElement('canvas');this.canvas.className='owned-canvas';this.canvas.tabIndex=0;this.canvas.setAttribute('aria-label','Interactive KiCad drawing; click to select, right-drag to pan, wheel to zoom');host.append(this.canvas);
 
-      this.ctx=this.canvas.getContext('2d');if(!this.ctx)throw new Error('Canvas2D rendering is unavailable.');this.viewport={camera:new Camera()};this.primitives=[];this.visibleLayers=new Set();this.dark=Boolean(options.dark);this.pcb=Boolean(options.pcb);this.showTerminalNumbers=options.showTerminalNumbers!==false;this.netNames=new Map();this.grid=false;this.selected=null;this.drag=null;this.netHighlight=null;this.netPrimitives=new Set();this.isolateNet=false;this.paperVisible=options.worksheet!==false;this.worksheetVisible=options.worksheet!==false;this.activeLayer='F.Cu';this.focusedLayer=null;this.layerFocusMode='dim';this.layerSnapshot=null;
+      this.ctx=this.canvas.getContext('2d');if(!this.ctx)throw new Error('Canvas2D rendering is unavailable.');this.viewport={camera:new Camera()};this.primitives=[];this.visibleLayers=new Set();this.dark=Boolean(options.dark);this.pcb=Boolean(options.pcb);this.showTerminalNumbers=options.showTerminalNumbers!==false;this.netNames=new Map();this.grid=false;this.selected=null;this.drag=null;this.netHighlight=null;this.netPrimitives=new Set();this.isolateNet=false;this.paperVisible=options.worksheet!==false;this.worksheetVisible=options.worksheet!==false;this.activeLayer='F.Cu';this.focusedLayer=null;this.layerFocusMode='dim';this.layerSnapshot=null;this.layerPresetName=null;
       this.acceleration=options.acceleration==='off'?'off':'auto';this.motion=null;this.motionActive=false;this.motionFailed=false;this.motionTimer=null;this.wheelMotion=false;
 
       this.layers={query_point:at=>this.query(at).map(p=>({bbox:{context:{uuid:p.uuid,reference:p.reference,kind:p.kind,name:p.name,pinNumber:p.pinNumber,pinName:p.pinName,ownerUuid:p.ownerUuid,connectPoint:p.connectPoint,parent:p.ownerUuid?{uuid:p.ownerUuid}:null},primitive:p}}))};
@@ -264,7 +264,7 @@
 
     resize(){const r=this.host.getBoundingClientRect(),c=this.viewport.camera;c.width=Math.max(1,r.width);c.height=Math.max(1,r.height);const dpr=globalThis.devicePixelRatio||1;const width=Math.max(1,Math.round(c.width*dpr)),height=Math.max(1,Math.round(c.height*dpr));if(this.canvas.width!==width)this.canvas.width=width;if(this.canvas.height!==height)this.canvas.height=height;const cssWidth=c.width+'px',cssHeight=c.height+'px';if(this.canvas.style.width!==cssWidth)this.canvas.style.width=cssWidth;if(this.canvas.style.height!==cssHeight)this.canvas.style.height=cssHeight;if(this.pendingFit&&r.width>1&&r.height>1){const kind=this.pendingFit;this.pendingFit=null;kind==='page'?this.zoom_to_page():this.zoom_to_board();}}
 
-    setDocument(design,path){this.resize();this.design=design;this.document={filename:path};this.primitives=design.primitives;this.visibleLayers=new Set(design.layers||[]);this.selected=null;this.focusedLayer=null;this.layerSnapshot=null;this.setNetHighlight(null);this.zoom_to_board();this.draw();}
+    setDocument(design,path){this.resize();this.design=design;this.document={filename:path};this.primitives=design.primitives;this.visibleLayers=new Set(design.layers||[]);this.selected=null;this.focusedLayer=null;this.layerSnapshot=null;this.layerPresetName=null;this.setNetHighlight(null);this.zoom_to_board();this.draw();}
 
     get primitives(){return this._primitives;}
     set primitives(value){this.releaseImages();this._primitives=value;this.spatialIndex=null;this.geometryBounds=new WeakMap();this.textBoundsCache=new WeakMap();this.pointCache=new WeakMap();this.pathCache=new WeakMap();this.pathCachePoints=0;this.pathCacheCount=0;this.ownedGeometry=new Map();for(const p of value||[])if(p.ownerUuid&&p.kind!=='footprint-hit'){const list=this.ownedGeometry.get(p.ownerUuid)||[];list.push(p);this.ownedGeometry.set(p.ownerUuid,list);}}
@@ -330,19 +330,19 @@
 
       if(!this.layerSnapshot)this.layerSnapshot=new Set(this.visibleLayers);
 
-      this.focusedLayer=layer;this.layerFocusMode=mode;this.activeLayer=layer;this.visibleLayers.add(layer);return true;
+      this.focusedLayer=layer;this.layerPresetName=null;this.layerFocusMode=mode;this.activeLayer=layer;this.visibleLayers.add(layer);return true;
 
     }
 
-    restoreLayers(){if(this.layerSnapshot)this.visibleLayers=new Set(this.layerSnapshot);this.layerSnapshot=null;this.focusedLayer=null;}
+    restoreLayers(){if(this.layerSnapshot)this.visibleLayers=new Set(this.layerSnapshot);this.layerSnapshot=null;this.focusedLayer=null;this.layerPresetName=null;}
 
     layerPreset(preset){
 
-      const all=this.design?.layers||[];if(!['all','none','front','back','copper'].includes(preset))return false;
+      const all=this.design?.layers||[];if(!['all','none','front','back','copper','overview'].includes(preset))return false;
 
       if(!this.layerSnapshot)this.layerSnapshot=new Set(this.visibleLayers);
 
-      this.focusedLayer=null;this.visibleLayers=new Set(all.filter(layer=>preset==='all'||preset!=='none'&&(layer==='Edge.Cuts'||preset==='copper'&&layer.endsWith('.Cu')||preset==='front'&&layer.startsWith('F.')||preset==='back'&&layer.startsWith('B.'))));return true;
+      this.focusedLayer=null;this.layerPresetName=preset;this.visibleLayers=new Set(all.filter(layer=>preset==='all'||preset!=='none'&&(layer==='Edge.Cuts'||preset==='copper'&&layer.endsWith('.Cu')||preset==='front'&&layer.startsWith('F.')||preset==='back'&&layer.startsWith('B.')||preset==='overview'&&['F.Cu','B.Cu','F.SilkS','B.SilkS'].includes(layer))));return true;
 
     }
 
@@ -459,7 +459,7 @@
 
       const view=c.bbox;
       const margin=3/c.zoom;
-      let lineBatch=null,batched=0,batches=0;
+      let lineBatch=null,batched=0,batches=0;const selectedPaint=[],drillPaint=[];
       const flushLines=()=>{if(lineBatch){ctx.stroke();ctx.restore();lineBatch=null;batches++;}};
       const batchLine=(p,override)=>{const source=p.color||'#819baa',color=override||p.sourceColor||(this.pcb?(root.KiCadLayerColors?.reviewColorFor?.(p.layer,this.dark)||source):schematicColor(source,this.dark)),width=Math.max(.65,(p.width||.15)*c.zoom),ps=this.primitivePoints(p);if(!ps.length)return;
         if(lineBatch&&(lineBatch.color!==color||lineBatch.width!==width||lineBatch.count>=512))flushLines();
@@ -480,14 +480,16 @@
         if(dim&&this.isolateNet&&!p.hole&&p.layer!=='Edge.Cuts')continue;
 
         if(!this.inView(p,view))continue;
-        const color=p.kind==='via'?'#c5aa6c':matches&&!p.hole?(this.selectionColor==='layer'&&this.pcb&&p.layer?root.KiCadLayerColors?.reviewColorFor?.(p.layer,this.dark)||p.color:this.selectionColor!=='source'&&this.selectionColor!=='layer'?(this.pcb?'#ffe18b':this.dark?'#78d5ff':'#006ca8'):this.netClassColors?.get(p)||null):this.netClassColors?.get(p)||null,opacity=Math.min(dim&&!p.hole&&this.highlightMode!=='bright'&&p.layer!=='Edge.Cuts'?(this.pcb?.42:.38):1,layerDim&&!p.hole?.18:1);
+        const color=p.kind==='via'?'#c5aa6c':matches&&!p.hole?(this.selectionColor==='layer'&&this.pcb&&p.layer?root.KiCadLayerColors?.reviewColorFor?.(p.layer,this.dark)||p.color:this.selectionColor!=='source'&&this.selectionColor!=='layer'?(this.pcb?'#ffe18b':this.dark?'#78d5ff':'#006ca8'):this.netClassColors?.get(p)||null):this.netClassColors?.get(p)||null,opacity=Math.min(dim&&!p.hole&&this.highlightMode!=='bright'&&p.layer!=='Edge.Cuts'?(this.pcb?.045:.38):1,layerDim&&!p.hole?.18:1);
         if(!this.netHighlight&&!layerDim&&!p.frame&&!p.hole&&p.type==='line'&&!p.fill&&!p.lineStyle&&p.stroke!==false&&(p.opacity===undefined||p.opacity===1)&&this.paint===Viewport.prototype.paint){batchLine(p,color);continue;}
-        const contextGray=dim&&this.highlightMode!=='bright'&&!p.hole&&!p.frame&&p.kind!=='via';
-        flushLines();this.paint(p,{color:contextGray?(this.pcb&&p.layer?root.KiCadLayerColors?.contextColorFor?.(p.layer,this.dark)||(this.dark?'#87919b':'#737b83'):(this.dark?'#87919b':'#737b83')):color,opacity:matches&&!p.hole?1:opacity});
+        const contextGray=dim&&this.highlightMode!=='bright'&&!p.hole&&!p.frame;
+        flushLines();const style={color:contextGray?(this.pcb&&p.layer?root.KiCadLayerColors?.contextColorFor?.(p.layer,this.dark)||(this.dark?'#87919b':'#737b83'):(this.dark?'#87919b':'#737b83')):color,opacity:matches&&!p.hole?1:opacity};if(this.pcb&&this.netHighlight&&this.highlightMode!=='bright'){if(p.hole)drillPaint.push({p,style});else if(matches)selectedPaint.push({p,style});else this.paint(p,style);}else this.paint(p,style);
 
       }
 
       flushLines();
+      // Selected saved copper stays above the faint context; physical drill cutouts stay open.
+      for(const {p,style}of selectedPaint)this.paint(p,style);for(const {p,style}of drillPaint)this.paint(p,style);
       if(this.host.dataset){this.host.dataset.strokeBatches=String(batches);this.host.dataset.batchedPrimitives=String(batched);}
       this.drawNetNames();
 

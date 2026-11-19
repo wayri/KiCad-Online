@@ -271,7 +271,7 @@ test('multiple highlights form a union; isolate retains board outline and bright
  canvas.setDocument({layers:['F.Cu','Edge.Cuts'],primitives:[a,b,other,edge]},'board.kicad_pcb');const painted=[];canvas.paint=(p,style)=>painted.push({p,style});
  canvas.viewport.camera.bbox={x:-3,y:-3,w:16,h:16};
  canvas.viewport.camera.bbox={x:-3,y:-3,w:16,h:16};
- canvas.setNetHighlights([{primitives:[a]},{primitives:[b]}],{mode:'isolate'});canvas.draw();assert.deepEqual(painted.map(x=>x.p),[a,b,edge]);assert.equal(canvas.netPrimitives.size,2);
+ canvas.setNetHighlights([{primitives:[a]},{primitives:[b]}],{mode:'isolate'});canvas.draw();assert.deepEqual(painted.map(x=>x.p),[edge,a,b]);assert.equal(canvas.netPrimitives.size,2);
  painted.length=0;canvas.setNetHighlights([{primitives:[a,b]}],{mode:'bright'});canvas.draw();assert.equal(painted.find(x=>x.p===other).style.opacity,1);assert.ok(painted.find(x=>x.p===a).style.color);
  canvas.setNetHighlights([]);assert.equal(canvas.netHighlight,null);assert.equal(canvas.netPrimitives.size,0);
 });
@@ -304,9 +304,24 @@ test('net highlight respects layer visibility, dims unrelated copper and preserv
  const {canvas}=runtime(),pad={type:'circle',x:20,y:30,r:1,uuid:'pad',layer:'F.Cu'},other={...pad,uuid:'other',x:30},back={...pad,uuid:'back',layer:'B.Cu'},hole={...pad,uuid:'hole',hole:true},hidden={...pad,uuid:'hidden',hidden:true};
  canvas.setDocument({layers:['F.Cu','B.Cu'],primitives:[pad,other,back,hole,hidden]},'board.kicad_pcb');canvas.visibleLayers.delete('B.Cu');
  const painted=[];canvas.paint=(p,style)=>painted.push({p,style});canvas.setNetHighlight({primitives:[pad,back]});canvas.draw();
- assert.deepEqual(painted.map(item=>item.p.uuid),['pad','other','hole']);assert.equal(painted[0].style.color,'#ffe18b');assert.equal(painted[1].style.opacity,.42);assert.equal(painted[1].style.color,'#87919b');assert.equal(painted[2].style.opacity,1);
+ assert.deepEqual(painted.map(item=>item.p.uuid),['other','pad','hole']);assert.equal(painted.find(item=>item.p===pad).style.color,'#ffe18b');assert.equal(painted.find(item=>item.p===other).style.opacity,.045);assert.equal(painted.find(item=>item.p===other).style.color,'#87919b');assert.equal(painted.find(item=>item.p===hole).style.opacity,1);
  painted.length=0;canvas.setNetHighlight({primitives:[pad]},{isolate:true});canvas.draw();assert.deepEqual(painted.map(item=>item.p.uuid),['pad','hole']);
  canvas.setNetHighlight(null);painted.length=0;canvas.draw();assert.equal(painted.find(item=>item.p===other).style.opacity,1);
+});
+
+test('PCB dim mode paints bright saved net geometry above nearly transparent context and restores source order',()=>{
+ const {canvas}=runtime();canvas.paperVisible=false;
+ const trace={type:'line',kind:'track',uuid:'trace',layer:'F.Cu',points:[{x:0,y:0},{x:10,y:0}],width:.3},zone={type:'polygon',kind:'zone',uuid:'plane',layer:'B.Cu',points:[{x:0,y:-2},{x:10,y:-2},{x:10,y:2}],fill:true},via={type:'circle',kind:'via',uuid:'via',layer:'F.Cu',x:5,y:0,r:1},hole={...via,uuid:'hole',hole:true};
+ canvas.setDocument({layers:['F.Cu','B.Cu'],primitives:[trace,via,zone,hole]},'board.kicad_pcb');const painted=[];canvas.paint=(p,style)=>painted.push({p,style});
+ canvas.setNetHighlight({primitives:[trace]});canvas.drawGeometry();assert.deepEqual(painted.map(row=>row.p.uuid),['via','plane','trace','hole']);assert.ok(painted.filter(row=>[via,zone].includes(row.p)).every(row=>row.style.opacity<=.05));assert.equal(painted.find(row=>row.p===trace).style.opacity,1);assert.notEqual(painted.find(row=>row.p===via).style.color,'#c5aa6c');
+ painted.length=0;canvas.setNetHighlight(null);canvas.drawGeometry();assert.deepEqual(painted.map(row=>row.p.uuid),['trace','via','plane','hole']);assert.equal(painted.find(row=>row.p===via).style.color,'#c5aa6c');canvas.dispose();
+});
+
+test('Overview is a repeatable layer preset distinct from All while Restore retains the previous custom view',()=>{
+ const {canvas}=runtime(),layers=['F.Cu','In1.Cu','In2.Cu','B.Cu','F.SilkS','B.SilkS','F.Fab','B.Fab','F.CrtYd','Edge.Cuts'];canvas.setDocument({layers,primitives:[]},'board.kicad_pcb');
+ canvas.layerPreset('all');canvas.layerPreset('overview');assert.equal(canvas.layerPresetName,'overview');assert.deepEqual([...canvas.visibleLayers],['F.Cu','B.Cu','F.SilkS','B.SilkS','Edge.Cuts']);canvas.drawGeometry();assert.equal(canvas.layerPresetName,'overview');
+ canvas.layerPreset('all');assert.deepEqual([...canvas.visibleLayers],layers);assert.equal(canvas.layerPresetName,'all');canvas.restoreLayers();assert.deepEqual([...canvas.visibleLayers],layers);
+ canvas.visibleLayers=new Set(['In1.Cu','Edge.Cuts']);canvas.layerPreset('overview');canvas.restoreLayers();assert.deepEqual([...canvas.visibleLayers],['In1.Cu','Edge.Cuts']);assert.equal(canvas.layerPresetName,null);canvas.layerPreset('overview');canvas.setDocument({layers:['F.Cu'],primitives:[]},'next.kicad_pcb');assert.equal(canvas.layerPresetName,null);canvas.dispose();
 });
 
 test('schematic net highlight contrasts with white paper and retains readable surrounding geometry',()=>{
@@ -480,7 +495,7 @@ test('layer-color net highlight retains front/back/internal identity, holes and 
  const members=layers.map((layer,i)=>({type:'circle',kind:i?'track':'pad',x:i*3,y:0,r:1,layer,color:'#123456'})),hole={...members[0],hole:true},other={...members[0],x:12};
  const source=JSON.stringify(members);canvas.setDocument({primitives:[...members,hole,other],layers},'board');canvas.visibleLayers=new Set(layers);canvas.viewport.camera.center.set(5,0);canvas.viewport.camera.zoom=20;canvas.netClassColors=new Map(members.map(p=>[p,'#abcdef']));
  const painted=[];canvas.paint=(p,style)=>painted.push({p,style});
- for(const dark of [true,false]){canvas.dark=dark;canvas.setNetHighlights([{primitives:members}],{selectionColor:'layer',mode:'dim'});painted.length=0;canvas.draw();for(const p of members)assert.equal(painted.find(x=>x.p===p).style.color,palette.reviewColorFor(p.layer,dark));assert.equal(painted.find(x=>x.p===other).style.opacity,.42);assert.equal(painted.find(x=>x.p===hole).style.opacity,1);}
+ for(const dark of [true,false]){canvas.dark=dark;canvas.setNetHighlights([{primitives:members}],{selectionColor:'layer',mode:'dim'});painted.length=0;canvas.draw();for(const p of members)assert.equal(painted.find(x=>x.p===p).style.color,palette.reviewColorFor(p.layer,dark));assert.equal(painted.find(x=>x.p===other).style.opacity,.045);assert.equal(painted.find(x=>x.p===hole).style.opacity,1);}
  canvas.visibleLayers.delete('B.Cu');painted.length=0;canvas.draw();assert.equal(painted.some(x=>x.p===members[2]),false);canvas.setNetHighlights([{primitives:members}],{selectionColor:'accent',mode:'bright'});painted.length=0;canvas.draw();assert.equal(painted.find(x=>x.p===members[0]).style.color,'#ffe18b');assert.equal(JSON.stringify(members),source);canvas.dispose();
 });
 
@@ -499,7 +514,7 @@ test('dim context is neutral gray in PCB and schematic while selected layers sta
   const chosen=painted.find(row=>row.p===selected),dimmed=painted.find(row=>row.p===context);
   assert.equal(chosen.alpha,1);assert.equal(chosen.stroke,pcb?palette.reviewColorFor(layer,true):core.schematicColor('#840000',true));
   assert.equal(dimmed.stroke,pcb?palette.contextColorFor(layer,true):'#87919b');
-  assert.equal(dimmed.fill,pcb?palette.contextColorFor(layer,true):'#87919b');near(dimmed.alpha,.8*(pcb?.42:.38));
+  assert.equal(dimmed.fill,pcb?palette.contextColorFor(layer,true):'#87919b');near(dimmed.alpha,.8*(pcb?.045:.38));
   painted.length=0;canvas.setNetHighlights([{primitives:[selected]}],{mode:'bright',selectionColor:'source'});canvas.drawGeometry();
   assert.equal(painted.find(row=>row.p===context).alpha,.8);
   painted.length=0;canvas.setNetHighlights([]);canvas.drawGeometry();

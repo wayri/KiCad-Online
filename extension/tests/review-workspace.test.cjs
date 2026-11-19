@@ -1868,6 +1868,39 @@ test('3D part, net and terminal Locate focus saved source geometry only and ordi
  view.get('selectionMode').value='pin';view.workspace.select3D({uuid:'pad',ref:'R1',pinNumber:'1',net:1});assert.equal(calls.length,2);assert.match(view.get('selectionStatus').textContent,/pad 1/);view.get('focusSelected').click();assert.equal(calls.length,3);assert.deepEqual(calls[2],calls[1]);assert.match(view.get('selectionStatus').textContent,/pad 1/);assert.equal(JSON.stringify(view.canvas.viewport.camera.bbox),cameraBefore,'3D Locate does not mutate the hidden2D camera');view.workspace.dispose();
 });
 
+test('local 3D net list preserves camera while incoming net and terminal cross-selections focus',()=>{
+ const view=workspaceRuntime();view.load();const focused=[],selections=[];
+ view.workspace.setScene({setPopulation(){},setSelection(value){selections.push(value);},focusPosition(position,options){focused.push({position,options});return true;}});
+ view.get('netList').children[0].click();assert.equal(focused.length,0,'net list highlights without changing view');assert.ok(selections.at(-1).netNames.includes('SIGNAL'));
+ view.get('focusSelected').click();assert.equal(focused.length,1,'explicit net Focus still works');
+ assert.equal(view.workspace.applyWindowSelection({kind:'net',path:'board.kicad_pcb',netName:'SIGNAL'}),true);assert.equal(focused.length,2,'incoming linked net centers its saved geometry');
+ assert.equal(view.workspace.applyWindowSelection({kind:'pin',path:'board.kicad_pcb',ownerUuid:'fp',uuid:'pad',reference:'R1',pinNumber:'1'}),true);assert.equal(focused.length,3,'incoming linked pad centers its saved geometry');
+ view.get('focusSelected').click();assert.equal(focused.length,4,'explicit terminal Focus still works');view.workspace.dispose();
+});
+
+test('incoming PCB part and net selections reveal their saved side and center hidden-layer geometry',()=>{
+ const source='(kicad_pcb (net 1 "SIGNAL") (footprint "R" (layer "B.Cu") (at 30 40) (uuid fp) (path "/root/sym") (property "Reference" "R1") (pad "1" smd rect (at 1 0) (size 2 2) (layers "B.Cu") (net 1 "SIGNAL") (uuid pad))))';
+ const view=workspaceRuntime(undefined,{source});view.load();view.canvas.viewport.camera.bbox={x:500,y:500,w:20,h:20};
+ assert.equal(view.workspace.highlightRelated({kind:'part',path:'root.kicad_sch',uuid:'sym',reference:'R1'}),true);
+ assert.equal(view.canvas.viewport.camera.flipped,true);assert.equal(view.get('flipButton').getAttribute('aria-pressed'),'true');assert.ok(view.canvas.visibleLayers.has('B.Cu'));
+ assert.ok(Math.abs(view.canvas.viewport.camera.center.x-31)<.001);assert.ok(Math.abs(view.canvas.viewport.camera.center.y-40)<.001);assert.ok(view.canvas.netPrimitives.size>0);
+ view.canvas.viewport.camera.flipped=false;view.canvas.visibleLayers.delete('B.Cu');assert.equal(view.workspace.highlightRelated({kind:'net',path:'root.kicad_sch',netName:'SIGNAL'}),true);
+ assert.equal(view.canvas.viewport.camera.flipped,true);assert.ok(view.canvas.visibleLayers.has('B.Cu'));assert.ok(Math.abs(view.canvas.viewport.camera.center.x-31)<.001);view.workspace.dispose();
+});
+
+test('incoming unnamed schematic network highlights and centers its saved PCB copper rather than a component',()=>{
+ const source='(kicad_pcb (net 1 "Net-(ACT1-Pad1)") (net 2 "OTHER") (footprint "X" (layer "F.Cu") (at 30 40) (uuid fp-act) (path "/root/act") (property "Reference" "ACT1") (pad "1" smd rect (at 0 0) (size 2 2) (layers "F.Cu") (net 1 "Net-(ACT1-Pad1)") (uuid pad-act))) (footprint "R" (layer "F.Cu") (at 40 40) (uuid fp-r) (path "/root/res") (property "Reference" "R15") (pad "1" smd rect (at 0 0) (size 2 2) (layers "F.Cu") (net 1 "Net-(ACT1-Pad1)") (uuid pad-r))) (segment (start 30 40) (end 40 40) (width .25) (layer "F.Cu") (net 1) (uuid trace)))';
+ const view=workspaceRuntime(undefined,{source});view.load();view.canvas.viewport.camera.bbox={x:400,y:400,w:30,h:30};
+ assert.equal(view.workspace.highlightRelated({kind:'net',path:'root.kicad_sch',netName:'Unnamed network (ACT1 pin 1, R15 pin 1)',terminals:[{reference:'ACT1',uuid:'act',pinNumber:'1'},{reference:'R15',uuid:'res',pinNumber:'1'}]}),true);
+ assert.equal(view.canvas.netHighlight.name,'Net-(ACT1-Pad1)');assert.ok([...view.canvas.netPrimitives].some(p=>p.uuid==='trace'));assert.ok(Math.abs(view.canvas.viewport.camera.center.x-35)<.001);assert.ok(Math.abs(view.canvas.viewport.camera.center.y-40)<.001);view.workspace.dispose();
+});
+
+test('3D backside part focus uses the saved footprint side even for through-hole pads on both copper faces',()=>{
+ const source='(kicad_pcb (footprint "R" (layer "B.Cu") (at 30 40) (uuid fp) (path "/root/sym") (property "Reference" "R1") (pad "1" thru_hole circle (at 1 0) (size 2 2) (drill 1) (layers "*.Cu" "*.Mask") (uuid pad))))';
+ const view=workspaceRuntime(undefined,{source});view.load();const calls=[];view.workspace.setScene({setPopulation(){},setSelection(){},focusPosition(position,options){calls.push({position,options});return true;}});
+ assert.equal(view.workspace.highlightRelated({kind:'part',path:'root.kicad_sch',uuid:'sym',reference:'R1'}),true);assert.equal(calls.length,1);assert.equal(calls[0].options.side,'back');assert.equal(calls[0].options.reference,'R1');view.workspace.dispose();
+});
+
 
 test('legacy saved hierarchy supports child dropdown, Up/Home and Files without weakening ambiguity checks',async()=>{
  const files=[{path:'hw/vna2.sch',content:'EESchema Schematic File Version 2\n$Sheet\nS 100 100 200 200\nU 1234ABCD\nF0 "Power" 60\nF1 "power.sch" 60\n$EndSheet\n$EndSCHEMATC\n'},{path:'hw/power.sch',content:'EESchema Schematic File Version 2\n$EndSCHEMATC\n'}];let active=files[0].path;const opened=[],view=workspaceRuntime(async()=>({files:files.map(f=>({path:f.path}))}),{pcb:false,files,currentFile:()=>active,openSheet:path=>{active=path;opened.push(path);view.workspace.draw();}});view.load();
