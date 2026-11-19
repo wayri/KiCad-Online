@@ -231,7 +231,7 @@
 
         const swatch=document.createElement('span');swatch.className='layer-swatch';swatch.style.background=KiCadPCBRenderer.colorFor?.(layer)||canvas.design.primitives.find(p=>p.layer===layer)?.color||'#8c9cab';
 
-        input.onchange=()=>{input.checked?canvas.visibleLayers.add(layer):canvas.visibleLayers.delete(layer);if(!input.checked&&canvas.focusedLayer===layer)canvas.focusedLayer=null;layers();canvas.draw();};
+        input.onchange=()=>{canvas.layerPresetName=null;input.checked?canvas.visibleLayers.add(layer):canvas.visibleLayers.delete(layer);if(!input.checked&&canvas.focusedLayer===layer)canvas.focusedLayer=null;layers();canvas.draw();};
 
         label.append(input,swatch,text);button.textContent='Focus';button.setAttribute('aria-label','Focus layer '+layer);button.setAttribute('aria-pressed',String(canvas.focusedLayer===layer));button.disabled=Boolean(scene);
 
@@ -327,8 +327,6 @@
         if(!probeModels.has(source))probeModels.set(source,KiCadDesignModel.buildProject(source));
         const model=probeModels.get(source),rendered=new Map(source.filter(f=>/\.(kicad_sch|sch)$/i.test(f.path)).map(f=>[f.path,probeDesign(source,f.path,false)]));
         const nets=KiCadNetModel.build(source,rendered).nets,placements=KiCadReviewWorkspace.sheetOverviewEntries(model.sheets.filter(s=>s.kind==='schematic'),model.objects.filter(o=>o.kind==='sheet')).flatMap(e=>e.placements||[]);
-        const byInstance=new Map(placements.map(p=>[p.id,p]));
-        for(const p of placements){const ids=[],seen=new Set();let parent=p;while(parent?.parentId&&!seen.has(parent.id)){seen.add(parent.id);ids.unshift(parent.sheetId);parent=byInstance.get(parent.parentId);}const rootUuid=model.sheets.find(s=>s.path===parent?.path)?.rootUuid;if(rootUuid&&ids.every(Boolean))p.nativePath='/'+[rootUuid,...ids].join('/');}
         schematicProbeContexts.set(source,{model,rendered,nets,placements});
       }
       const {model,rendered,nets,placements}=schematicProbeContexts.get(source),canonical=selection?.canonical||row?.selection?.canonical||row?.group?.canonical;
@@ -336,7 +334,7 @@
       if(valid&&canonical.kind==='net'){
         const schematic=/\.kicad_sch$/i.test(canonical.path),bound=selection?.net||selection?.group||row?.group;let seeds=schematic?nets.filter(n=>n.path===canonical.path&&(n.name===canonical.netName||n.names?.includes(canonical.netName))):nets.filter(n=>n.globalNames?.includes(canonical.netName)||KiCadPairedReview.qualifiedNetName(n,model.objects)===canonical.netName);
         if(schematic&&bound?.path===canonical.path){const exact=nets.filter(n=>n.path===canonical.path&&n.id===bound.id);if(exact.length===1)seeds=exact;}
-        if(!schematic&&!seeds.length){const combined=[...new Map([...model.objects,...(selection?.objects||row?.entry?.objects||[])].map(o=>[JSON.stringify([o.kind,o.path,o.uuid||o.id]),o])).values()],mapped=KiCadPairedReview.relatedNetByTerminals(nets,combined,canonical,bound,{instancePath:row?.entry?.instanceId});if(mapped.net)seeds=[mapped.net];}
+        if(!schematic&&!seeds.length){const combined=[...new Map([...model.objects,...(selection?.objects||row?.entry?.objects||[])].map(o=>[JSON.stringify([o.kind,o.path,o.uuid||o.id]),o])).values()],mapped=KiCadPairedReview.relatedNetByTerminals(nets,combined,canonical,bound,{instancePath:row?.entry?.nativePath});if(mapped.net)seeds=[mapped.net];}
         const selected=[];
         for(const net of seeds){const instances=placements.filter(p=>p.path===net.path),active=row?.entry?.path===net.path?row.entry.instanceId:null;if(active&&instances.some(p=>p.id===active))selected.push({netId:net.id,instanceId:active});else if(!schematic||instances.length===1)for(const p of instances)selected.push({netId:net.id,instanceId:p.id});}
         const graph=globalThis.KiCadOverviewConnectivity?.resolve(nets,selected,placements);
@@ -347,7 +345,7 @@
       const sheets=placements.map(p=>{
         const design=rendered.get(p.path),local=nets.filter(n=>n.path===p.path),groups=matching.get(p.id)||[],primitives=[...new Set(groups.flatMap(g=>g.primitives||[]))],name=canonical?.netName||canonical?.reference||row?.name||'Sheet',label=p.label||p.path;
         const picked={...(selection||{}),primitives,...(valid?{canonical}:{})},group={id:'probe-sheet:'+p.id,kind:canonical?.kind||'net',name,primitives,...(valid?{canonical}:{})};
-        return {id:JSON.stringify([p.path,p.id]),name,label,group,selection:picked,entry:{path:p.path,kind:'schematic',label,instanceId:p.id,instanceLabel:label,design,groups:local,nets:local,objects:model.objects,model,sourceFiles:source}};
+        return {id:JSON.stringify([p.path,p.id]),name,label,group,selection:picked,entry:{path:p.path,kind:'schematic',label,instanceId:p.id,nativePath:p.nativePath,instanceLabel:label,design,groups:local,nets:local,objects:model.objects,model,sourceFiles:source}};
       }).filter(r=>r.entry.design);
       return {sheets,occurrences:sheets.filter(r=>r.group.primitives.length)};
     }
@@ -374,7 +372,7 @@
         const bound=selection?.net||selection?.group||row?.group,byIdentity=sameKind&&bound?.path===canonical.path?nets.filter(n=>n.path===canonical.path&&n.id===bound.id):[];
         const direct=byIdentity.length?byIdentity:sameKind?nets.filter(n=>n.path===canonical.path&&(n.name===canonical.netName||n.names?.includes(canonical.netName))):[];
         let result=direct.length===1?{net:direct[0]}:KiCadPairedReview.relatedNet(nets,model.objects,canonical);
-        if(!result.net){const sourceObjects=selection?.objects||row?.entry?.objects||[],combined=[...new Map([...model.objects,...sourceObjects].map(o=>[JSON.stringify([o.kind,o.path,o.uuid||o.id]),o])).values()];result=KiCadPairedReview.relatedNetByTerminals(nets,combined,canonical,selection?.net||selection?.group||row?.group,{instancePath:row?.entry?.instanceId});}
+        if(!result.net){const sourceObjects=selection?.objects||row?.entry?.objects||[],combined=[...new Map([...model.objects,...sourceObjects].map(o=>[JSON.stringify([o.kind,o.path,o.uuid||o.id]),o])).values()];result=KiCadPairedReview.relatedNetByTerminals(nets,combined,canonical,selection?.net||selection?.group||row?.group,{instancePath:row?.entry?.nativePath});}
         if(!result.net)throw Error(result.error||'No unambiguous saved net.');group=result.net;path=group.path;
       }
       const design=getDesign(path);if(!probeNets.has(design))probeNets.set(design,KiCadNetModel.build(source.filter(f=>f.path===path),new Map([[path,design]])).nets);const nets=probeNets.get(design);
@@ -487,8 +485,8 @@
           const clip=document.createElementNS('http://www.w3.org/2000/svg','clipPath'),clipRect=document.createElementNS('http://www.w3.org/2000/svg','rect'),clipId='sheetTreeLabel'+index,lines=labels[index];clip.setAttribute('id',clipId);for(const [key,value]of Object.entries({x:page.x+14,y:page.y+8,width:page.w-28,height:page.h-16}))clipRect.setAttribute(key,value);clip.append(clipRect);defs.append(clip);label.setAttribute('clip-path',`url(#${clipId})`);
           if(labelCounts.get(lines.join('\n'))>1){const suffix=' · '+(index+1);lines[lines.length-1]=miniElide(lines.at(-1),page.w-28-miniTextWidth(suffix))+suffix;}
           lines.forEach((text,lineIndex)=>{const span=document.createElementNS('http://www.w3.org/2000/svg','tspan');span.setAttribute('x',page.x+page.w/2);span.setAttribute('y',page.y+page.h/2+(lineIndex-(lines.length-1)/2)*22);span.textContent=text;label.append(span);});tooltip.textContent=(page.label===page.path?page.path:page.label+'\n'+page.path)+(occurrences.length>1?'\n'+occurrences.map(p=>p.label).join('\n'):'');
-          const navigate=(instanceId)=>{if(miniMaximized){miniMaximized=false;syncMiniatureSize();}if(instanceId){if(opened)close();workspace.followSheet?.(page.path,undefined,{instancePath:instanceId});return;}const target=opened&&composition?.pages.find(p=>p.path===page.path);if(target&&overviewView){overviewFitted=false;overviewView.viewport.camera.bbox={x:target.x-12,y:target.y-14,w:target.w+24,h:target.h+28};overviewView.draw();}else{if(opened)close();workspace.followSheet?.(page.path);}};
-          const chooseOccurrence=()=>{if(occurrences.length<=1){navigate();return;}const picker=document.createElement('section'),back=document.createElement('button'),heading=document.createElement('strong');picker.className='sheet-tree-instance-picker';picker.setAttribute('aria-label','Choose sheet occurrence');back.type='button';back.textContent='← Sheet tree';back.onclick=()=>miniBody.replaceChildren(svg);heading.textContent=page.label+' · '+occurrences.length+' occurrences';picker.append(back,heading);for(const occurrence of occurrences){const item=document.createElement('button');item.type='button';item.textContent=occurrence.label;item.title=occurrence.label;item.setAttribute('data-instance-id',occurrence.id);item.onclick=()=>{miniBody.replaceChildren(svg);navigate(occurrence.id);};picker.append(item);}miniBody.replaceChildren(picker);back.focus?.();};
+          const navigate=(occurrence)=>{if(miniMaximized){miniMaximized=false;syncMiniatureSize();}if(occurrence){if(opened)close();workspace.followSheet?.(page.path,undefined,{instancePath:occurrence.nativePath||undefined});return;}const target=opened&&composition?.pages.find(p=>p.path===page.path);if(target&&overviewView){overviewFitted=false;overviewView.viewport.camera.bbox={x:target.x-12,y:target.y-14,w:target.w+24,h:target.h+28};overviewView.draw();}else{if(opened)close();workspace.followSheet?.(page.path);}};
+          const chooseOccurrence=()=>{if(occurrences.length<=1){navigate();return;}const picker=document.createElement('section'),back=document.createElement('button'),heading=document.createElement('strong');picker.className='sheet-tree-instance-picker';picker.setAttribute('aria-label','Choose sheet occurrence');back.type='button';back.textContent='← Sheet tree';back.onclick=()=>miniBody.replaceChildren(svg);heading.textContent=page.label+' · '+occurrences.length+' occurrences';picker.append(back,heading);for(const occurrence of occurrences){const item=document.createElement('button');item.type='button';item.textContent=occurrence.label;item.title=occurrence.label;item.setAttribute('data-instance-id',occurrence.id);item.onclick=()=>{miniBody.replaceChildren(svg);navigate(occurrence);};picker.append(item);}miniBody.replaceChildren(picker);back.focus?.();};
 
           node.onclick=()=>{if(miniSuppressClick){miniSuppressClick=false;return;}chooseOccurrence();};node.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();chooseOccurrence();}});node.append(rect,label,tooltip);svg.append(node);
         }
