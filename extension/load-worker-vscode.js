@@ -193,20 +193,26 @@
       }
       if (!stack.length) throw new Error("Expected a KiCad S-expression.");
       if (ch === '"') {
-        let value = "", closed = false;
-        i++;
-        while (i < source.length) {
-          const next = source[i++];
-          if (next === '"') { closed = true; break; }
-          if (next === "\\") {
-            if (i >= source.length) throw new Error("Unterminated KiCad escape sequence.");
-            const escaped = source[i++];
-            const decoded = ({ n: "\n", r: "\r", t: "\t", '"': '"', "\\": "\\" })[escaped];
-            if(!skippedDepth)value += decoded === undefined ? `\\${escaped}` : decoded;
-          } else if(!skippedDepth)value += next;
+        let segments=null, chunkStart=++i, closed=false, text='';
+        while(i<source.length){
+          const next=source[i++];
+          if(next==='"'){
+            closed=true;
+            if(!skippedDepth){const tail=source.slice(chunkStart,i-1);if(segments){segments.push(tail);text=segments.join('');}else text=tail;}
+            break;
+          }
+          if(next==='\\'){
+            if(i>=source.length)throw new Error("Unterminated KiCad escape sequence.");
+            const escaped=source[i++];
+            if(!skippedDepth){
+              segments??=[];segments.push(source.slice(chunkStart,i-2));
+              const decoded=({n:"\n",r:"\r",t:"\t",'"':'"',"\\":"\\"})[escaped];segments.push(decoded===undefined?'\\'+escaped:decoded);
+            }
+            chunkStart=i;
+          }
         }
-        if (!closed) throw new Error("Unterminated quoted KiCad string.");
-        append({ quoted: value }); continue;
+        if(!closed)throw new Error("Unterminated quoted KiCad string.");
+        append(skippedDepth?null:{quoted:text});continue;
       }
       const start = i;
       while (i < source.length) { const code=source.charCodeAt(i);if(code===40||code===41||code===59||code===34||spaceCode(code))break;i++; }
