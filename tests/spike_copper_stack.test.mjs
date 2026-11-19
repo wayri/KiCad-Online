@@ -60,15 +60,17 @@ test('saved through, blind and buried endpoints retain only their own depth span
   assert.equal(JSON.stringify(records), original);
 });
 
-test('reversed valid endpoints normalize and legacy fallback identity follows parser order', () => {
+test('reversed valid endpoints normalize and timestamp IDs take precedence over fallback', () => {
   const plan = viaPlan(`
     (via (uuid "first") (at 1 1) (layers "F.Cu" "B.Cu"))
     (via (at 2) (layers "F.Cu" "B.Cu"))
     (via blind (tstamp "legacy") (at 2 2) (layers "In2.Cu" "In1.Cu"))
-    (via (uuid "reverse") (at 3 3) (layers "B.Cu" "F.Cu"))`, [{id: 'first'}, {id: 'via-2'}, {id: 'reverse'}]);
+    (via (at 3 3) (layers "F.Cu" "B.Cu"))
+    (via (uuid "reverse") (at 4 4) (layers "B.Cu" "F.Cu"))`, [{id: 'first'}, {id: 'legacy'}, {id: 'via-3'}, {id: 'reverse'}]);
   assert.deepEqual(plan.viaSpans.get('reverse'), plan.viaSpans.get('first'));
-  assert.equal(plan.viaSpans.get('via-2').from, 'In1.Cu');
-  assert.equal(plan.viaSpans.get('via-2').to, 'In2.Cu');
+  assert.deepEqual(plan.viaSpans.get('via-3'), plan.viaSpans.get('first'));
+  assert.equal(plan.viaSpans.get('legacy').from, 'In1.Cu');
+  assert.equal(plan.viaSpans.get('legacy').to, 'In2.Cu');
 });
 
 test('missing, unknown, duplicate and type-incompatible source spans cannot invent through geometry', () => {

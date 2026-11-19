@@ -25,8 +25,9 @@ export function createNetInspection(THREE,{board,plan,zones,pads,world,colorForL
   if(!enabled||!nets.length){if(signature)clear();state=emptyState();return snapshot();}
   if(key===signature){group.visible=state.active;return snapshot();}
   clear();signature=key;state={active:false,nets,tracks:0,pads:0,vias:0,platedPads:0,fills:0,boundaries:0,omitted:0,sourceLimited,warnings:[...plan.warnings]};
-  if(sourceLimited)state.warnings.push('Saved zone geometry reached its polygon/point budget; additional copper is omitted.');
+  if(sourceLimited)state.warnings.push('Saved zone indexing omitted contours outside its input limits.');
   const wanted=new Set(nets);let used=0,geometryBatches=0;const shapeBudget=()=>{if(geometryBatches>=512){state.omitted++;return false;}geometryBatches++;return true;};const take=record=>{if(!wanted.has(record.net))return false;if(used++>=budget){state.omitted++;return false;}return true;};
+  const outlines=new Map();
   for(const layer of plan.layers){
    const thickness=Math.max(.001,layer.thickness),z=layer.z;
    const tracks=board.tracks.filter(track=>track.layer===layer.name&&take(track)),stroke=copperStrokeBatches(THREE,tracks,{world,z,thickness});state.tracks+=stroke.tracks.length;state.omitted+=stroke.invalid;
@@ -35,18 +36,23 @@ export function createNetInspection(THREE,{board,plan,zones,pads,world,colorForL
    const batches=new Map();
    for(const pad of pads){
     if(!wanted.has(pad.net)||pad.nativeType==='np_thru_hole'||!(pad.layer===layer.name||pad.layers?.includes(layer.name)||pad.layers?.includes('*.Cu')||pad.layers?.includes('F&B.Cu')&&['F.Cu','B.Cu'].includes(layer.name)))continue;
-    if(!take(pad))continue;const outline=nativePadOutline(pad);if(!outline){state.omitted++;continue;}
+    if(!take(pad))continue;if(!outlines.has(pad))outlines.set(pad,nativePadOutline(pad));const outline=outlines.get(pad);if(!outline){state.omitted++;continue;}
     const key=JSON.stringify(outline);if(!batches.has(key)){if(!shapeBudget())continue;batches.set(key,{outline,pads:[]});}batches.get(key).pads.push(pad);state.pads++;
    }
    for(const batch of batches.values())instances(new THREE.ExtrudeGeometry(shapeFor(batch.outline),{depth:thickness,bevelEnabled:false,curveSegments:8}),batch.pads,layer.name,(object,pad)=>{const[x,y]=world(pad.at);object.position.set(x,y,z-thickness/2);object.rotation.z=(pad.rotation||0)*Math.PI/180;});
-   for(const zone of zones){
-    if(zone.layer!==layer.name||!take(zone)||!shapeBudget())continue;
-    const points=zone.points.map(point=>{const[x,y]=world(point);return new THREE.Vector2(x,y);});
-    if(!zone.filled){const geo=new THREE.BufferGeometry().setFromPoints(points.map(p=>new THREE.Vector3(p.x,p.y,z))),mat=tagMaterial(new THREE.LineBasicMaterial({color:color(layer.name),toneMapped:false}),layer.name);resources.add(geo);resources.add(mat);const line=new THREE.LineLoop(geo,mat);line.userData.record={...zone,type:'Zone boundary'};group.add(line);state.boundaries++;continue;}
-    const geometry=new THREE.ExtrudeGeometry(new THREE.Shape(points),{depth:thickness,bevelEnabled:false,curveSegments:8});resources.add(geometry);const fillMaterial=material(layer.name).clone();fillMaterial.transparent=true;fillMaterial.opacity=.28;fillMaterial.depthWrite=false;resources.add(fillMaterial);const mesh=new THREE.Mesh(geometry,fillMaterial);mesh.userData.record={...zone,type:'Zone'};mesh.position.z=z-thickness/2;group.add(mesh);state.fills++;
-   }
   }
-  state.omitted+=board.tracks.filter(record=>wanted.has(record.net)&&!plan.byLayer.has(record.layer)).length+zones.filter(record=>wanted.has(record.net)&&!plan.byLayer.has(record.layer)).length;
+  for(const {record,geometry,depth} of zones){
+   if(!take(record))continue;
+   if(!geometry||!plan.byLayer.has(record.layer)){state.omitted++;continue;}
+   const layer=record.layer;
+   const mat=record.filled?material(layer).clone():tagMaterial(new THREE.LineBasicMaterial({color:color(layer),toneMapped:false}),layer);
+   if(record.filled){mat.transparent=true;mat.opacity=.28;mat.depthWrite=false;}
+   resources.add(mat);
+   const object=record.filled?new THREE.Mesh(geometry,mat):new THREE.LineLoop(geometry,mat);
+   object.userData.record=record;object.position.z=depth;group.add(object);
+   if(record.filled)state.fills++;else state.boundaries++;
+  }
+  state.omitted+=board.tracks.filter(record=>wanted.has(record.net)&&!plan.byLayer.has(record.layer)).length;
   const barrels=new Map(),annuli=new Map();
   function barrel(record,span,pad=false){
    const width=pad?(record.drillWidth||record.drill):record.drill,height=pad?(record.drillHeight||record.drill):record.drill;

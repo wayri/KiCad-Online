@@ -76,7 +76,15 @@
       }
       if (ch === ")") {
         if (!stack.length) throw new Error("Unexpected closing parenthesis in KiCad file.");
-        stack.pop();if(skippedDepth&&stack.length<skippedDepth)skippedDepth=0; i++; continue;
+        const node=stack.pop();
+        // Fixed-size small forms avoid retaining the spare capacity of millions
+        // of growable coordinate/attribute arrays. The public tree shape stays
+        // identical; replace only a completed child, never a live stack frame.
+        if(!skippedDepth&&node.length>0&&node.length<=4){
+          const compact=node.length===1?[node[0]]:node.length===2?[node[0],node[1]]:node.length===3?[node[0],node[1],node[2]]:[node[0],node[1],node[2],node[3]];
+          const parent=stack.at(-1)||roots;parent[parent.length-1]=compact;
+        }
+        if(skippedDepth&&stack.length<skippedDepth)skippedDepth=0; i++; continue;
       }
       if (!stack.length) throw new Error("Expected a KiCad S-expression.");
       if (ch === '"') {
@@ -117,7 +125,7 @@
         const number = Number(token);
         if (!Number.isFinite(number)) throw new Error("Invalid numeric KiCad value.");
         append(number);
-      } else append(token);
+      } else append(token==='xy'?'xy':token);
     }
     if (stack.length || roots.length !== 1 || !Array.isArray(roots[0])) {
       throw new Error("Incomplete KiCad S-expression.");

@@ -1,4 +1,6 @@
 /* Saved pad contours in pad-local millimetres; no placement, rotation or Three dependency. */
+import {customPadContour} from "./customPadGeometry.mjs";
+import {padOccurrenceId,savedObjectId} from "./sourceIdentity.mjs";
 const MAX_SIZE=10000, ARC_STEPS=16, EPSILON=1e-10;
 const dimension=value=>typeof value==='number'&&Number.isFinite(value)&&value>0&&value<=MAX_SIZE;
 const finiteOffset=value=>typeof value==='number'&&Number.isFinite(value)&&Math.abs(value)<=MAX_SIZE;
@@ -47,7 +49,7 @@ export function nativeDrillOutline(pad){
  */
 export function nativePadOutline(pad){
  if(!pad||typeof pad!=='object')return null;
- const shape=pad.shape,outline=outlineFor(shape,pad.width,pad.height,pad.roundrectRatio??pad.roundrect_rratio);
+ const shape=pad.shape,custom=shape==='custom'?customPadContour(pad):null,outline=custom?.outline||outlineFor(shape,pad.width,pad.height,pad.roundrectRatio??pad.roundrect_rratio);
  if(!outline)return null;
  let drill=null;
  const hasDrill=pad.drill!==undefined&&pad.drill!==0||pad.drillWidth!==undefined||pad.drillHeight!==undefined;
@@ -58,7 +60,7 @@ export function nativePadOutline(pad){
   // Reject rather than silently drawing clipped or solid copper.
   if(!drill.every(point=>strictlyInside(outline,point)))return null;
  }
- return{shape,outline,drill};
+ return{shape,outline,drill,...(custom?{tessellation:custom.tessellation}:{})};
 }
 function strictlyInside(loop,[x,y]){
  let inside=false;
@@ -72,24 +74,47 @@ function strictlyInside(loop,[x,y]){
 }
 const value=node=>node&&typeof node==='object'&&!Array.isArray(node)?node.quoted:node;
 const child=(node,name)=>node.find(item=>Array.isArray(item)&&value(item[0])===name);
+function customPrimitives(pad){
+ const source=child(pad,'primitives');if(!source||source.length>17)return null;
+ const result=[],point=(node,tag)=>{const values=child(node,tag)?.slice(1).map(value);return values?.length===2&&values.every(finiteOffset)?values:null;};
+ for(const primitive of source.slice(1)){
+  if(!Array.isArray(primitive)||value(child(primitive,'fill')?.[1])!=='yes'||value(child(primitive,'width')?.[1])!==0)return null;
+  if(value(primitive[0])==='gr_circle'){
+   const center=point(primitive,'center'),end=point(primitive,'end');if(!center||!end)return null;
+   result.push({shape:'circle',center,radius:Math.hypot(end[0]-center[0],end[1]-center[1])});
+  }else if(value(primitive[0])==='gr_poly'){
+   const pts=child(primitive,'pts');if(!pts||pts.length<4||pts.length>17)return null;
+   const points=[];for(const xy of pts.slice(1)){if(!Array.isArray(xy)||value(xy[0])!=='xy')return null;const p=xy.slice(1).map(value);if(p.length!==2||!p.every(finiteOffset))return null;points.push(p);}
+   result.push({shape:'polygon',points});
+  }else return null;
+ }
+ return result;
+}
 /** Extract only direct footprint pad metadata from an ALREADY parsed native PCB.
  * Does not parse, walk filled polygons or choose fallback identities. Duplicate IDs
  * are excluded. drillOffset stays in the saved pad frame; callers own placement.
  */
 export function padSourceDetails(ast){
- const result=new Map(),seen=new Set();let inspected=0;
+ const result=new Map(),seen=new Set();let inspected=0,footprintIndex=-1;
  if(!Array.isArray(ast)||value(ast[0])!=='kicad_pcb'||ast.length>1000000)return result;
  for(const footprint of ast){
-  if(!Array.isArray(footprint)||value(footprint[0])!=='footprint'||footprint.length>1000000)continue;
+  if(!Array.isArray(footprint)||(value(footprint[0])!=='footprint'&&value(footprint[0])!=='module'))continue;
+  footprintIndex++;
+  if(footprint.length>1000000)continue;
+  let padIndex=-1;
+  const ownerUuid=savedObjectId(footprint);
   for(const pad of footprint){
-   if(!Array.isArray(pad)||value(pad[0])!=='pad'||pad.length>10000)continue;
+   if(!Array.isArray(pad)||value(pad[0])!=='pad')continue;
+   padIndex++;
+   if(pad.length>10000)continue;
    if(++inspected>200000)return result;
-   const id=value(child(pad,'uuid')?.[1]??child(pad,'tstamp')?.[1]);
-   if(typeof id!=='string'||!id||id.length>128)continue;
+   const uuid=savedObjectId(pad),id=uuid||padOccurrenceId(footprintIndex,padIndex);
+   if(id.length>128)continue;
    if(seen.has(id)){result.delete(id);continue;}seen.add(id);
    const ratio=child(pad,'roundrect_rratio')?.[1],drill=child(pad,'drill');
-   const record={type:'Pad',nativeType:String(value(pad[2])||''),uuid:id,ownerUuid:value(child(footprint,'uuid')?.[1]??child(footprint,'tstamp')?.[1]),pinNumber:String(value(pad[1])??''),pinName:String(value(child(pad,'pinfunction')?.[1])??'')};if(typeof ratio==='number')record.roundrectRatio=ratio;
+   const record={type:'Pad',nativeType:String(value(pad[2])||''),uuid,ownerUuid,pinNumber:String(value(pad[1])??''),pinName:String(value(child(pad,'pinfunction')?.[1])??'')};if(typeof ratio==='number')record.roundrectRatio=ratio;
    if(drill){const oval=value(drill[1])==='oval';record.drillShape=oval?'oval':'circle';record.drillWidth=drill[oval?2:1];record.drillHeight=oval?drill[3]:record.drillWidth;const offset=child(drill,'offset');if(offset)record.drillOffset=[offset[1],offset[2]];}
+   if(value(pad[3])==='custom'){record.customAnchor=value(child(child(pad,'options')||[],'anchor')?.[1]);record.customPrimitives=customPrimitives(pad);}
    result.set(id,record);if(result.size>=200000)return result;
   }
  }

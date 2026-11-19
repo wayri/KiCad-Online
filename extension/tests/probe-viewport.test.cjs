@@ -96,14 +96,20 @@ test('dense selected nets bound probe overlays and disclose partial geometry wit
 });
 
 
-async function savedNetSource(){
+async function savedNetSource(THREE){
  const ast=require('../design-diff.js').parse(fs.readFileSync(path.join(__dirname,'fixtures/net3d/inspection.kicad_pcb'),'utf8')),value=x=>x?.quoted??x,nodes=(a,k)=>a.filter(n=>Array.isArray(n)&&n[0]===k),child=(a,k)=>nodes(a,k)[0],xy=(a,k)=>child(a,k).slice(1,3),identity=a=>value(child(a,'uuid')[1]),nets=Object.fromEntries(nodes(ast,'net').map(n=>[String(n[1]),value(n[2])]));
  const tracks=nodes(ast,'segment').map(n=>({type:'Track',id:identity(n),uuid:identity(n),start:xy(n,'start'),end:xy(n,'end'),width:child(n,'width')[1],layer:value(child(n,'layer')[1]),net:nets[child(n,'net')[1]]})),vias=nodes(ast,'via').map(n=>({type:'Via',id:identity(n),uuid:identity(n),at:xy(n,'at'),size:child(n,'size')[1],drill:child(n,'drill')[1],net:nets[child(n,'net')[1]]})),fp=nodes(ast,'footprint')[0],pad=child(fp,'pad'),pads=[{type:'Pad',id:identity(pad),uuid:identity(pad),ref:'J1',name:value(pad[1]),at:xy(fp,'at'),width:child(pad,'size')[1],height:child(pad,'size')[2],shape:value(pad[3]),nativeType:value(pad[2]),drillShape:'circle',drill:child(pad,'drill')[1],layers:child(pad,'layers').slice(1).map(value),net:value(child(pad,'net')[2])}],layers=child(ast,'layers').slice(1).filter(Array.isArray).map(n=>value(n[1])).filter(n=>/.Cu$/.test(n)),stackup=nodes(child(child(ast,'setup'),'stackup'),'layer').map(n=>({name:value(n[1]),type:value(child(n,'type')?.[1]),thickness:child(n,'thickness')?.[1]})),board={nets,layers,stackup,tracks,vias,pads};
- const {sourceCopperPlan}=await import('../spike/copperStack.mjs'),{sourceZoneGeometry}=await import('../spike/sourceGeometry.mjs');return {board,plan:sourceCopperPlan(board,ast,1.74),zones:sourceZoneGeometry(ast).records,pads,world:([x,y])=>[x,-y],colorForLayer:()=>0x00ffff};
+ const {sourceCopperPlan}=await import('../spike/copperStack.mjs'),{sourceZoneGeometry}=await import('../spike/sourceGeometry.mjs');
+ const plan=sourceCopperPlan(board,ast,1.74),zones=sourceZoneGeometry(ast).records.map(({points,...record})=>{
+  const geometry=new THREE.BufferGeometry().setFromPoints(points.map(([x,y])=>new THREE.Vector3(x,-y,0)));
+  if(record.filled)geometry.setIndex(points.slice(2).flatMap((_,i)=>[0,i+1,i+2]));
+  return {record:{...record,type:record.filled?'Zone':'Zone boundary'},geometry,depth:plan.byLayer.get(record.layer).z};
+ });
+ return {board,plan,zones,pads,world:([x,y])=>[x,-y],colorForLayer:()=>0x00ffff};
 }
 
 test('exploded probes retain selected nets, saved geometry and camera through separation and restoration',{skip:!threePath},async()=>{
- const THREE=await import(pathToFileURL(threePath).href),{createSharedProbeViewport}=await helper(),h=viewportHarness(THREE),source=await savedNetSource(),before=JSON.stringify(source.board),probe=createSharedProbeViewport({...h.args,board:source.board,netInspectionSource:source,selection:{netNames:['SIGNAL']},explodeAmount:100});
+ const THREE=await import(pathToFileURL(threePath).href),{createSharedProbeViewport}=await helper(),h=viewportHarness(THREE),source=await savedNetSource(THREE),before=JSON.stringify(source.board),probe=createSharedProbeViewport({...h.args,board:source.board,netInspectionSource:source,selection:{netNames:['SIGNAL']},explodeAmount:100});
  h.flush();const {scene,camera}=h.rendered.at(-1),start=camera.position.clone(),owned=scene.getObjectByName('Probe selected net — all copper layers'),objects=[];owned.traverse(o=>{if(o.geometry)objects.push(o);});const inner=objects.find(o=>o.userData.layer==='In1.Cu'),geometry=inner.geometry,initial=inner.position.z;assert.notEqual(initial,0);assert.equal(probe.getExplode(),100);
  for(const value of [50,0,100]){h.mesh.position.z=value/10;probe.setExplode(value);h.flush();assert.equal(inner.position.z,initial*value/100);assert.equal(inner.geometry,geometry);assert.ok(camera.position.distanceTo(start)<1e-8);assert.deepEqual(probe.getStats().netInspection.nets,['SIGNAL']);const copy=scene.getObjectByProperty('geometry',h.geometry);assert.equal(copy.position.z,value/10);}
  const barrel=objects.find(o=>o.userData.explodeSpan),span=barrel.userData.explodeSpan,matrix=new THREE.Matrix4();probe.setVisibleLayers(['F.Cu']);probe.setExplode(50);probe.setVisibleLayers(source.plan.layers.map(l=>l.name));h.flush();barrel.getMatrixAt(0,matrix);const names=source.plan.layers.slice().sort((a,b)=>b.z-a.z).map(l=>l.name),rank=(names.length-1)/2-names.indexOf(span.to);assert.ok(Math.abs(matrix.elements[14]-(span.zMin+rank*2))<1e-5,'restoring hidden via instances retains their current exploded depth');
@@ -111,7 +117,7 @@ test('exploded probes retain selected nets, saved geometry and camera through se
 });
 
 test('probe full-net overlay uses saved internal layers and blind/buried via spans, fits and picks source identities',{skip:!threePath},async()=>{
- const THREE=await import(pathToFileURL(threePath).href),{createSharedProbeViewport}=await helper(),h=viewportHarness(THREE),source=await savedNetSource(),before=JSON.stringify(source.board),selected=[];
+ const THREE=await import(pathToFileURL(threePath).href),{createSharedProbeViewport}=await helper(),h=viewportHarness(THREE),source=await savedNetSource(THREE),before=JSON.stringify(source.board),selected=[];
  let sharedDisposed=0;h.geometry.addEventListener('dispose',()=>sharedDisposed++);h.material.addEventListener('dispose',()=>sharedDisposed++);
  const probe=createSharedProbeViewport({...h.args,board:source.board,netInspectionSource:source,selection:{netNames:['SIGNAL']},onSelect:value=>selected.push(value)});h.flush();const stats=probe.getStats();assert.equal(stats.fullNet3D,true);assert.equal(stats.netInspection.active,true);assert.equal(stats.netInspection.tracks,6);assert.equal(stats.netInspection.vias,4);assert.equal(stats.netInspection.platedPads,1);assert.equal(stats.netInspection.fills,1);assert.equal(stats.netInspection.boundaries,1);assert.equal(stats.netInspection.omitted,0);
  const {scene,camera}=h.rendered.at(-1),owned=scene.getObjectByName('Probe selected net — all copper layers'),objects=[];owned.traverse(o=>{if(o.geometry)objects.push(o);});assert.ok(objects.some(o=>o.userData.layer==='In1.Cu'));assert.ok(objects.some(o=>o.userData.layer==='In2.Cu'));
@@ -124,14 +130,14 @@ test('probe full-net overlay uses saved internal layers and blind/buried via spa
 });
 
 test('probe copper budgets filter the selected net first, omit whole polygons and release only owned geometry',{skip:!threePath},async()=>{
- const THREE=await import(pathToFileURL(threePath).href),{createProbeNetInspection}=await helper(),source=await savedNetSource(),before=JSON.stringify(source.board),selected=source.board.tracks.find(t=>t.net==='SIGNAL');source.board.tracks=[...Array.from({length:10000},()=>({...selected,net:'OTHER'})),selected];source.board.vias=[];source.pads=[];
- const overlay=createProbeNetInspection(THREE,source,{maxRecords:2,maxZonePoints:3}),state=overlay.update({netNames:['SIGNAL']});assert.equal(state.tracks,1);assert.equal(state.fills,0);assert.equal(state.boundaries,0);assert.equal(state.omitted,2);assert.equal(state.sourceLimited,true);assert.match(state.warnings.join(' '),/probe copper budget/);assert.equal(overlay.group.children[0].children.some(o=>o.userData.record?.type==='Zone'),false);
- const limited=createProbeNetInspection(THREE,{...source,board:{...source.board,tracks:Array.from({length:4},()=>selected)},zones:[]},{maxRecords:2,maxZonePoints:3});assert.equal(limited.update({netNames:['SIGNAL']}).tracks,2);assert.equal(limited.state().omitted,2);overlay.dispose();limited.dispose();assert.equal(overlay.group.children.length,0);assert.throws(()=>createProbeNetInspection(THREE,source,{maxRecords:99999}),/Invalid/);
+ const THREE=await import(pathToFileURL(threePath).href),{createProbeNetInspection}=await helper(),source=await savedNetSource(THREE),before=JSON.stringify(source.board),selected=source.board.tracks.find(t=>t.net==='SIGNAL');source.board.tracks=[...Array.from({length:10000},()=>({...selected,net:'OTHER'})),selected];source.board.vias=[];source.pads=[];
+ const overlay=createProbeNetInspection(THREE,source,{maxRecords:1}),state=overlay.update({netNames:['SIGNAL']});assert.equal(state.tracks,1);assert.equal(state.fills,0);assert.equal(state.boundaries,0);assert.equal(state.omitted,2);assert.equal(state.sourceLimited,true);assert.match(state.warnings.join(' '),/probe copper budget/);assert.equal(overlay.group.children[0].children.some(o=>o.userData.record?.type==='Zone'),false);
+ const limited=createProbeNetInspection(THREE,{...source,board:{...source.board,tracks:Array.from({length:4},()=>selected)},zones:[]},{maxRecords:2});assert.equal(limited.update({netNames:['SIGNAL']}).tracks,2);assert.equal(limited.state().omitted,2);overlay.dispose();limited.dispose();assert.equal(overlay.group.children.length,0);assert.throws(()=>createProbeNetInspection(THREE,source,{maxRecords:99999}),/Invalid/);
 });
 
 
 test('two probes keep independent net overlays, visible omission status and grey context without mutating source colors',{skip:!threePath},async()=>{
- const THREE=await import(pathToFileURL(threePath).href),{createSharedProbeViewport}=await helper(),source=await savedNetSource(),left=viewportHarness(THREE),right=viewportHarness(THREE),nodes=[];
+ const THREE=await import(pathToFileURL(threePath).href),{createSharedProbeViewport}=await helper(),source=await savedNetSource(THREE),left=viewportHarness(THREE),right=viewportHarness(THREE),nodes=[];
  source.board.tracks.push({...source.board.tracks[0],layer:'In99.Cu',id:'unsupported-layer'});
  left.host.ownerDocument={createElement(){const node={style:{},setAttribute(){},remove(){this.removed=true;}};nodes.push(node);return node;}};
  const instanced=new THREE.InstancedMesh(left.geometry,left.material,1),colors=new THREE.InstancedBufferAttribute(new Float32Array([1,0,0]),3);instanced.instanceColor=colors;instanced.userData.records=[{type:'Component',ref:'U2'}];instanced.setMatrixAt(0,new THREE.Matrix4());left.source.add(instanced);
@@ -157,7 +163,7 @@ test('probe3D presets use main board directions and fifteen-degree steps retain 
 });
 
 test('3D probe layer/accent choice changes existing copper without reparse, requests or geometry rebuild',{skip:!threePath},async()=>{
- const THREE=await import(pathToFileURL(threePath).href),{createSharedProbeViewport}=await helper(),h=viewportHarness(THREE),source=await savedNetSource();
+ const THREE=await import(pathToFileURL(threePath).href),{createSharedProbeViewport}=await helper(),h=viewportHarness(THREE),source=await savedNetSource(THREE);
  const probe=createSharedProbeViewport({...h.args,board:source.board,netInspectionSource:source,selection:{netNames:['SIGNAL']},netHighlightColor:'accent'});h.flush();assert.equal(probe.getStats().netInspection.colorMode,'accent');
  const scene=h.rendered.at(-1).scene,group=scene.children.find(o=>o.name==='Probe selected net — all copper layers'),meshes=[...group.children[0].children],geometry=meshes.map(m=>m.geometry);assert.ok(meshes.every(m=>m.material.color.getHex()===(m.material.userData.netRole==='via'?0xc5aa6c:0xffe18b)));probe.setNetHighlightColor('layer');h.flush();assert.equal(probe.getStats().netInspection.colorMode,'layer');assert.deepEqual(group.children[0].children.map(m=>m.geometry),geometry);assert.equal(probe.getStats().sourceParses,0);assert.equal(probe.getStats().modelRequests,0);probe.dispose();h.geometry.dispose();h.material.dispose();
 });

@@ -61,16 +61,16 @@ export function cloneProbeTree(THREE,source,{materialFor=node=>node.material,ins
 }
 
 // Own only generated overlay buffers. Saved records/stackup remain read-only and shared.
-export function createProbeNetInspection(THREE,source,{maxRecords=8192,maxZonePoints=32768}={}){
- if(!Number.isInteger(maxRecords)||maxRecords<1||maxRecords>8192||!Number.isInteger(maxZonePoints)||maxZonePoints<3||maxZonePoints>32768)throw Error('Invalid probe copper budget.');
- const group=new THREE.Group();group.name='Probe selected net — all copper layers';let current=null,signature='',omitted=0,pointsOmitted=0,colorMode='layer';
- const state=()=>{const result=current?.state()||{active:false,nets:[],tracks:0,pads:0,vias:0,platedPads:0,fills:0,boundaries:0,omitted:0,sourceLimited:false,warnings:[],layers:source.plan.layers.map(({name,z})=>({name,z})),meshes:0};return {...result,omitted:result.omitted+omitted,sourceLimited:result.sourceLimited||omitted>0,warnings:[...result.warnings,...(omitted?[`${omitted} selected source records omitted by the probe copper budget (${maxRecords} records / ${maxZonePoints} zone points); ${pointsOmitted} exceeded the zone-point budget.`]:[])],maxRecords,maxZonePoints};};
- function clear(){current?.dispose();current=null;group.clear();signature='';omitted=0;pointsOmitted=0;}
+export function createProbeNetInspection(THREE,source,{maxRecords=8192}={}){
+ if(!Number.isInteger(maxRecords)||maxRecords<1||maxRecords>8192)throw Error('Invalid probe copper budget.');
+ const group=new THREE.Group();group.name='Probe selected net — all copper layers';let current=null,signature='',omitted=0,colorMode='layer';
+ const state=()=>{const result=current?.state()||{active:false,nets:[],tracks:0,pads:0,vias:0,platedPads:0,fills:0,boundaries:0,omitted:0,sourceLimited:false,warnings:[],layers:source.plan.layers.map(({name,z})=>({name,z})),meshes:0};return {...result,omitted:result.omitted+omitted,sourceLimited:result.sourceLimited||omitted>0,warnings:[...result.warnings,...(omitted?[`${omitted} selected source records omitted by the probe copper budget (${maxRecords} records).`]:[])],maxRecords};};
+ function clear(){current?.dispose();current=null;group.clear();signature='';omitted=0;}
  function update(selection={},enabled=true){
   const nets=[...selectionNetNames(selection,source.board)].sort(),key=JSON.stringify(nets);if(!enabled||!nets.length){clear();return state();}if(key===signature)return state();clear();signature=key;
-  const wanted=new Set(nets);let used=0,points=0;const take=(records,zones=false)=>{const result=[];for(const record of records||[]){if(!wanted.has(record.net))continue;if(used>=maxRecords){omitted++;continue;}if(zones){const count=record.points?.length||0;if(points+count>maxZonePoints){omitted++;pointsOmitted++;continue;}points+=count;}used++;result.push(record);}return result;};
-  const tracks=take(source.board.tracks),pads=take(source.pads),vias=take(source.board.vias),zones=take(source.zones,true);
-  current=createNetInspection(THREE,{...source,board:{...source.board,tracks,pads,vias},pads,zones,sourceLimited:source.sourceLimited||omitted>0});current.setColorMode(colorMode);group.add(current.group);current.update(selection,true);return state();
+  const wanted=new Set(nets);let used=0;const take=(records,key=record=>record.net)=>{const result=[];for(const record of records||[]){if(!wanted.has(key(record)))continue;if(used>=maxRecords){omitted++;continue;}used++;result.push(record);}return result;};
+  const tracks=take(source.board.tracks),pads=take(source.pads),vias=take(source.board.vias),zones=take(source.zones,entry=>entry.record.net);
+  current=createNetInspection(THREE,{...source,board:{...source.board,tracks,pads,vias},pads,zones});current.setColorMode(colorMode);group.add(current.group);current.update(selection,true);return state();
  }
  return {group,update,state,setColorMode(value){colorMode=value==='accent'?'accent':'layer';current?.setColorMode(colorMode);},dispose:clear};
 }

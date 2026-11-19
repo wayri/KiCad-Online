@@ -48,7 +48,7 @@ test('unsupported custom/trapezoid pads and invalid or oversized data fail close
 });
 test('source augmentation reads exact saved pad UUID metadata without traversing polygons',()=>{
  const q=quoted=>({quoted}),ast=['kicad_pcb',['footprint',q('J1'),['pad',q('1'),'thru_hole','roundrect',['uuid',q('one')],['roundrect_rratio',.2],['drill','oval',1,2,['offset',.1,.2]]],['pad',q('2'),'thru_hole','circle',['tstamp','two'],['drill',.7]],['pad',q('3'),'smd','rect']]];
- const result=padSourceDetails(ast);assert.equal(result.size,2);assert.deepEqual(result.get('one'),{type:'Pad',nativeType:'thru_hole',uuid:'one',ownerUuid:undefined,pinNumber:'1',pinName:'',roundrectRatio:.2,drillShape:'oval',drillWidth:1,drillHeight:2,drillOffset:[.1,.2]});assert.deepEqual(result.get('two'),{type:'Pad',nativeType:'thru_hole',uuid:'two',ownerUuid:undefined,pinNumber:'2',pinName:'',drillShape:'circle',drillWidth:.7,drillHeight:.7});
+ const result=padSourceDetails(ast);assert.equal(result.size,3);assert.equal(result.get("display-pad:0:2").uuid,undefined);assert.deepEqual(result.get('one'),{type:'Pad',nativeType:'thru_hole',uuid:'one',ownerUuid:undefined,pinNumber:'1',pinName:'',roundrectRatio:.2,drillShape:'oval',drillWidth:1,drillHeight:2,drillOffset:[.1,.2]});assert.deepEqual(result.get('two'),{type:'Pad',nativeType:'thru_hole',uuid:'two',ownerUuid:undefined,pinNumber:'2',pinName:'',drillShape:'circle',drillWidth:.7,drillHeight:.7});
  ast[1].push(['pad',q('4'),'smd','rect',['uuid',q('one')]]);assert.equal(padSourceDetails(ast).has('one'),false,'duplicate IDs are ambiguous');
  assert.equal(padSourceDetails(['not-a-board']).size,0);
 });

@@ -1,4 +1,6 @@
 /** Saved copper depths and explicit via spans; no geometry or connectivity is inferred. */
+import {savedObjectId} from "./sourceIdentity.mjs";
+
 const value = item => item && typeof item === 'object' && !Array.isArray(item) ? item.quoted : item;
 const kind = node => Array.isArray(node) ? value(node[0]) : undefined;
 const children = (node, name) => (Array.isArray(node) ? node : []).filter(item => kind(item) === name);
@@ -48,8 +50,7 @@ export function sourceCopperPlan(board = {}, ast = [], thickness = 1.6) {
     // The parser counts only vias with a saved position when assigning fallback IDs.
     if ((child(node, 'at')?.length || 0) < 3) continue;
     viaIndex++;
-    // The pinned board parser uses UUIDs, otherwise its valid-via ordinal (not tstamp).
-    const id = String(value(child(node, 'uuid')?.[1]) || `via-${viaIndex}`);
+    const id = savedObjectId(node) || `via-${viaIndex}`;
     if (declarations.has(id)) ambiguous.add(id);
     declarations.set(id, node);
   }

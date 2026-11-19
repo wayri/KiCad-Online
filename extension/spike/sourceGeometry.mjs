@@ -66,3 +66,34 @@ export function sourceZoneGeometry(ast,maxPolygons=1000,maxPoints=500000){
  const omittedByLayer=Object.fromEntries([...counts].filter(([,count])=>count>0));
  return {records,unfilled,truncated:Object.keys(omittedByLayer).length>0,omittedByLayer};
 }
+
+/** Index saved contours by layer without copying their coordinate arrays.
+ * Rendering admits final typed geometry bytes, instead of dropping later layers
+ * when an unrelated contour consumes a project-wide temporary point allowance.
+ * The legacy bounded materializing API above remains available to its callers.
+ */
+/** Index saved contours by copper layer without copying point arrays. */
+export function createSourceZoneIndex(ast,{maxContours=100000}={}){
+ if(!Number.isSafeInteger(maxContours)||maxContours<1)throw TypeError('Invalid zone contour index limit.');
+ const nets=new Map();for(const node of ast)if(kind(node)==='net')nets.set(value(node[1]),String(value(node[2])||''));
+ const byLayer=new Map();let unfilled=0,contours=0,points=0,invalid=0,omitted=0;
+ for(const zone of ast){
+  if(kind(zone)!=='zone')continue;
+  const fills=children(zone,'filled_polygon'),filled=fills.length>0;if(!filled)unfilled++;
+  const declared=child(zone,'layers')?.slice(1).map(value)??[value(child(zone,'layer')?.[1])];
+  const id=value(child(zone,'uuid')?.[1])||value(child(zone,'tstamp')?.[1]);
+  const netCode=value(child(zone,'net')?.[1]),net=String(value(child(zone,'net_name')?.[1])||nets.get(netCode)||(typeof netCode==='string'?netCode:''));
+  for(const polygon of filled?fills:children(zone,'polygon')){
+   const pts=child(polygon,'pts')||[];let size=0,bad=false;
+   for(const node of pts)if(kind(node)==='xy'){if(!Number.isFinite(Number(value(node[1])))||!Number.isFinite(Number(value(node[2]))))bad=true;size++;}
+   if(bad||size<3){invalid++;continue;}
+   const ownLayer=value(child(polygon,'layer')?.[1]);
+   for(const layer of ownLayer?[ownLayer]:declared){
+    if(typeof layer!=='string')continue;if(contours>=maxContours){omitted++;continue;}
+    const descriptor={id:String(id||'saved-zone-'+contours),net,layer,filled,size,contour:contours,sourcePoints:pts};
+    if(!byLayer.has(layer))byLayer.set(layer,[]);byLayer.get(layer).push(descriptor);contours++;points+=size;
+   }
+  }
+ }
+ return {forLayer:layer=>byLayer.get(layer)||[],stats:()=>({contours,points,unfilled,invalid,omitted,layers:byLayer.size,retainsCoordinateCopies:false})};
+}

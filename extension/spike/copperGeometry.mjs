@@ -1,5 +1,6 @@
 /** Saved-coordinate copper contours; numerical error is bounded and disclosed. */
 import {nativePadOutline,nativeDrillOutline} from './padGeometry.mjs';
+import {savedObjectId} from './sourceIdentity.mjs';
 const TAU=Math.PI*2,EPS=1e-9;
 export const COPPER_TOLERANCE_MM=.0025;
 const finite=n=>typeof n==='number'&&Number.isFinite(n);
@@ -41,6 +42,10 @@ export function smoothDrillOutline(pad){
 function insideConvex(loop,point){let sign=0;for(let i=0;i<loop.length-1;i++){const a=loop[i],b=loop[i+1],cross=(b[0]-a[0])*(point[1]-a[1])-(b[1]-a[1])*(point[0]-a[0]);if(Math.abs(cross)<1e-12)return false;const direction=Math.sign(cross);if(sign&&direction!==sign)return false;sign=direction;}return true;}
 export function smoothPadOutline(pad){
  const original=nativePadOutline(pad);if(!original)return null;
+ if(pad.shape==='custom'){
+  const radius=original.drill?Math.min(pad.drillWidth??pad.drill,pad.drillHeight??pad.drill)/2:0,error=Math.max(original.tessellation.error,radius*(1-Math.cos(Math.PI/64)));
+  return {...original,tessellation:{...original.tessellation,error,limited:error>COPPER_TOLERANCE_MM*(1+1e-10)}};
+ }
  const ratio=pad.roundrectRatio??pad.roundrect_rratio,outline=contour(pad.shape,pad.width,pad.height,ratio),drill=pad.drill||pad.drillWidth||pad.drillHeight?smoothDrillOutline(pad):null;
  const radii=[pad.shape==='rect'?0:pad.shape==='roundrect'?Math.min(pad.width,pad.height)*ratio:Math.min(pad.width,pad.height)/2,drill?Math.min(pad.drillWidth??pad.drill,pad.drillHeight??pad.drill)/2:0].filter(r=>r>0),plans=radii.map(radius=>circularTessellation(radius,{min:64}));
  if(drill&&drill.some(point=>!insideConvex(outline,point)))return {...original,tessellation:{error:Math.max(0,...radii.map(r=>r*(1-Math.cos(Math.PI/64)))),limited:true,reason:'Refined hole containment requires retaining the validated contour resolution.'}};
@@ -92,7 +97,7 @@ export function refineCopperTracks(tracks,ast,{maxSegments=200000}={}){
  const close=(a,b)=>a&&b&&Math.hypot(a[0]-b[0],a[1]-b[1])<1e-6;
  for(const node of ast){
   if(!Array.isArray(node)||value(node[0])!=='arc')continue;
-  const a=point(node,'start'),b=point(node,'mid'),c=point(node,'end'),uuid=value(child(node,'uuid')?.[1]),layer=value(child(node,'layer')?.[1]),width=value(child(node,'width')?.[1]);if(!a||!b||!c)continue;
+  const a=point(node,'start'),b=point(node,'mid'),c=point(node,'end'),uuid=savedObjectId(node),layer=value(child(node,'layer')?.[1]),width=value(child(node,'width')?.[1]);if(!a||!b||!c)continue;
   let candidates=typeof uuid==='string'&&groups.has(uuid)?[[uuid,groups.get(uuid)]]:[...groups].filter(([,records])=>records[0].layer===layer&&records[0].width===width&&close(records[0].start,a)&&close(records.at(-1).end,c));
   if(candidates.length!==1){warnings.push('A saved copper arc could not be matched unambiguously; existing parsed segments are retained.');continue;}
   const [key,records]=candidates[0];if(seen.has(key)){replacements.delete(key);warnings.push('Duplicate saved copper arc identity retained without refinement.');continue;}seen.add(key);
