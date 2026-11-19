@@ -12,8 +12,8 @@ test('saved via annuli are gold on both copper layers without changing span or i
  const{env}=environment();const ast=env.KiCadDesignDiff.parse('(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal)) (via (at 1 1) (size .9) (drill .4) (layers "F.Cu" "B.Cu") (uuid "via-1")))');
  const vias=env.KiCadPCBRenderer.build(ast,'board.kicad_pcb').primitives.filter(p=>p.kind==='via');assert.equal(vias.length,2);assert.deepEqual(Array.from(vias,p=>p.layer),['F.Cu','B.Cu']);for(const p of vias){assert.equal(p.uuid,'via-1');assert.equal(p.color,'#c5aa6c');}
 });
-for(const mode of ['source','layer','accent','context'])test('via paint remains gold in '+mode,()=>{
+for(const mode of ['source','layer','accent','context'])test('via paint keeps gold when selected and dims unrelated copper in '+mode,()=>{
  const{env,host}=environment(),canvas=env.KiCadOwnedCanvas.mount(host,{pcb:true,dark:true});
  const via={type:'circle',kind:'via',uuid:'via-1',x:1,y:1,r:.45,fill:true,color:'#c5aa6c',layer:'F.Cu'},track={type:'line',kind:'track',uuid:'track',points:[{x:0,y:0},{x:2,y:0}],width:.2,layer:'F.Cu'};
- try{canvas.setDocument({primitives:[via,track],layers:['F.Cu']},'board.kicad_pcb');const painted=[];canvas.paint=(p,style)=>painted.push({p,style});canvas.setNetHighlight({primitives:[mode==='context'?track:via]},{mode:'dim',selectionColor:mode==='context'?'layer':mode});canvas.drawGeometry();const item=painted.find(x=>x.p===via);assert.ok(item);assert.equal(item.style.color||via.color,'#c5aa6c');}finally{canvas.dispose();}
+ try{canvas.setDocument({primitives:[via,track],layers:['F.Cu']},'board.kicad_pcb');const painted=[];canvas.paint=(p,style)=>painted.push({p,style});canvas.setNetHighlight({primitives:[mode==='context'?track:via]},{mode:'dim',selectionColor:mode==='context'?'layer':mode});canvas.drawGeometry();const item=painted.find(x=>x.p===via);assert.ok(item);if(mode==='context'){assert.notEqual(item.style.color,via.color);assert.ok(item.style.opacity<=.05);}else assert.equal(item.style.color||via.color,'#c5aa6c');}finally{canvas.dispose();}
 });

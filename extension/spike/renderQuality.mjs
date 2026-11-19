@@ -69,18 +69,17 @@ export function probeViewportPlan(width,height,deviceRatio=1){
  return {ratio,width:Math.max(1,Math.floor(w*ratio)),height:Math.max(1,Math.floor(h*ratio)),maxPixels:500000};
 }
 
-// Resolve overlapping manufactured copper in depth-buffer space without
-// moving saved pads, tracks, drill walls or component model interfaces.
-// Extruded walls must not inherit cap slope bias: vertical walls can otherwise
-// jump through caps. Pad/via cap materials use the separate cap policy below.
-export function copperDepthPolicy(role,surface='all') {
-  const rank = {zone:1,track:-1,pad:-2,via:-3}[role];
-  if (typeof rank !== 'number') throw Error('Unknown copper surface role.');
-  if(!['all','cap','wall'].includes(surface))throw Error('Unknown copper surface kind.');
-  return {polygonOffset:surface!=='wall',polygonOffsetFactor:surface==='cap'?rank/2:0,polygonOffsetUnits:surface==='wall'?0:rank*2};
-}
+export {copperDepthPolicy, copperCapMaterials, configureCopperDepth, createLinearCopperMaterials} from './copperDepth.mjs';
 
-/** Three.js ExtrudeGeometry assigns material 0 to lids and 1 to side walls. */
-export function copperCapMaterials(THREE,role,parameters){
-  return ['cap','wall'].map(surface=>new THREE.MeshStandardMaterial({...parameters,...copperDepthPolicy(role,surface)}));
+/** GTAO and its denoiser reconstruct projection depth from the normal target. */
+export function configureOcclusionDepth(material) {
+  const inheritedCompile = material.onBeforeCompile;
+  const baseKey = material.customProgramCacheKey();
+  const chunk = '#include <logdepthbuf_fragment>';
+  material.onBeforeCompile = function(shader, renderer) {
+    inheritedCompile?.call(this, shader, renderer);
+    if (!shader.fragmentShader.includes(chunk)) throw Error('Unsupported occlusion depth shader.');
+    shader.fragmentShader = shader.fragmentShader.replace(chunk, '');
+  };
+  material.customProgramCacheKey = () => baseKey + '|perspective-occlusion-depth-v1';
 }

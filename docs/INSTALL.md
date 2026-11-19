@@ -1,12 +1,12 @@
 # Install KiCad Online
 
-Release package: **extension 0.12.102 / Android 1.100**. Store submission
+Release package: **extension 0.12.103 / Android 1.101**. Store submission
 and approval are separate from GitHub downloads. See [release status](RELEASE-STATUS.md).
 
-Download `kicad-visual-review-chrome-edge-brave-opera-vivaldi-chromium-0.12.102.zip`,
-or `kicad-visual-review-firefox-0.12.102.zip` / `kicad-visual-review-vscode-0.12.102.vsix`
-from [the 0.12.102 GitHub release](https://github.com/wayri/KiCad-Online/releases/tag/v0.12.102).
-Android: `pocket-kivi-android-phone-tablet-1.100-development.apk` is included in the matching release.
+Download `kicad-visual-review-chrome-edge-brave-opera-vivaldi-chromium-0.12.103.zip`,
+or `kicad-visual-review-firefox-0.12.103.zip` / `kicad-visual-review-vscode-0.12.103.vsix`
+from [the 0.12.103 GitHub release](https://github.com/wayri/KiCad-Online/releases/tag/v0.12.103).
+Android: `pocket-kivi-android-phone-tablet-1.101-development.apk` is included in the matching release.
 GitHub's automatic Source code archives are source checkouts, not installable extensions.
 
 The browser and VS Code editions support Windows, Linux and macOS. Ordinary

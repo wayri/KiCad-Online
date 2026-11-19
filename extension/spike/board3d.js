@@ -1,6 +1,10 @@
 import {createLayerInspection} from './layerInspection.mjs';
 import {createSelectionGeometry} from './selectionGeometry.mjs';
 import * as THREE from "three";
+import {createSharedGeometryCache} from './sharedGeometry.mjs';
+import {createModelTemplateCache} from './modelTemplates.mjs';
+import {createSceneResources} from './sceneResources.mjs';
+import {createModelGraphBudget,modelDecodeConcurrency,preflightModelGLB} from './modelGraphBudget.mjs';
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { VRMLLoader } from "three/addons/loaders/VRMLLoader.js";
@@ -12,8 +16,6 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { GTAOPass } from "three/addons/postprocessing/GTAOPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
-import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
-import { FXAAShader } from "three/addons/shaders/FXAAShader.js";
 import { SMAAPass } from "three/addons/postprocessing/SMAAPass.js";
 import "../design-diff.js";
 import "../repo-models.js";
@@ -37,9 +39,9 @@ import {sourceCopperPlan} from "./copperStack.mjs";
 import {createNetInspection} from "./netInspection.mjs";
 import {createSelectionAppearance} from "./selectionAppearance.mjs";
 import { createExplodeView } from './explodeView.mjs';
-import { selectionMatcher, selectableRecord, selectionGesture, holdGesture } from "./selectionState.mjs";
+import { selectionMatcher, selectionNetNames, selectableRecord, selectionGesture, holdGesture } from "./selectionState.mjs";
 import { sphereFitDistance,boxFitDistance } from "./fitPolicy.mjs";
-import { qualityName, qualityViewport, graphicsProfile, boardOcclusion, boardClipRange, studioMaterials, padHasMaskOpening, physicalColors, copperDepthPolicy, copperCapMaterials } from "./renderQuality.mjs";
+import { qualityName, qualityViewport, graphicsProfile, boardOcclusion, boardClipRange, configureOcclusionDepth, studioMaterials, padHasMaskOpening, physicalColors, copperDepthPolicy, copperCapMaterials, configureCopperDepth, createLinearCopperMaterials } from "./renderQuality.mjs";
 import { createResultOverlay } from "./result3d.js";
 import { sourceZoneGeometry,drillLoopInsideBoard } from "./sourceGeometry.mjs";
 import { padSourceDetails } from "./padGeometry.mjs";
@@ -150,8 +152,8 @@ export function mountBoard3D(container, source, options = {}) {
   const mechanical = options.mechanical === true;
   const captureAbort = new AbortController();
   const initialDark = mechanical ? options.dark === true : options.dark !== false;
-  const board = parseKicadBoard(source);
   const sourceAST=globalThis.KiCadDesignDiff.parse(source),savedZones=sourceZoneGeometry(sourceAST);
+  const board = parseKicadBoard(source,sourceAST);
   const sourceRecords=sourceSelectionRecords(sourceAST,board);board.components=sourceRecords.components;
   const padDetails=padSourceDetails(sourceAST),nativePads=sourceRecords.pads.map(pad=>({...pad,...padDetails.get(pad.uuid||pad.id)}));board.pads=nativePads;
   const geometryDiagnostics=[];
@@ -216,6 +218,11 @@ export function mountBoard3D(container, source, options = {}) {
   const centerY = (board.bounds.minY + board.bounds.maxY) / 2;
   const world = ([x, y]) => [x - centerX, centerY - y];
   const localPadPoint=([x,y])=>[x,-y];
+  const sharedPadGeometry=createSharedGeometryCache();
+  const padExtrusion=(outline,thickness)=>sharedPadGeometry.get(
+    JSON.stringify([outline.outline,outline.drill||null,thickness]),
+    ()=>new THREE.ExtrudeGeometry(padShape(outline),{depth:thickness,bevelEnabled:false,curveSegments:8})
+  );
   const padShape=outline=>{const shape=new THREE.Shape();pathFor(outline.outline,localPadPoint).getPoints().forEach((point,index)=>index?shape.lineTo(point.x,point.y):shape.moveTo(point.x,point.y));if(outline.drill)shape.holes.push(pathFor(outline.drill,localPadPoint));return shape;};
   const width = Math.max(1, board.width), height = Math.max(1, board.height), extent = Math.max(width, height);
   const thickness = board.stackup?.filter((layer) => Number.isFinite(layer.thickness))
@@ -227,8 +234,13 @@ export function mountBoard3D(container, source, options = {}) {
   // OrbitControls captures its up basis at construction. Use the board's
   // thickness axis consistently for orbiting and all fitted camera presets.
   camera.up.set(0,0,1);
-  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: "high-performance" });
+  const renderer = new THREE.WebGLRenderer({ antialias: false, logarithmicDepthBuffer: true, alpha: false, powerPreference: "high-performance" });
   const gl=renderer.getContext(),graphics=graphicsProfile({maxTextureSize:renderer.capabilities.maxTextureSize,maxRenderbufferSize:gl.getParameter(gl.MAX_RENDERBUFFER_SIZE),deviceMemory:globalThis.navigator?.deviceMemory,hardwareConcurrency:globalThis.navigator?.hardwareConcurrency,floatTargets:renderer.extensions.has('EXT_color_buffer_float'),android:/Android/i.test(globalThis.navigator?.userAgent||'')});
+  const modelResources=createSceneResources();
+  const modelGeometryBudget=(graphics.constrained?32:graphics.premium?96:64)*1024*1024;
+  const modelTextureBudget=(graphics.constrained?16:graphics.premium?64:32)*1024*1024;
+  const modelGraph=createModelGraphBudget(graphics.constrained?8192:32768);
+  const decodeConcurrency=modelDecodeConcurrency(graphics.constrained,board.components.length);
   if(!savedQuality&&!options.quality)initialQuality=graphics.defaultQuality;
   let active=true,frame=0,contextLost=false,renderCount=0,pipeline=null,quality=initialQuality,shaderFailure=false;
   function invalidate(){if(!active||contextLost||frame)return;frame=requestAnimationFrame(drawFrame);}
@@ -238,21 +250,21 @@ export function mountBoard3D(container, source, options = {}) {
   }
   function disposePipeline(){if(!pipeline)return;for(const pass of pipeline.passes){pass.dispose?.();if(pass instanceof GTAOPass){pass.gtaoMaterial.dispose();pass.blendMaterial.dispose();pass.depthTexture?.dispose();}}pipeline.composer.dispose();pipeline=null;}
   function createPipeline(){
-    disposePipeline();if(quality==='sharp'){
-      const target=new THREE.WebGLRenderTarget(1,1,{type:renderer.extensions.has('EXT_color_buffer_float')?THREE.HalfFloatType:THREE.UnsignedByteType,depthBuffer:true,stencilBuffer:false});
-      const composer=new EffectComposer(renderer,target),passes=[new RenderPass(scene,camera),new OutputPass(),new ShaderPass(FXAAShader)];pipeline={composer,passes,fxaa:passes[2]};for(const pass of passes)composer.addPass(pass);return;
-    }if(quality!=='high')return;
-    if(!renderer.extensions.has('EXT_color_buffer_float'))throw Error('Floating-point render targets are unavailable.');
-    const target=new THREE.WebGLRenderTarget(1,1,{type:THREE.HalfFloatType,depthBuffer:true,stencilBuffer:false});
+    disposePipeline();if(quality==='low')return;
+    const enhanced=quality==='high',floatTargets=renderer.extensions.has('EXT_color_buffer_float');
+    if(enhanced&&!floatTargets)throw Error('Floating-point render targets are unavailable.');
+    const target=new THREE.WebGLRenderTarget(1,1,{type:floatTargets?THREE.HalfFloatType:THREE.UnsignedByteType,depthBuffer:true,stencilBuffer:false,samples:0});
     const composer=new EffectComposer(renderer,target),passes=[];pipeline={composer,passes};
-    const base=new RenderPass(scene,camera),ao=new GTAOPass(scene,camera,1,1,undefined,boardOcclusion(thickness));
-    ao.enabled=lighting!=='universal';ao.blendIntensity=.65;ao.updatePdMaterial({radius:4,rings:2,samples:12});
-    // Translucent solder zones, glass and result overlays must not become
-    // opaque occluders when the normal/depth pass substitutes its material.
-    const inheritedVisibility=ao.overrideVisibility.bind(ao);ao.overrideVisibility=()=>{inheritedVisibility();scene.traverse(object=>{const materials=Array.isArray(object.material)?object.material:[object.material];if(materials.some(material=>material&&(material.transparent||material.depthTest===false)))object.visible=false;});};
+    const base=new RenderPass(scene,camera);passes.push(base);
+    if(enhanced){const ao=new GTAOPass(scene,camera,1,1,undefined,boardOcclusion(thickness));
+      configureOcclusionDepth(ao.normalMaterial);
+      ao.enabled=lighting!=='universal';ao.blendIntensity=.65;ao.updatePdMaterial({radius:4,rings:2,samples:12});
+      const inheritedVisibility=ao.overrideVisibility.bind(ao);ao.overrideVisibility=()=>{inheritedVisibility();scene.traverse(object=>{const materials=Array.isArray(object.material)?object.material:[object.material];if(materials.some(material=>material&&(material.transparent||material.depthTest===false)))object.visible=false;});};
+      passes.push(ao);
+    }
     const output=new OutputPass(),smaa=new SMAAPass(1,1);
     for(const texture of [smaa.areaTexture,smaa.searchTexture])texture.image?.addEventListener?.('load',invalidate,{once:true});
-    passes.push(base,ao,output,smaa);for(const pass of passes)composer.addPass(pass);
+    passes.push(output,smaa);for(const pass of passes)composer.addPass(pass);
   }
   function fallbackQuality(message){disposePipeline();quality='balanced';qualitySelect.value=quality;host.dataset.quality=quality;shaderFailure=false;lightingRig.set(lighting,quality);renderer.setRenderTarget(null);graphicsNotice(message);sizeViewport();}
   function applyQuality(value,persist=true){quality=qualityName(value);qualitySelect.value=quality;host.dataset.quality=quality;qualityNotice.hidden=true;shaderFailure=false;
@@ -292,6 +304,7 @@ export function mountBoard3D(container, source, options = {}) {
   lightingSelect.onchange=()=>applyLighting(lightingSelect.value);
   applyLighting(lighting,false);
   const boardGroup = new THREE.Group(); scene.add(boardGroup);
+  const probeCopperMaterials=createLinearCopperMaterials();
   const probeRegistry=createProbeRegistry(2),probeMaterials=new WeakMap(),probeInstanceColors=new WeakMap();
   function rememberProbeResources(group){group.traverse(object=>{if(object.material&&!probeMaterials.has(object))probeMaterials.set(object,object.material);if(object.isInstancedMesh&&!probeInstanceColors.has(object))probeInstanceColors.set(object,object.instanceColor);});}
   const copperGroups = new Map(), pickables = [];
@@ -311,7 +324,7 @@ export function mountBoard3D(container, source, options = {}) {
     if(role==='pads'){for(const material of materials)material.color.setHex(0xffffff);record.pads.forEach((pad,index)=>mesh.setColorAt(index,new THREE.Color(useRealistic?(padHasMaskOpening(pad,layer)?physicalColors.exposedCopper:physicalColors.coatedCopper):layerThreeColor(layer))));if(mesh.instanceColor)mesh.instanceColor.needsUpdate=true;}
     else for(const material of materials)material.color.setHex(useRealistic?physicalColors.coatedCopper:layerThreeColor(layer));
     for(const material of materials){material.metalness=useRealistic&&role!=='pads'?.08:studioMaterials.copper.metalness;material.roughness=useRealistic&&role!=='pads'?.52:studioMaterials.copper.roughness;}
-  }if(selectionAppearanceReady)setSelection(externalSelection);invalidate();}
+  }probeCopperMaterials.sync();if(selectionAppearanceReady)setSelection(externalSelection);invalidate();}
   appearanceSelect.onchange=()=>{realistic=appearanceSelect.value==='realistic';applyAppearance();};
   const groupFor = (layer) => {
     if (!copperGroups.has(layer)) { const group = new THREE.Group(); group.name = layer; boardGroup.add(group); copperGroups.set(layer, group); group.visible=!mechanical; }
@@ -365,7 +378,7 @@ export function mountBoard3D(container, source, options = {}) {
     const candidates=refinedTracks.tracks.filter(item=>item.layer===layer&&(isArc(item)?'arcs':'tracks')===category),stroke=copperStrokeBatches(THREE,candidates,{world,z,thickness:placement.thickness});
     if(stroke.invalid)geometryDiagnostics.push(`${layer}: invalid saved track widths or positions omitted.`);
     if(stroke.plan?.limited)geometryDiagnostics.push(`${layer}: large track caps exceed the ${stroke.plan.tolerance} mm tessellation tolerance at the 128-segment display limit.`);
-    const trackMaterial=new THREE.MeshStandardMaterial({color,...studioMaterials.copper,...copperDepthPolicy('track')});
+    const trackMaterial=configureCopperDepth(new THREE.MeshStandardMaterial({color,...studioMaterials.copper}),'track');
     for(const batch of stroke.batches){const mesh=makeInstanced(groupFor(layer),batch.geometry,trackMaterial,batch.records,batch.place,viewportSceneIdentity('copper-track',layer,category+'-'+batch.part));if(mesh){visibilityRecord(mesh,category,layer);pickables.push(mesh);appearanceRecords.push({mesh,role:'tracks',layer});}}
     if(!stroke.batches.length)trackMaterial.dispose();
     }
@@ -373,8 +386,8 @@ export function mountBoard3D(container, source, options = {}) {
     const batches=new Map();let omittedPads=0;
     for(const pad of pads){const key=JSON.stringify([pad.shape,pad.width,pad.height,pad.roundrectRatio,pad.drill,pad.drillShape,pad.drillWidth,pad.drillHeight,pad.drillOffset]);if(!batches.has(key)){const outline=smoothPadOutline(pad);if(!outline||batches.size>=256){omittedPads++;continue;}if(outline.tessellation.limited)geometryDiagnostics.push(`${layer}: a pad contour retains validated geometry because the 0.0025 mm tolerance could not be met within hole-containment/display limits.`);batches.set(key,{outline,pads:[]});}batches.get(key).pads.push(pad);}
     if(omittedPads)geometryDiagnostics.push(`${layer}: ${omittedPads} unsupported/ambiguous pad shapes omitted; no rectangular stand-ins were substituted.`);
-    const padMaterial=batches.size?copperCapMaterials(THREE,'pad',{color:0xffffff,...studioMaterials.copper}):null;
-    for(const [key,batch]of batches){const geometry=new THREE.ExtrudeGeometry(padShape(batch.outline),{depth:placement.thickness,bevelEnabled:false,curveSegments:8});
+    const padMaterial=batches.size?copperCapMaterials(THREE,'pad',{color:0xffffff,...studioMaterials.copper},{logarithmicDepth:true}):null;
+    for(const [key,batch]of batches){const geometry=padExtrusion(batch.outline,placement.thickness);
       const padMesh=makeInstanced(groupFor(layer),geometry,padMaterial,batch.pads,(object,pad)=>{const[x,y]=world(pad.at);object.position.set(x,y,placement.base);object.rotation.z=(pad.rotation||0)*Math.PI/180;},viewportSceneIdentity('copper-pad',layer,key));
       if(padMesh){visibilityRecord(padMesh,'pads',layer);pickables.push(padMesh);appearanceRecords.push({mesh:padMesh,role:'pads',layer,pads:batch.pads});}
     }
@@ -386,7 +399,7 @@ export function mountBoard3D(container, source, options = {}) {
         if (index === 0) zoneShape.moveTo(point.x, point.y); else zoneShape.lineTo(point.x, point.y);
       });
       const mesh = new THREE.Mesh(new THREE.ShapeGeometry(zoneShape),
-        new THREE.MeshStandardMaterial({ color,...studioMaterials.copper,side:THREE.DoubleSide,depthWrite:true,...copperDepthPolicy('zone') }));
+        configureCopperDepth(new THREE.MeshStandardMaterial({color,...studioMaterials.copper,side:THREE.DoubleSide,depthWrite:true}),'zone'));
       mesh.position.z = ['F.Cu','B.Cu'].includes(layer)?zoneSurfaceZ(layer,placement):placement.center; mesh.userData.record = { ...zone, type: "Zone" };
       groupFor(layer).add(mesh);visibilityRecord(mesh,'fills',layer); pickables.push(mesh);
       appearanceRecords.push({mesh,role:'zone',layer});
@@ -395,17 +408,17 @@ export function mountBoard3D(container, source, options = {}) {
   const viaBatches=new Map();let omittedVias=0;
   for(const via of board.vias){const span=copperPlan.viaSpans.get(via.id),outline=smoothPadOutline({shape:'circle',width:via.size,height:via.size,drill:via.drill,drillShape:'circle'});if(!outline||!span){omittedVias++;continue;}const key=JSON.stringify([via.size,via.drill,span.zMin,span.zMax]);if(!viaBatches.has(key)){if(viaBatches.size>=128){omittedVias++;continue;}viaBatches.set(key,{outline,span,vias:[]});}viaBatches.get(key).vias.push(via);}
   if(omittedVias)geometryDiagnostics.push(`${omittedVias} via bodies with unsupported annuli or unknown saved spans omitted.`);
-  const viaMaterial=new THREE.MeshStandardMaterial({color:physicalColors.exposedCopper,...studioMaterials.copper,...copperDepthPolicy('via')});
+  const viaMaterial=new THREE.MeshStandardMaterial({color:physicalColors.exposedCopper,...studioMaterials.copper,...copperDepthPolicy('via','wall')});
   for(const[key,batch]of viaBatches){const geometry=drillWallGeometry(THREE,smoothDrillOutline({drill:batch.vias[0].drill,drillShape:'circle'}),batch.span.zMax-batch.span.zMin);
     const wallMaterial=viaMaterial.clone();wallMaterial.side=THREE.DoubleSide;
     // Render the saved bore wall, not a solid annulus through the dielectric.
     const mesh=makeInstanced(boardGroup,geometry,wallMaterial,batch.vias,(object,via)=>{const[x,y]=world(via.at);object.position.set(x,y,batch.span.zMin);},viewportSceneIdentity('via-barrel',batch.span.from+'-'+batch.span.to,key));if(mesh){visibilityRecord(mesh,'vias',batch.span.through?'through':batch.span.from+'-'+batch.span.to);pickables.push(mesh);viaExplode.push({mesh,span:batch.span});}}
   geometryDiagnostics.push('Outer copper uses saved plan centers/thickness (or the disclosed stackup fallback) with a 0.001 mm outward display offset; the substrate spans the outer copper inner faces. Saved zone fills are opaque zero-height display films inset by the smaller of 0.005 mm or one quarter of the copper thickness. Via bodies show the saved drill wall; plating thickness is not inferred.');
-  const viaCapMaterial=viaBatches.size?copperCapMaterials(THREE,'via',{color:physicalColors.exposedCopper,...studioMaterials.copper}):null;
+  const viaCapMaterial=viaBatches.size?copperCapMaterials(THREE,'via',{color:physicalColors.exposedCopper,...studioMaterials.copper},{logarithmicDepth:true}):null;
   // Annuli follow only saved span endpoints, including blind/buried inner layers.
   for(const {name:layer} of copperPlan.layers)for(const [key,batch]of viaBatches){
     if(batch.span.from!==layer&&batch.span.to!==layer)continue;
-    const saved=copperPlan.byLayer.get(layer),placement=['F.Cu','B.Cu'].includes(layer)?outerCopperPlacement(layer,thickness,saved.thickness,saved.z):{base:saved.z-saved.thickness/2,thickness:saved.thickness},geometry=new THREE.ExtrudeGeometry(padShape(batch.outline),{depth:placement.thickness,bevelEnabled:false,curveSegments:8});
+    const saved=copperPlan.byLayer.get(layer),placement=['F.Cu','B.Cu'].includes(layer)?outerCopperPlacement(layer,thickness,saved.thickness,saved.z):{base:saved.z-saved.thickness/2,thickness:saved.thickness},geometry=padExtrusion(batch.outline,placement.thickness);
     const cap=makeInstanced(groupFor(layer),geometry,viaCapMaterial,batch.vias,(object,via)=>{const[x,y]=world(via.at);object.position.set(x,y,placement.base);},viewportSceneIdentity('via-annulus',layer,key));
     if(cap){visibilityRecord(cap,'vias',layer);pickables.push(cap);}
   }
@@ -474,26 +487,23 @@ export function mountBoard3D(container, source, options = {}) {
     for(const message of ['Mask openings follow saved pad layer flags; this is not a reconstructed solder-mask solid.',`${board.components.length-resolved} footprints have no linked model; bounded stand-ins are used only where usable saved footprint bounds exist.`,...modelDiagnostics]){const row=document.createElement('li');row.textContent=message;list.append(row);}details.append(summary,list);notice.append(details);
     notice.title = modelDiagnostics.join("\n");
   }
-  function glbIsSelfContained(bytes) {
-    if (bytes.byteLength < 20) return false;
-    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    if (view.getUint32(0, true) !== 0x46546c67 || view.getUint32(4, true) !== 2 ||
-        view.getUint32(8, true) !== bytes.byteLength || view.getUint32(16, true) !== 0x4e4f534a) return false;
-    const length = view.getUint32(12, true);
-    if (length > bytes.byteLength - 20) return false;
-    let descriptor;
-    try { descriptor = JSON.parse(new TextDecoder().decode(bytes.subarray(20, 20 + length))); }
-    catch { return false; }
-    return [...(descriptor.buffers || []), ...(descriptor.images || [])]
-      .every(item => !item.uri || /^data:/i.test(item.uri));
+  function modelWrappers(index){return modelGroups.has(index)?2:3;}
+  function retainModel(root,index){
+    try{
+      modelGraph.checkTemplate(root,modelWrappers(index));
+      return modelResources.retain(root,modelGeometryBudget,modelTextureBudget);
+    }catch(error){
+      modelResources.discard(root);
+      throw error;
+    }
   }
-  async function sceneFromAsset(entry, asset, consumeBytes) {
+  async function sceneFromAsset(entry, asset, consumeBytes, index) {
     const base64 = asset?.base64;
     if (typeof base64 !== "string" || base64.length > 11_200_000 || !/^[A-Za-z0-9+/]*={0,2}$/.test(base64)) {
       throw new Error("invalid or oversized model asset response");
     }
     const bytes = entry.embeddedAsset ? await globalThis.KiCadEmbeddedModels.decode(asset, fzstd.decompress)
-      : Uint8Array.from(atob(base64), char => char.charCodeAt(0));
+      : globalThis.KiCadEmbeddedModels.decodeBase64(base64);
     if (bytes.byteLength > 8 * 1024 * 1024) throw new Error("model asset exceeds 8 MiB");
     consumeBytes(bytes.byteLength);
     if (["step","stp"].includes(entry.format)) {
@@ -505,15 +515,22 @@ export function mountBoard3D(container, source, options = {}) {
         const material=new THREE.MeshStandardMaterial({color:new THREE.Color(...mesh.color),roughness:.65,metalness:.1});
         group.add(new THREE.Mesh(geometry,material));
       }
-      return group;
+      return retainModel(group,index);
     }
     if (entry.format === "glb") {
-      if (!glbIsSelfContained(bytes)) throw new Error("GLB has an external dependency or invalid header");
-      return (await new GLTFLoader().parseAsync(bytes.buffer, "")).scene;
+      try {
+        preflightModelGLB(bytes,modelGraph.limit,{
+          maxAccessorBytes:modelGeometryBudget,maxTextureBytes:modelTextureBudget,maxTextureDimension:graphics.maxDimension
+        });
+      } catch(error) {
+        if(['MODEL_GRAPH_BUDGET','MODEL_ALLOCATION_BUDGET'].includes(error.code))modelGraph.rejectPreflight();
+        throw error;
+      }
+      return retainModel((await new GLTFLoader().parseAsync(bytes.buffer, "")).scene,index);
     }
     const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     const prepared = prepareVRMLSource(text);
-    return restoreVRMLNames(new VRMLLoader().parse(prepared.source), prepared.identifiers);
+    return retainModel(restoreVRMLNames(new VRMLLoader().parse(prepared.source), prepared.identifiers),index);
   }
   async function loadRepositoryModels(modelSource) {
     if (!options.boardPath) return;
@@ -528,64 +545,71 @@ export function mountBoard3D(container, source, options = {}) {
     catch (error) { if(!active||captureAbort.signal.aborted)return;modelDiagnostics.push(`Cannot read model references: ${error.message}`); showModelDiagnostics(); return; }
     modelDiagnostics.push(...inventory.diagnostics);
     showModelDiagnostics();
-    const cache = new Map();
+    const cache = createModelTemplateCache(inventory.models);
     const componentIndexes=new Map(board.components.map((component,index)=>[component.id,index]));
     let totalBytes = 0, cursor = 0;
     async function one(entry) {
       const index = componentIndexes.get(entry.footprintId);
-      if (index === undefined) { modelDiagnostics.push(`${entry.reference}: footprint identity not found`); return; }
+      if (index === undefined) { modelDiagnostics.push(`${entry.reference}: footprint identity not found`); cache.release(entry); return; }
       try {
-        const key = entry.assetKey || entry.path;
-        if (!cache.has(key)) cache.set(key, (async () => {
+        const template = await cache.get(entry, async () => {
           const asset = entry.embeddedAsset || await options.loadAsset?.(entry.path);
+          if(!active)throw Error('3D viewer closed before model decoding.');
           return sceneFromAsset(entry, asset, bytes => {
             totalBytes += bytes;
             if (totalBytes > 24 * 1024 * 1024) throw new Error("Decoded 3D model assets exceed 24 MiB in this viewer");
-          });
-        })());
-        const template = await cache.get(key);
-        if (!active) return;
-        const clone = template.clone(true);
-        let meshCount = 0;
-        clone.traverse(object => {
-          if (object.isMesh && object.geometry?.attributes?.position?.count) {
-            meshCount++;
-            object.castShadow = true; object.receiveShadow = true;
-            object.userData.record = { ...board.components[index], type: "Component", modelPath: entry.path };
-            pickables.push(object);
-          }
+          },index);
         });
-        if (!meshCount) throw new Error("asset has no drawable mesh");
-        const pose = globalThis.KiCadRepoModels.modelPose(entry, centerX, centerY, thickness);
-        const group = new THREE.Group();
-        group.position.set(...pose.position);
-        group.rotation.z = pose.footprintAngle;
-        const local = new THREE.Group();
-        // KiCad's VRML exporter composes X/Y/Z model rotations before footprint rotation.
-        local.rotation.set(...pose.modelRotation, "ZYX");
-        local.scale.set(...pose.scale);
-        local.add(clone); group.add(local);
-        if (!modelGroups.has(index)) {
-          const footprintModels = new THREE.Group();
-          modelGroups.set(index, footprintModels); parts.add(footprintModels);
-        }
-        modelGroups.get(index).add(group);
-        loadedModelIndexes.add(index);
-        if (entry.format === "glb") modelDiagnostics.push(`${entry.reference}: GLB geometry is interpreted in millimetres.`);
-        updateComponentVisibility(index);
-        // Extend the cached enclosure once per arriving model, not once per
-        // camera frame. Keep late models inside the clip range after user pan.
-        group.updateWorldMatrix(true,true);clipBounds.union(new THREE.Box3().setFromObject(group));const loadedSphere=clipBounds.getBoundingSphere(new THREE.Sphere());fittedRadius=loadedSphere.radius;fittedCenter.copy(loadedSphere.center);updateClipping();
-        rememberProbeResources(group);probeRegistry.sourceAdded(group);
-        if(Object.keys(externalSelection).length)setSelection(externalSelection);
+        if (!active) return;
+        modelGraph.admit(template,modelWrappers(index),()=>{
+          const clone = cache.isLastUse(entry)?template:template.clone(true);
+          modelResources.retainClone(clone,modelGeometryBudget,modelTextureBudget);
+          let meshCount = 0;
+          clone.traverse(object => {
+            if (object.isMesh && object.geometry?.attributes?.position?.count) {
+              meshCount++;
+              object.castShadow = true; object.receiveShadow = true;
+              object.userData.record = { ...board.components[index], type: "Component", modelPath: entry.path };
+              pickables.push(object);
+            }
+          });
+          if (!meshCount) throw new Error("asset has no drawable mesh");
+          const pose = globalThis.KiCadRepoModels.modelPose(entry, centerX, centerY, thickness);
+          const group = new THREE.Group();
+          group.position.set(...pose.position);
+          group.rotation.z = pose.footprintAngle;
+          const local = new THREE.Group();
+          // KiCad's VRML exporter composes X/Y/Z model rotations before footprint rotation.
+          local.rotation.set(...pose.modelRotation, "ZYX");
+          local.scale.set(...pose.scale);
+          local.add(clone); group.add(local);
+          if (!modelGroups.has(index)) {
+            const footprintModels = new THREE.Group();
+            modelGroups.set(index, footprintModels); parts.add(footprintModels);
+          }
+          modelGroups.get(index).add(group);
+          loadedModelIndexes.add(index);
+          if (entry.format === "glb") modelDiagnostics.push(`${entry.reference}: GLB geometry is interpreted in millimetres.`);
+          updateComponentVisibility(index);
+          // Extend the cached enclosure once per arriving model, not once per
+          // camera frame. Keep late models inside the clip range after user pan.
+          group.updateWorldMatrix(true,true);clipBounds.union(new THREE.Box3().setFromObject(group));const loadedSphere=clipBounds.getBoundingSphere(new THREE.Sphere());fittedRadius=loadedSphere.radius;fittedCenter.copy(loadedSphere.center);updateClipping();
+          rememberProbeResources(group);probeRegistry.sourceAdded(group);
+          if(Object.keys(externalSelection).length)setSelection(externalSelection);
+        });
       } catch (error) {
-        modelDiagnostics.push(`${entry.reference}: ${entry.path}: ${error?.message || String(error)}`);
+        if(active)modelDiagnostics.push(`${entry.reference}: ${entry.path}: ${error?.message || String(error)}`);
+      } finally {
+        cache.release(entry);
       }
-      showModelDiagnostics();
+      if(active)showModelDiagnostics();
     }
-    await Promise.all(Array.from({ length: Math.min(3, inventory.models.length) }, async () => {
+    await Promise.all(Array.from({ length: Math.min(decodeConcurrency, inventory.models.length) }, async () => {
       while (cursor < inventory.models.length && active) await one(inventory.models[cursor++]);
     }));
+    cache.clear();
+    stepClient?.dispose();
+    stepClient=null;
     if(active) {
       showModelDiagnostics(); setSelection(externalSelection);
       // Fit real model height after asynchronous decoding, but never undo an
@@ -605,7 +629,7 @@ export function mountBoard3D(container, source, options = {}) {
     const plan=qualityViewport(viewportWidth,viewportHeight,globalThis.devicePixelRatio,graphics.maxDimension,quality,graphics),ratio=plan.ratio;
     if (renderer.getPixelRatio() !== ratio) renderer.setPixelRatio(ratio);
     renderer.setSize(viewportWidth, viewportHeight, false); resizeProjection(camera,viewportWidth / viewportHeight);
-    if(pipeline){pipeline.composer.setPixelRatio(ratio);pipeline.composer.setSize(viewportWidth,viewportHeight);pipeline.fxaa?.material.uniforms.resolution.value.set(1/plan.width,1/plan.height);}
+    if(pipeline){pipeline.composer.setPixelRatio(ratio);pipeline.composer.setSize(viewportWidth,viewportHeight);}
     camera.updateProjectionMatrix();
     const sampling=plan.width+' × '+plan.height+' px · '+(pipeline?.fxaa?'FXAA':pipeline?'SMAA':gl.getContextAttributes()?.antialias?'native MSAA':'driver antialiasing unavailable');if(qualityStats.textContent!==sampling)qualityStats.textContent=sampling;
     invalidate();
@@ -643,7 +667,7 @@ export function mountBoard3D(container, source, options = {}) {
   const escapeCompactTools=event=>{if(event.key==='Escape'&&compactToolbar.open){compactToolbar.close();moreButton.focus();event.preventDefault();event.stopImmediatePropagation();}};
   document.addEventListener('pointerdown',closeCompactTools);shadow.addEventListener('keydown',escapeCompactTools,true);
   function applyExpand(value,syncSlider=true){const wasExpanded=explode.get()>0,amount=explode.set(mechanical?0:value),expanded=amount>0;if(syncSlider)explodeSlider.value=String(Math.round(amount));explodeValue.textContent=Math.round(amount)+'%';for(const [name,group]of copperGroups)explode.layer(group,name);for(const {mesh,span}of viaExplode)explode.barrels(mesh,span);
-    updateSubstrateMaterials(substrateMaterials,substrate.material,expanded||Boolean(layerInspection.get()),Math.min(explode.substrateOpacity(),layerInspection.substrateOpacity()));edges.material.opacity=.42*Math.min(explode.substrateOpacity(),layerInspection.substrateOpacity());
+    updateSubstrateMaterials(substrateMaterials,substrate.material,expanded||Boolean(layerInspection.get()),Math.min(explode.substrateOpacity(),layerInspection.substrateOpacity()));edges.material.opacity=Math.min(.42*Math.min(explode.substrateOpacity(),layerInspection.substrateOpacity()),edges.material.userData.selectionOpacityCap??1);
     analysisOverlay?.boardLayerPlacement?.update(analysisOverlay.group);updateComponentVisibility();if(wasExpanded!==expanded)applyAppearance();else {explode.overlay(netInspection.group);selectionGeometry.refreshTransforms();}probeRegistry.forEach(probe=>probe.setExplode?.(amount));clipBounds.setFromObject(boardGroup);const boundsSphere=clipBounds.getBoundingSphere(new THREE.Sphere());fittedRadius=boundsSphere.radius;fittedCenter.copy(boundsSphere.center);updateClipping();renderer.shadowMap.needsUpdate=true;invalidate();return amount;}
   let explodeFrame=0;
   function setExplode(value){userAdjustedCamera=true;if(explodeFrame){cancelAnimationFrame(explodeFrame);explodeFrame=0;}return applyExpand(value);}
@@ -773,7 +797,7 @@ export function mountBoard3D(container, source, options = {}) {
     invalidate();
     if(mechanical){externalSelection={};netInspection.update({},false);netInspection.group.visible=false;selectionAppearance.restore();selectionGeometry.clear();selectionNotice.hidden=true;return {highlighted:0,matched:0,limited:false,mechanical:true};}
     externalSelection = selection || {};
-    const matches = selectionMatcher(externalSelection, board);
+    const matches = selectionMatcher(externalSelection, board),netNames=selectionNetNames(externalSelection,board);
     const netState=netInspection.update(externalSelection,fullNet3D);explode.overlay(netInspection.group);
     netInspectionHelp.hidden=!netState.active;
     netInspectionHelp.textContent='Full net 3D reveals saved copper on all layers, including hidden layers, with '+(selectionDim?'translucent grey':'original-color')+' context. '+netState.warnings.slice(0,2).join(' ');
@@ -789,7 +813,7 @@ export function mountBoard3D(container, source, options = {}) {
     }
     const state=selectionGeometry.update(matches,{colorForRecord:netHighlightColor==='layer'?record=>record?.layer?layerThreeColor(record.layer):null:null});
     selectionNotice.hidden=!state.limited;selectionNotice.textContent=`Showing ${state.highlighted} of ${state.matched} selected source meshes`;selectionNotice.style.display=state.limited?'block':'none';
-    selectionAppearance.update(matches,state.matched>0&&selectionDim);
+    selectionAppearance.update(matches,state.matched>0&&selectionDim,{netContext:netNames.size>0});
     return state;
   }
   function clearSelection() {
@@ -950,7 +974,7 @@ export function mountBoard3D(container, source, options = {}) {
     createProbeViewport(probeHost,probeOptions={}){
       if(!active)throw Error('The parent 3D scene is closed.');
       return probeRegistry.create(()=>createSharedProbeViewport({THREE,OrbitControls,host:probeHost,source:boardGroup,sourceScene:scene,sourceRenderer:renderer,board,
-        materialFor:object=>probeMaterials.get(object)||object.material,instanceColorFor:object=>probeInstanceColors.has(object)?probeInstanceColors.get(object):object.instanceColor,
+        materialFor:object=>probeCopperMaterials.forMaterial(probeMaterials.get(object)||object.material),instanceColorFor:object=>probeInstanceColors.has(object)?probeInstanceColors.get(object):object.instanceColor,
         netInspectionSource:{board:{...board,tracks:refinedTracks.tracks},plan:copperPlan,zones:savedZones.records,sourceLimited:savedZones.truncated,pads:nativePads,world,colorForLayer:layerThreeColor},
         orthographic:Boolean(camera.isOrthographicCamera),explodeAmount:explode.get(),netHighlightColor,dark:host.dataset.theme!=='light',terminalSource,showNetNames:terminalAnnotations.getState().nets,showTerminalNumbers:terminalAnnotations.getState().numbers,...probeOptions}));
     },
@@ -967,7 +991,7 @@ export function mountBoard3D(container, source, options = {}) {
     setMeasurementMode,clearMeasurements,setTerminalLabels,setTerminalNumbers,getTerminalLabelState:()=>terminalAnnotations.getState(),
     measurementState(){return{mode:measuring,unit:measurementUnit,...measurementSession.snapshot()};},
     setQuality(value){return applyQuality(value);},
-    getRenderStats(){const plan=qualityViewport(canvasHost.clientWidth,canvasHost.clientHeight,globalThis.devicePixelRatio,graphics.maxDimension,quality,graphics);return{...plan,graphicsTier:graphics.tier,defaultQuality:graphics.defaultQuality,maxDimension:graphics.maxDimension,antialias:gl.getContextAttributes()?.antialias===true,effectiveAntialias:pipeline?.fxaa?'fxaa':pipeline?'smaa':gl.getContextAttributes()?.antialias?'native-msaa':'none',postprocessSamples:pipeline?.composer.renderTarget1.samples||0,floatTargets:graphics.premium||renderer.extensions.has('EXT_color_buffer_float'),environmentLighting:Boolean(scene.environment),ambientOcclusion:Boolean(pipeline?.passes.some(pass=>pass instanceof GTAOPass&&pass.enabled)),lighting:lightingRig.state(),renderCount,contextLost,gpuTextures:renderer.info.memory.textures,drawCalls:renderer.info.render.calls,loadedModelCount:loadedModelIndexes.size,componentCount:board.components.length};},
+    getRenderStats(){const plan=qualityViewport(canvasHost.clientWidth,canvasHost.clientHeight,globalThis.devicePixelRatio,graphics.maxDimension,quality,graphics);return{...plan,...modelResources.stats(),modelGraph:{...modelGraph.stats(),decodeConcurrency},padGeometryCache:sharedPadGeometry.stats(),selectionMaterials:selectionAppearance.stats(),graphicsTier:graphics.tier,defaultQuality:graphics.defaultQuality,maxDimension:graphics.maxDimension,antialias:gl.getContextAttributes()?.antialias===true,effectiveAntialias:pipeline?.fxaa?'fxaa':pipeline?'smaa':gl.getContextAttributes()?.antialias?'native-msaa':'none',postprocessSamples:pipeline?.composer.renderTarget1.samples||0,floatTargets:graphics.premium||renderer.extensions.has('EXT_color_buffer_float'),environmentLighting:Boolean(scene.environment),ambientOcclusion:Boolean(pipeline?.passes.some(pass=>pass instanceof GTAOPass&&pass.enabled)),lighting:lightingRig.state(),renderCount,contextLost,gpuTextures:renderer.info.memory.textures,drawCalls:renderer.info.render.calls,loadedModelCount:loadedModelIndexes.size,componentCount:board.components.length};},
     setAnalysisOverlay(surface) {
       if (!active) return { placed: false, reason: "3D viewer is closed." };
       if(mechanical)return {placed:false,reason:'Mechanical views exclude electrical result overlays.'};
@@ -1054,8 +1078,8 @@ export function mountBoard3D(container, source, options = {}) {
         if (index != null && !population[index]) clearSelection();
       }
     },
-    dispose() { probeRegistry.dispose();for(const texture of silkTextures)texture.dispose();terminalAnnotations.dispose();if(measuring)options.onMeasurementMode?.(false);active = false;captureAbort.abort(); analysisOverlay?.dispose(); stepClient?.dispose(); cancelAnimationFrame(frame); cancelAnimationFrame(layoutFrame);cancelAnimationFrame(explodeFrame); observer.disconnect();compactToolbar.dispose();document.removeEventListener('pointerdown',closeCompactTools);shadow.removeEventListener('keydown',escapeCompactTools,true);controls.removeEventListener('change',invalidate); controls.removeEventListener("change", updateClipping); controls.removeEventListener("start", cameraInteraction); controls.dispose();disposePipeline();lightingRig.dispose();environment?.dispose();renderer.domElement.removeEventListener('webglcontextlost',onContextLost);renderer.domElement.removeEventListener('webglcontextrestored',onContextRestored);document.removeEventListener('pointerdown',closeVisibility);shadow.removeEventListener('keydown',escapeVisibility,true);shadow.removeEventListener('keydown',escapeMeasurement);
+    dispose() { probeRegistry.dispose();probeCopperMaterials.dispose();for(const texture of silkTextures)texture.dispose();terminalAnnotations.dispose();if(measuring)options.onMeasurementMode?.(false);active = false;captureAbort.abort(); analysisOverlay?.dispose(); stepClient?.dispose(); cancelAnimationFrame(frame); cancelAnimationFrame(layoutFrame);cancelAnimationFrame(explodeFrame); observer.disconnect();compactToolbar.dispose();document.removeEventListener('pointerdown',closeCompactTools);shadow.removeEventListener('keydown',escapeCompactTools,true);controls.removeEventListener('change',invalidate); controls.removeEventListener("change", updateClipping); controls.removeEventListener("start", cameraInteraction); controls.dispose();disposePipeline();lightingRig.dispose();environment?.dispose();renderer.domElement.removeEventListener('webglcontextlost',onContextLost);renderer.domElement.removeEventListener('webglcontextrestored',onContextRestored);document.removeEventListener('pointerdown',closeVisibility);shadow.removeEventListener('keydown',escapeVisibility,true);shadow.removeEventListener('keydown',escapeMeasurement);
     renderer.domElement.removeEventListener('pointerdown',measurementTouchCapture,true);netInspection.dispose();selectionGeometry.dispose();selectionAppearance.dispose();const resources = new Set(); scene.traverse((object) => {object.shadow?.dispose?.(); if (object.geometry) resources.add(object.geometry);
       const materials = Array.isArray(object.material) ? object.material : object.material ? [object.material] : [];
-      materials.forEach((item) => resources.add(item)); }); resources.forEach((item) => item.dispose());hold.dispose(); renderer.dispose(); host.remove(); } };
+      materials.forEach((item) => resources.add(item)); }); resources.forEach((item) => {if(!modelResources.owns(item))item.dispose();});modelResources.dispose();sharedPadGeometry.clear();hold.dispose(); renderer.dispose(); host.remove(); } };
 }

@@ -4,7 +4,7 @@ import {readFileSync,existsSync} from 'node:fs';
 import {createRequire} from 'node:module';
 import {fileURLToPath} from 'node:url';
 import {createExplodeView} from '../extension/spike/explodeView.mjs';
-import {selectionMatcher} from '../extension/spike/selectionState.mjs';
+import {selectionMatcher,selectionNetNames} from '../extension/spike/selectionState.mjs';
 import {createSelectionGeometry} from '../extension/spike/selectionGeometry.mjs';
 const require=createRequire(import.meta.url);
 const location=['../extension/node_modules/three/build/three.cjs','../.vizdiff/build-deps/node_modules/three/build/three.cjs'].map(p=>new URL(p,import.meta.url)).find(existsSync);
@@ -13,7 +13,7 @@ const THREE=require(fileURLToPath(location));
 function setup(pickables,netState={active:false,warnings:[]}){
  const source=readFileSync(new URL('../extension/spike/board3d.js',import.meta.url),'utf8'),start=source.indexOf('  const selectionGeometry=createSelectionGeometry('),end=source.indexOf('  function clearSelection()',start);
  assert.ok(start>=0&&end>start,'Exercise the production main-scene selection integration.');const code=source.slice(start,end),scene=new THREE.Scene(),appearance=[];for(const object of pickables)if(!object.parent)scene.add(object);let redraws=0;
- const ui=Function('explode','THREE','initialDark','scene','document','stage','selectionMatcher','board','pickables','invalidate','selectionAppearance','selectionDim','netInspection','fullNet3D','netInspectionHelp','hint','createSelectionGeometry','const mechanical=false;'+code+';return {setSelection,selectionGeometry,selectionNotice};')(createExplodeView(THREE,{layers:[]}),THREE,true,scene,{createElement:()=>({style:{}})},{append(){}},selectionMatcher,{nets:{},pads:[]},pickables,()=>redraws++,{update(matches,enabled,options){appearance.push({matches,enabled,options});}},true,{group:new THREE.Group(),update(){return netState;}},true,{},{},createSelectionGeometry);
+ const ui=Function('explode','THREE','initialDark','scene','document','stage','selectionMatcher','selectionNetNames','layerThreeColor','board','pickables','invalidate','selectionAppearance','selectionDim','netInspection','fullNet3D','netInspectionHelp','hint','createSelectionGeometry','const mechanical=false;'+code+';return {setSelection,selectionGeometry,selectionNotice};')(createExplodeView(THREE,{layers:[]}),THREE,true,scene,{createElement:()=>({style:{}})},{append(){}},selectionMatcher,selectionNetNames,()=>0xfa6f68,{nets:{},pads:[]},pickables,()=>redraws++,{update(matches,enabled,options){appearance.push({matches,enabled,options});}},true,{group:new THREE.Group(),update(){return netState;}},true,{},{},createSelectionGeometry);
  return {...ui,scene,appearance,redraws:()=>redraws};
 }
 
