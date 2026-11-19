@@ -322,7 +322,7 @@
     normalizeConfig(config);
     return config;
   }
-  function buildProject(files, variantConfig = null, snapshot = null) {
+  function buildProject(files, variantConfig = null, snapshot = null, {forConnectivity = false} = {}) {
     if (!diff?.projectObjects || !diff.parse) throw new Error("Load design-diff.js before design-model.js.");
     if (!Array.isArray(files) || files.some((file) => !validPath(file?.path))) {
       throw new Error("Project contains an unsafe or unsupported KiCad path.");
@@ -344,7 +344,7 @@
         definitionsByPath.set(file.path, definitions);
       }
       if (hasNativeVariant(parsed)) warnings.push(`${file.path}: saved native KiCad variant data is present but is not interpreted by this review overlay.`);
-    },snapshot);
+    },snapshot,{forConnectivity});
     for (const item of raw) if (item.kind === "sheet") {
       const target = childPath(item.path, item.metadata.properties.Sheetfile ?? item.metadata.properties['Sheet file']);
       if (target && paths.has(target)) labels.set(target, item.metadata.properties.Sheetname || item.metadata.properties['Sheet name'] || target.split("/").at(-1));

@@ -144,3 +144,16 @@ test('parser fast whitespace path preserves Unicode, escapes, comments and delim
  assert.throws(()=>parse('(kicad_sch (value "unterminated))'),/Unterminated/);
  assert.throws(()=>parse('(kicad_sch ))'),/parenthesis/);
 });
+
+test('compact drawing preparation preserves saved identities and can still rebuild comparison fingerprints',()=>{
+  const {prepareProject,projectObjects,sourceByteLength}=require('../design-diff.js');
+  const files=[file('main.kicad_sch',schematic(symbol('1k'),'(wire (pts (xy 1 2) (xy 3 4)))'))];
+  const snapshot=prepareProject(files,{forConnectivity:true});
+  const full=projectObjects(files);
+  const compact=projectObjects(files,null,snapshot,{forConnectivity:true});
+  assert.deepEqual(compact.map(record=>record.key),full.map(record=>record.key));
+  assert.ok(compact.every(record=>record.signature===null&&!('Source fingerprint' in record.metadata.properties)));
+  assert.deepEqual(projectObjects(files,null,snapshot),full);
+  const unicode='abc Ω 😀 '+String.fromCharCode(0xd800)+'x'+String.fromCharCode(0xdc00);
+  assert.equal(sourceByteLength(unicode),Buffer.byteLength(unicode,'utf8'));
+});

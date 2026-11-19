@@ -9,7 +9,7 @@ onmessage=event=>{
       result=KiCadProjectSettings.parse(payload.content,{file:payload.file});
     }else if(job==='drawing'){
       postMessage({stage:'Indexing saved project objects…'});
-      const {files,rootFile,pcb}=payload,snapshot=KiCadDesignDiff.prepareProject(files),model=KiCadDesignModel.buildProject(files,null,snapshot),file=files.find(f=>f.path===rootFile);
+      const {files,rootFile,pcb}=payload,snapshot=KiCadDesignDiff.prepareProject(files,{forConnectivity:true}),model=KiCadDesignModel.buildProject(files,null,snapshot,{forConnectivity:true}),file=files.find(f=>f.path===rootFile);
       if(!file)throw Error('The requested drawing is absent.');
       postMessage({stage:'Building drawing geometry…'});
       const sheets=files.filter(f=>/\.(kicad_sch|sch)$/i.test(f.path));

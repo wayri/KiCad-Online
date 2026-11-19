@@ -4,6 +4,25 @@
 ((root) => {
   'use strict';
   const MAX_BYTES = 8 * 1024 * 1024;
+  /** Validate before allocating; the fallback avoids TypedArray.from's iterable list. */
+  function decodeBase64(base64, {maxBytes = MAX_BYTES, padded = false, host = root} = {}) {
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 0 || maxBytes > MAX_BYTES ||
+        typeof base64 !== 'string' || base64.length > 11200000) throw Error('Invalid or oversized model base64.');
+    const length = base64.length, padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0;
+    if (length % 4 === 1 || (padding || padded) && length % 4 !== 0) throw Error('Invalid model base64 padding.');
+    const content = length - padding;
+    for (let i = 0; i < content; i++) {
+      const c = base64.charCodeAt(i);
+      if (!(c >= 65 && c <= 90 || c >= 97 && c <= 122 || c >= 48 && c <= 57 || c === 43 || c === 47)) throw Error('Invalid model base64.');
+    }
+    const size = Math.floor(length * 3 / 4) - padding;
+    if (size > maxBytes) throw Error('Model base64 exceeds its decoded byte limit.');
+    const native = host.Uint8Array?.fromBase64;
+    if (typeof native === 'function') return native.call(host.Uint8Array, base64);
+    const binary = host.atob(base64), bytes = new Uint8Array(size);
+    for (let i = 0; i < size; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  }
   // Public-domain MurmurHash3_x64_128, with KiCad's seed and numeric hex order.
   function murmur(bytes, legacy = false) {
     const mask = (1n << 64n) - 1n, c1 = 0x87c37b91114253d5n, c2 = 0x4cf5ad432745937fn;
@@ -67,9 +86,7 @@
   }
   async function decode(asset, decompressor = root.fzstd?.decompress) {
     const base64 = asset?.base64;
-    if (typeof base64 !== 'string' || base64.length > 11200000 ||
-      !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(base64)) throw Error('Invalid embedded model base64.');
-    const bytes = Uint8Array.from(root.atob(base64), char => char.charCodeAt(0));
+    const bytes = decodeBase64(base64, {padded: true});
     if (bytes.length > MAX_BYTES) throw Error('Compressed embedded model exceeds 8 MiB.');
     const size = frameSize(bytes);
     if (typeof decompressor !== 'function') throw Error('Embedded model decoder unavailable.');
@@ -87,6 +104,6 @@
     }
     return output;
   }
-  root.KiCadEmbeddedModels = {decode, frameSize, murmur, MAX_BYTES};
+  root.KiCadEmbeddedModels = {decode, decodeBase64, frameSize, murmur, MAX_BYTES};
   if (typeof module === 'object' && module.exports) module.exports = root.KiCadEmbeddedModels;
 })(typeof globalThis === 'object' ? globalThis : this);

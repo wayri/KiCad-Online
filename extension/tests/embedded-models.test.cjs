@@ -65,3 +65,13 @@ test('outlined embedded fixture preserves the exact native model asset and a usa
  assert.match(source,/gr_rect \(start 0 10\) \(end 25 35\)/);
  assert.match(new TextDecoder().decode(await decode(outlined.models[0].embeddedAsset,decompress)),/geometry Box/);
 });
+
+test('embedded base64 checks the decoded budget before using either decoder',()=>{
+  const {decodeBase64}=require('../embedded-models.js');
+  let calls=0;
+  const host={atob(data){calls++;return Buffer.from(data,'base64').toString('latin1');}};
+  assert.throws(()=>decodeBase64('AAEC',{maxBytes:2,host}),/byte limit/);
+  assert.throws(()=>decodeBase64('AA=A',{host}),/Invalid/);
+  assert.equal(calls,0);
+  assert.deepEqual([...decodeBase64('AAEC',{host})],[0,1,2]);
+});

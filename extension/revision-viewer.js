@@ -68,7 +68,7 @@
 
     loading?.show('Preparing saved objects and drawing geometry…');
     const prepare=()=>{
-      const snapshot=KiCadDesignDiff.prepareProject(files),model=KiCadDesignModel.buildProject(files,null,snapshot);
+      const snapshot=KiCadDesignDiff.prepareProject(files,{forConnectivity:true}),model=KiCadDesignModel.buildProject(files,null,snapshot,{forConnectivity:true});
       const sheets=files.filter(file=>/\.(kicad_sch|sch)$/i.test(file.path));
       const design=(pcb?KiCadPCBRenderer:KiCadSchematicRenderer).build(KiCadDesignDiff.preparedFile(snapshot,initialFile),initialFile,{textVariables:files.find(f=>f.path===initialFile)?.textVariables,sheetNumber:sheets.findIndex(file=>file.path===initialFile)+1,sheetCount:sheets.length,sheetName:'/',...(globalThis.KiCadFileCompatibility?.textContext?.(files,initialFile,{rootFile:initialFile,parse:(content,file)=>KiCadDesignDiff.preparedFile(snapshot,file.path)})||{})});
       const nets=globalThis.KiCadNetModel?.build(files,new Map([[initialFile,design]]),snapshot);

@@ -20,6 +20,20 @@
 
   // KiCad files are overwhelmingly ASCII. Keep the same ECMAScript whitespace
   // grammar without constructing/testing a regular expression for every byte.
+  // Count source bytes without allocating a second full-size UTF-8 buffer.
+  function sourceByteLength(source) {
+    if(typeof source!=='string')throw new TypeError('KiCad source must be a string.');
+    if(!/[^\x00-\x7f]/.test(source))return source.length;
+    let bytes=source.length;
+    for(let i=0;i<source.length;i++){
+      const code=source.charCodeAt(i);if(code<128)continue;
+      if(code<2048){bytes++;continue;}
+      if(code>=0xd800&&code<=0xdbff&&i+1<source.length){const next=source.charCodeAt(i+1);if(next>=0xdc00&&next<=0xdfff){bytes+=2;i++;continue;}}
+      bytes+=2;
+    }
+    return bytes;
+  }
+
   const spaceCode=code=>code===32||(code>=9&&code<=13)||(code>127&&/\s/.test(String.fromCharCode(code)));
   const METADATA_FIELDS=new Set(["version","generator","generator_version","uuid","paper","title_block","property","sheet","symbol","footprint","module","sheet_instances","legacy_source","legacy_diagnostic"]);
   const METADATA_OBJECT_FIELDS=new Set(["property","uuid","path","instances"]);
@@ -36,7 +50,7 @@
     const byteLimit=modern?MAX_MODERN_FILE:MAX_FILE;
     // UTF-8 uses at most three bytes per UTF-16 code unit. Avoid a full-size
     // temporary byte array when that upper bound already proves the input fits.
-    if(source.length>byteLimit||source.length>byteLimit/3&&new TextEncoder().encode(source).length>byteLimit)throw new Error("KiCad file exceeds browser parser size limits.");
+    if(source.length>byteLimit||source.length>byteLimit/3&&sourceByteLength(source)>byteLimit)throw new Error("KiCad file exceeds browser parser size limits.");
     const nodeLimit = modern ? 12000000 : MAX_NODES;
     const stack = [], roots = [];
     let i = 0, nodes = 0, skippedDepth=0;
@@ -169,7 +183,7 @@
     const anchor = kind === "pad" ? props.Number :
       kind === "sheet" ? props.Sheetfile :
       kind === "symbol" || kind === "footprint" ? props.Reference : undefined;
-    return { key: anchor ? `fallback:${String(anchor)}` : `fallback:${hash(signature)}`, uuid: null };
+    return { key: anchor ? `fallback:${String(anchor)}` : `fallback:${hash(signature())}`, uuid: null };
   }
   function labelFor(form, kind, props, parentLabel) {
     if (kind === "pad") return `${parentLabel || "Footprint"} pad ${props.Number || ""}`.trim();
@@ -187,43 +201,48 @@
     const rounded = (number) => Math.round(number * 1e6) / 1e6;
     return { x: rounded(x), y: rounded(y) };
   }
-  function objectRecord(path, form, parent = null, librarySignature = null) {
+  function objectRecord(path, form, parent = null, librarySignature = null, forConnectivity = false) {
     const kind = kindOf(form);
     const props = properties(form, kind);
     const local = point(form);
     const position = kind === "pad" ? padPosition(local, parent) : local;
-    const signature = JSON.stringify([structural(form), position, librarySignature]);
-    props["Source fingerprint"] = hash(signature);
+    let retainedSignature;
+    const signature = () => retainedSignature ??= JSON.stringify([
+      structural(form), position, typeof librarySignature === 'function' ? librarySignature() : librarySignature
+    ]);
+    if (!forConnectivity) props["Source fingerprint"] = hash(signature());
     const identityValue = identity(form, kind, props, signature);
     const scope = parent ? `${parent.scope}/` : `${path}/`;
     const key = `${scope}${kind}:${identityValue.key}`;
     const label = labelFor(form, kind, props, parent?.label);
-    return { key, scope: key, signature, metadata: {
+    return { key, scope: key, signature: forConnectivity ? null : signature(), metadata: {
       uuid: identityValue.uuid, position, properties: props }, path, kind, label, form };
   }
-  function collect(path, content, onParsed = null, options = {}) {
-    const rootForm = parse(content, options);
+  function collect(path, content, onParsed = null, options = {}, preparedAst) {
+    const { forConnectivity = false, parseOnly = false } = options;
+    const rootForm = preparedAst || parse(content, options);
     onParsed?.(rootForm);
     const rootKind = kindOf(rootForm);
     if (rootKind !== "kicad_sch" && rootKind !== "kicad_pcb") throw new Error("Expected a KiCad schematic or board.");
+    if (parseOnly) return [];
     const types = rootKind === "kicad_sch" ? SCHEMATIC : BOARD;
     const definitions = new Map();
     if (rootKind === "kicad_sch") {
       const library = child(rootForm, "lib_symbols");
       if (library) for (const definition of children(library, "symbol")) {
         const name = value(definition[1]);
-        if (typeof name === "string") definitions.set(name, JSON.stringify(structural(definition)));
+        if (typeof name === "string") definitions.set(name, forConnectivity ? definition : JSON.stringify(structural(definition)));
       }
     }
     const objects = [];
     for (const form of rootForm) {
       if (!Array.isArray(form) || !types.has(kindOf(form))) continue;
       const definition = kindOf(form) === "symbol" ? definitions.get(String(second(form, "lib_name") ?? second(form, "lib_id"))) : null;
-      const record = objectRecord(path, form, null, definition);
+      const record = objectRecord(path, form, null, forConnectivity && definition ? () => JSON.stringify(structural(definition)) : definition, forConnectivity);
       objects.push(record);
       if (rootKind === "kicad_pcb" && ["footprint","module"].includes(record.kind)) {
         for (const pad of children(form, "pad")) objects.push(objectRecord(path, pad,
-          { form, position: record.metadata.position, scope: record.scope, label: record.label }));
+          { form, position: record.metadata.position, scope: record.scope, label: record.label }, null, forConnectivity));
       }
     }
     return objects;
@@ -234,10 +253,10 @@
   }
   // Job-scoped snapshots reuse validated source without retaining projects globally.
   const preparedProjects = new WeakMap();
-  function prepareProject(files) {
-    const parsed = new Map(), records = projectObjects(files, (file, ast) => parsed.set(file.path, ast));
+  function prepareProject(files, {forConnectivity = false} = {}) {
+    const parsed = new Map(), records = projectObjects(files, (file, ast) => parsed.set(file.path, ast), null, {forConnectivity, parseOnly: forConnectivity});
     const snapshot = Object.freeze({});
-    preparedProjects.set(snapshot, {files: files.map(file => ({path: file.path, content: file.content, libraries:JSON.stringify(file.legacyLibraries||[])})), parsed, records});
+    preparedProjects.set(snapshot, {files: files.map(file => ({path: file.path, content: file.content, libraries:JSON.stringify(file.legacyLibraries||[])})), parsed, records: forConnectivity ? null : records});
     return snapshot;
   }
   function preparedFile(snapshot, path) {
@@ -245,12 +264,20 @@
     if (!state || !state.parsed.has(path)) throw new Error('Prepared KiCad file is unavailable.');
     return state.parsed.get(path);
   }
-  function projectObjects(files, onParsed = null, snapshot = null) {
+  function projectObjects(files, onParsed = null, snapshot = null, {forConnectivity = false, parseOnly = false} = {}) {
     if (snapshot) {
       const state = preparedProjects.get(snapshot);
       if (!state || !Array.isArray(files) || files.length !== state.files.length ||
           files.some((file, index) => file?.path !== state.files[index].path || file?.content !== state.files[index].content || JSON.stringify(file.legacyLibraries||[]) !== state.files[index].libraries)) {
         throw new Error('Prepared KiCad project differs from source.');
+      }
+      if (forConnectivity || !state.records) {
+        const records = [];
+        for (const file of files) {
+          for (const record of collect(file.path, file.content, ast => onParsed?.(file, ast),
+              {forConnectivity, parseOnly}, state.parsed.get(file.path))) records.push(record);
+        }
+        return records;
       }
       for (const file of files) onParsed?.(file, state.parsed.get(file.path));
       // Consumers assign IDs to records; keep those assignments isolated.
@@ -265,10 +292,10 @@
         throw new Error("Invalid or duplicate KiCad file entry.");
       }
       paths.add(file.path);
-      const size = new TextEncoder().encode(file.content).length;
+      const size = sourceByteLength(file.content);
       total += size;
       if (size > sourceByteLimit(file.path) || total > MAX_PROJECT) throw new Error("KiCad project exceeds browser comparison size limits.");
-      for (const object of collect(file.path, file.content, ast => onParsed?.(file, ast), {libraries:file.legacyLibraries})) objects.push(object);
+      for (const object of collect(file.path, file.content, ast => onParsed?.(file, ast), {libraries:file.legacyLibraries, forConnectivity, parseOnly})) objects.push(object);
     }
     return objects;
   }
@@ -308,6 +335,6 @@
     changes.sort((a, b) => a.path.localeCompare(b.path) || a.id.localeCompare(b.id) || a.status.localeCompare(b.status));
     return { changes, counts };
   }
-  root.KiCadDesignDiff = { compareProjects, projectObjects, parse, parseMetadata, prepareProject, preparedFile, MAX_FILES, MAX_PROJECT, MAX_RENDER_PRIMITIVES, sourceByteLimit };
+  root.KiCadDesignDiff = { compareProjects, projectObjects, parse, parseMetadata, prepareProject, preparedFile, MAX_FILES, MAX_PROJECT, MAX_RENDER_PRIMITIVES, sourceByteLimit, sourceByteLength };
   if (typeof module === "object" && module.exports) module.exports = root.KiCadDesignDiff;
 })(typeof globalThis === "object" ? globalThis : this);
