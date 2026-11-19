@@ -65,3 +65,41 @@ test('Settings update controls render once and show a checked result without nav
  const pending=button.onclick();assert.equal(button.disabled,true);await pending;
  assert.equal(button.disabled,false);assert.match(status.textContent,/No update is available/);
 });
+
+test('browser update events surface one alert and keep pending guidance through a manual check',async()=>{
+ function node(tag){
+  return {tag,textContent:'',children:[],attributes:new Map(),style:{},
+   setAttribute(key,value){this.attributes.set(key,value);},
+   hasAttribute(key){return this.attributes.has(key);},
+   addEventListener(){},append(...items){this.children.push(...items);}};
+ }
+ const host=node('div'),about=node('button');
+ let notify,subscriptions=0;
+ const document={
+  createElement:node,
+  querySelector:()=>about,
+  querySelectorAll(selector){
+   if(selector==='[data-product-about]')return [about];
+   if(selector==='[data-product-updates]')return [host];
+   if(selector==='[data-product-update-status]')return host.children.filter(n=>n.hasAttribute('data-product-update-status'));
+   return [];
+  }
+ };
+ const api=load({document,browser:{runtime:{
+  requestUpdateCheck:async()=>({status:'throttled'}),
+  onUpdateAvailable:{addListener(listener){notify=listener;subscriptions++;}},
+  reload(){assert.fail('automatic alert must not reload the extension');}
+ }}});
+ api.decorate();
+ assert.equal(subscriptions,1);
+ notify({version:'invalid'});
+ assert.equal(about.children.length,0);
+ notify({version:'0.12.104'});
+ notify({version:'0.12.104'});
+ assert.equal(about.children.length,1);
+ assert.match(about.children[0].textContent,/Update available/);
+ const [button,status]=host.children;
+ assert.match(status.textContent,/Version 0\.12\.104 is ready/);
+ await button.onclick();
+ assert.match(status.textContent,/Version 0\.12\.104 is ready/);
+});

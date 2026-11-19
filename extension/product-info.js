@@ -12,9 +12,34 @@
  function caption(value=info()){return value.release?(value.development?'Development build · base ':'Version ')+value.appVersion+(value.appVersion!==value.release?' · viewer release '+value.release:'')+(value.label?' · '+value.label:''):'Development checkout · not a packaged release';}
  const stores={chrome:'https://chromewebstore.google.com/detail/klfdjlbngpoopegjmbajaidgodpmjaoc',firefox:'https://addons.mozilla.org/firefox/addon/pocket-kiview-kicad-review/'};
  let updateCheck=null;
+ let availableUpdate=null;
+ let listeningForUpdates=false;
+ const updateRuntime=()=>root.browser?.runtime||root.chrome?.runtime;
+ function announceUpdate(version){
+  if(info().development||!valid(version)||version===info().release||version===availableUpdate?.version)return;
+  availableUpdate={status:'update_available',version};
+  const document=root.document;
+  for(const status of document?.querySelectorAll('[data-product-update-status]')||[]){
+   status.textContent=updateMessage(availableUpdate);
+  }
+  for(const button of document?.querySelectorAll('[data-product-about]')||[]){
+   if(button.hasAttribute('data-product-update-alert'))continue;
+   button.setAttribute('data-product-update-alert','');
+   const alert=document.createElement('span');
+   alert.textContent=' · Update available';
+   button.append(alert);
+  }
+ }
+ function listenForUpdates(){
+  if(listeningForUpdates||info().development)return;
+  const event=updateRuntime()?.onUpdateAvailable;
+  if(typeof event?.addListener!=='function')return;
+  event.addListener(details=>announceUpdate(details?.version));
+  listeningForUpdates=true;
+ }
  async function checkUpdates(){
   if(info().development)return {status:'development'};
-  const runtime=root.browser?.runtime||root.chrome?.runtime;
+  const runtime=updateRuntime();
   if(!runtime?.requestUpdateCheck)return {status:'unsupported'};
   if(updateCheck)return updateCheck;
   updateCheck=(async()=>{let timer;try{
@@ -24,6 +49,7 @@
    const result=root.setTimeout?await Promise.race([request,new Promise(resolve=>{timer=root.setTimeout(()=>resolve({status:'error'}),15000);})]):await request;
    if(!['no_update','throttled','update_available'].includes(result?.status))return {status:'error'};
    if(result.status==='update_available'&&!valid(result.version))return {status:'error'};
+   if(result.status==='update_available')announceUpdate(result.version);
    return {status:result.status,version:result.version};
   }catch{return {status:'error'};}finally{if(timer)root.clearTimeout(timer);}})();
   try{return await updateCheck;}finally{updateCheck=null;}
@@ -42,9 +68,11 @@
   const d=root.document;if(!d||!host||host.hasAttribute('data-update-controls'))return;
   host.setAttribute('data-update-controls','');
   const button=d.createElement('button');button.type='button';button.textContent='Check for updates';
-  const status=d.createElement('p');status.setAttribute('role','status');status.style.cssText='font-size:13px;overflow-wrap:anywhere';
-  status.textContent=info().development?updateMessage({status:'development'}):'Store updates are managed automatically by your browser.';
-  button.onclick=async()=>{button.disabled=true;status.textContent='Checking for updates…';try{status.textContent=updateMessage(await checkUpdates());}finally{button.disabled=false;}};
+  const status=d.createElement('p');status.setAttribute('role','status');status.setAttribute('data-product-update-status','');status.style.cssText='font-size:13px;overflow-wrap:anywhere';
+  const initial=availableUpdate||(info().development?{status:'development'}:
+   !updateRuntime()?.requestUpdateCheck?{status:'unsupported'}:null);
+  status.textContent=initial?updateMessage(initial):'Store updates are managed automatically by your browser.';
+  button.onclick=async()=>{button.disabled=true;status.textContent='Checking for updates…';try{const result=await checkUpdates();status.textContent=updateMessage(availableUpdate||result);}finally{button.disabled=false;}};
   const links=d.createElement('p');links.style.cssText='display:flex;gap:12px;flex-wrap:wrap;font-size:13px';
   for(const [key,label] of [['chrome','Chrome Web Store'],['firefox','Firefox Add-ons']]){const a=d.createElement('a');a.href=stores[key];a.textContent=label;a.target='_blank';a.rel='noopener noreferrer';links.append(a);}
   host.append(button,status,links);
@@ -60,9 +88,9 @@
   const links=d.createElement('p');if(value.release){const release=d.createElement('a');release.textContent=(value.development?'Base release notes · v':'Release notes · v')+value.release;release.href='https://github.com/wayri/KiCad-Online/releases/tag/v'+value.release;release.target='_blank';release.rel='noopener noreferrer';links.append(release);}
   const close=d.createElement('button');close.type='button';close.textContent='Close';close.style.cssText='font:inherit;padding:5px 12px';close.onclick=()=>dialog.close();
   const updates=d.createElement('div');updateControls(updates);
-  dialog.append(title,version,platform,description,links,updates,close);dialog.addEventListener('close',()=>dialog.remove());dialog.addEventListener('click',event=>{if(event.target===dialog){const r=dialog.getBoundingClientRect();if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)dialog.close();}});
+  dialog.append(title,version,platform,description,links,updates,close);listenForUpdates();dialog.addEventListener('close',()=>dialog.remove());dialog.addEventListener('click',event=>{if(event.target===dialog){const r=dialog.getBoundingClientRect();if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)dialog.close();}});
   d.body.append(dialog);dialog.showModal();close.focus();return dialog;
  }
- function decorate(){for(const node of root.document?.querySelectorAll('[data-product-version]')||[])node.textContent=caption();for(const node of root.document?.querySelectorAll('[data-product-about]')||[])node.addEventListener('click',showAbout);for(const node of root.document?.querySelectorAll('[data-product-updates]')||[])updateControls(node);}
+ function decorate(){for(const node of root.document?.querySelectorAll('[data-product-version]')||[])node.textContent=caption();for(const node of root.document?.querySelectorAll('[data-product-about]')||[])node.addEventListener('click',showAbout);for(const node of root.document?.querySelectorAll('[data-product-updates]')||[])updateControls(node);if(root.document?.querySelector?.('[data-product-about],[data-product-updates]'))listenForUpdates();}
  const api={info,caption,showAbout,decorate,checkUpdates,updateMessage};if(typeof module==='object'&&module.exports)module.exports=api;else{root.KiCadProductInfo=api;if(root.document?.readyState==='loading')root.document.addEventListener('DOMContentLoaded',decorate,{once:true});else decorate();}
 })(globalThis);
