@@ -118,7 +118,14 @@ class AppHTTPTests(unittest.TestCase):
                 self.server.request_slots.release()
 
     def test_webhook_rejects_chunked_framing(self):
-        self.assertEqual(self.request('/api/github/webhook', b'{}', {'Transfer-Encoding': 'chunked'})[0], 400)
+        # The server rejects this framing from the headers alone. Avoid sending
+        # body bytes that the server will intentionally leave unread on close.
+        request = Request(self.origin + '/api/github/webhook', method='POST',
+                          headers={'Transfer-Encoding': 'chunked'})
+        with self.assertRaises(HTTPError) as raised:
+            urlopen(request, timeout=5)
+        with raised.exception as response:
+            self.assertEqual(response.code, 400)
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
