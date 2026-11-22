@@ -490,7 +490,10 @@ async function projectSearchFiles(repository, ref, file) {
   const projectFiles=listing.tree.filter(item=>item?.type==='blob'&&item.mode!=='120000'&&typeof item.path==='string'&&item.path.length<=500&&/\.kicad_pro$/i.test(item.path)&&!item.path.startsWith('/')&&item.path.split('/').every(p=>p&&p!=='.'&&p!=='..'&&!/[\\:\x00-\x1f\x7f]/.test(p))).sort((a,b)=>a.path.localeCompare(b.path));
   for(const item of projectFiles.slice(0,8)){if(Number(item.size)>1024*1024){warnings.push(`${item.path}: project settings exceed 1 MiB.`);continue;}try{const content=await githubFile(repository,commit.sha,item.path);if(content!==null&&new TextEncoder().encode(content).byteLength<=1024*1024)settings.push({path:item.path,content});else warnings.push(`${item.path}: settings unavailable or too large.`);}catch(error){warnings.push(`${item.path}: ${error.message}`);}}
   if(projectFiles.length>8)warnings.push('Only the first eight project settings files were retrieved. Import the desired .kicad_pro if it is absent.');
-  return {files,settings,warnings,snapshotRef:commit.sha,totalDrawings:candidates.length};
+  const inventory=listing.tree.filter(item=>item?.type==='blob'&&item.mode!=='120000'&&KiCadGitHub.filePath(item.path))
+    .sort((a,b)=>a.path.localeCompare(b.path));
+  if(inventory.length>1000)warnings.push('File-name search covers the first 1000 supported paths.');
+  return {files,settings,inventory:inventory.slice(0,1000).map(({path,size})=>({path,size})),warnings,snapshotRef:commit.sha,totalDrawings:candidates.length};
 }
 
 async function projectInventory(repository,ref,file,signal){
@@ -1325,6 +1328,14 @@ async function gitlabDispatch(message, sender,signal) {
   }
 }
 
+function countRepositoryFabrication(entries){
+  const files=new Set();
+  for(const {type,mode,path} of entries){
+    if((type==='file'||type==='blob')&&mode!=='120000'&&KiCadGitHub.filePath(path)&&KiCadGerberRenderer.isFabricationPath(path))files.add(path);
+  }
+  return files.size;
+}
+
 async function repositoryDetection(message,sender){
   const launcher=launcherSender(sender);
   if(launcher&&(sender.frameId??0)>0&&!repositorySessions().frameAllowed(sender))throw Error('Unbound in-page project launcher.');
@@ -1347,13 +1358,15 @@ async function repositoryDetection(message,sender){
     }
     const snapshot=await projectBuffer().inventory(headRepository,head,undefined,{refresh:message.refresh===true});
     if(snapshot.snapshotRef!==head)throw Error('Revision changed during project discovery.');
-    const projects=KiCadGitHub.detectedProjects(snapshot.files.map(item=>({path:item.path,type:'blob'})));
-    return {repository:revision.repository,ref:revision.kind==='commit'?revision.ref:head,sha:head,headRepository,...(pullNumber?{pullNumber,pullRepository:revision.repository}:{}),projects,truncated:projects.length===100||snapshot.warnings.some(w=>/incomplete|limited|limit reached/i.test(w)),warnings:[...new Set([...warning,...snapshot.warnings])]};
+    const entries=snapshot.files.map(item=>({path:item.path,type:'blob'}));
+    const projects=KiCadGitHub.detectedProjects(entries),fabricationCount=countRepositoryFabrication(entries);
+    return {repository:revision.repository,ref:revision.kind==='commit'?revision.ref:head,sha:head,headRepository,...(pullNumber?{pullNumber,pullRepository:revision.repository}:{}),projects,fabricationCount,truncated:projects.length===100||snapshot.warnings.some(w=>/incomplete|limited|limit reached/i.test(w)),warnings:[...new Set([...warning,...snapshot.warnings])]};
   }
   if(!route||route.repository!==message.repository||(route.provider||'github')!==(message.provider||'github')||(route.host||'https://github.com')!==host)throw Error('Repository discovery does not match the host page.');
   let ref=message.ref,contextSnapshot=null;
   if(!ref&&route.tail&&(!message.provider||message.provider==='github')){const context=await projectBuffer().context(launcher?message.source:sender.url);ref=context.ref;contextSnapshot=context.sha;}
   if(!KiCadBrowserData.validRef(ref)||(!route.tail&&ref!=='HEAD')||route.tail&&!(route.tail.join('/')===ref||route.tail.join('/').startsWith(ref+'/')))throw Error('Repository branch does not match the host page.');
+  const directory=message.provider!=='gitlab'&&route.tail?route.tail.join('/').slice(ref.length).replace(/^\//,''):'';
   let listing;
   if(message.provider==='gitlab'){
     if(globalThis.KiCadGitLabHosts?!await KiCadGitLabHosts.allowed(host):host!=='https://gitlab.com')throw Error('Configure and grant access to this GitLab host first.');
@@ -1371,13 +1384,12 @@ async function repositoryDetection(message,sender){
     }
     listing.truncated=Boolean(listing.hasMore||listing.warnings.length);
   }else{
-    const directory=route.tail?route.tail.join('/').slice(ref.length).replace(/^\//,''):'';
     const snapshot=await projectBuffer().inventory(message.repository,contextSnapshot||ref,undefined,{directory,scoped:Boolean(directory),refresh:message.refresh===true});
     listing={sha:snapshot.snapshotRef,entries:snapshot.files.map(item=>({path:item.path,type:'blob'})),warnings:snapshot.warnings,truncated:snapshot.warnings.some(warning=>/incomplete|limited|limit reached/i.test(warning))};
   }
-  let projects=KiCadGitHub.detectedProjects(listing.entries);
-  if(!projects.length){const fabrication=globalThis.KiCadGerberRenderer||(typeof require==='function'?require('./gerber-renderer.js'):null),files=listing.entries.filter(item=>['blob','file'].includes(item.type)&&fabrication.isFabricationPath(item.path)).map(item=>item.path);projects=(files.some(path=>fabrication.isJobPath(path))?files.filter(path=>fabrication.isJobPath(path)):files).slice(0,100);}
-  return {repository:message.repository,ref,sha:listing.sha,projects,truncated:Boolean(listing.truncated||listing.hasMore||projects.length===100),warnings:[...new Set(listing.warnings||[])]};
+  const projects=KiCadGitHub.detectedProjects(listing.entries),fabricationCount=countRepositoryFabrication(listing.entries);
+  return {repository:message.repository,ref,sha:listing.sha,projects,fabricationCount,...(directory?{directory}:{}),
+    truncated:Boolean(listing.truncated||listing.hasMore||projects.length===100),warnings:[...new Set(listing.warnings||[])]};
 }
 
 let nativeKiCadService=null;

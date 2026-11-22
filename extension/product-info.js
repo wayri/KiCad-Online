@@ -1,4 +1,4 @@
-/* Local product identity only; never reads project data or makes network requests. */
+/* Local product identity and explicit checks for public release metadata. */
 ((root)=>{'use strict';
  const valid=value=>typeof value==='string'&&/^\d+(?:\.\d+){1,3}$/.test(value);
  function info(){
@@ -11,6 +11,33 @@
  }
  function caption(value=info()){return value.release?(value.development?'Development build · base ':'Version ')+value.appVersion+(value.appVersion!==value.release?' · viewer release '+value.release:'')+(value.label?' · '+value.label:''):'Development checkout · not a packaged release';}
  const stores={chrome:'https://chromewebstore.google.com/detail/klfdjlbngpoopegjmbajaidgodpmjaoc',firefox:'https://addons.mozilla.org/firefox/addon/pocket-kiview-kicad-review/'};
+ const releases='https://github.com/wayri/KiCad-Online/releases';
+ function newer(candidate,current){
+  if(!valid(candidate)||!valid(current))return false;
+  const a=candidate.split('.').map(Number),b=current.split('.').map(Number);
+  for(let i=0;i<4;i++){const difference=(a[i]||0)-(b[i]||0);if(difference)return difference>0;}
+  return false;
+ }
+ async function checkRelease(current){
+  if(!current||!root.fetch||!root.AbortController)return null;
+  const controller=new root.AbortController();
+  const timeout=root.setTimeout(()=>controller.abort(),4500);
+  try{
+   const response=await root.fetch('https://api.github.com/repos/wayri/KiCad-Online/releases?per_page=5',{
+    credentials:'omit',redirect:'error',signal:controller.signal
+   });
+   if(!response.ok)return null;
+   const entries=await response.json();
+   if(!Array.isArray(entries))return null;
+   let version=current;
+   for(const release of entries.slice(0,5)){
+    if(release?.draft!==false||typeof release.tag_name!=='string'||!release.tag_name.startsWith('v'))continue;
+    const candidate=release.tag_name.slice(1);
+    if(newer(candidate,version))version=candidate;
+   }
+   return newer(version,current)?{status:'release_available',version}:null;
+  }catch{return null;}finally{root.clearTimeout(timeout);}
+ }
  let updateCheck=null;
  let availableUpdate=null;
  let listeningForUpdates=false;
@@ -37,25 +64,34 @@
   event.addListener(details=>announceUpdate(details?.version));
   listeningForUpdates=true;
  }
- async function checkUpdates(){
-  if(info().development)return {status:'development'};
-  const runtime=updateRuntime();
+ async function checkStore(runtime){
   if(!runtime?.requestUpdateCheck)return {status:'unsupported'};
-  if(updateCheck)return updateCheck;
-  updateCheck=(async()=>{let timer;try{
+  let timer;
+  try{
    const request=root.browser?.runtime===runtime?runtime.requestUpdateCheck():new Promise((resolve,reject)=>{
     runtime.requestUpdateCheck((status,details)=>{if(runtime.lastError)reject(new Error('Update check failed'));else resolve(typeof status==='object'?status:{status,version:details?.version});});
    });
-   const result=root.setTimeout?await Promise.race([request,new Promise(resolve=>{timer=root.setTimeout(()=>resolve({status:'error'}),15000);})]):await request;
+   const result=root.setTimeout?await Promise.race([request,new Promise(resolve=>{timer=root.setTimeout(()=>resolve({status:'error'}),4500);})]):await request;
    if(!['no_update','throttled','update_available'].includes(result?.status))return {status:'error'};
    if(result.status==='update_available'&&!valid(result.version))return {status:'error'};
    if(result.status==='update_available')announceUpdate(result.version);
    return {status:result.status,version:result.version};
-  }catch{return {status:'error'};}finally{if(timer)root.clearTimeout(timer);}})();
+  }catch{return {status:'error'};}finally{if(timer)root.clearTimeout(timer);}
+ }
+ async function checkUpdates(){
+  if(updateCheck)return updateCheck;
+  const installed=info();
+  updateCheck=(async()=>{
+   const published=checkRelease(installed.release);
+   const store=installed.development?{status:'development'}:await checkStore(updateRuntime());
+   if(store.status==='update_available')return store;
+   return await published||store;
+  })();
   try{return await updateCheck;}finally{updateCheck=null;}
  }
  function updateMessage(result){
   switch(result.status){
+   case 'release_available':return 'Version '+result.version+' is on GitHub. Store copies update when the browser offers it. Unpacked copies can be updated from Downloads.';
    case 'development':return 'Local development copy. Store updates do not replace this installation; update its source folder and reload it, or install the store edition.';
    case 'unsupported':return 'Use your browser’s extension manager to check for updates. Store-installed copies follow the browser’s update settings.';
    case 'no_update':return 'No update is available for this installation. Store review, rollout and organization policies can delay availability.';
@@ -72,14 +108,24 @@
   const initial=availableUpdate||(info().development?{status:'development'}:
    !updateRuntime()?.requestUpdateCheck?{status:'unsupported'}:null);
   status.textContent=initial?updateMessage(initial):'Store updates are managed automatically by your browser.';
-  button.onclick=async()=>{button.disabled=true;status.textContent='Checking for updates…';try{const result=await checkUpdates();status.textContent=updateMessage(availableUpdate||result);}finally{button.disabled=false;}};
+  const download=d.createElement('a');download.textContent='GitHub downloads';download.href=releases;download.target='_blank';download.rel='noopener noreferrer';
+  button.onclick=async()=>{
+   button.disabled=true;status.textContent='Checking for updates…';
+   try{
+    const result=await checkUpdates();
+    const current=availableUpdate||result;
+    status.textContent=updateMessage(current);
+    download.href=current.status==='release_available'?releases+'/tag/v'+current.version:releases;
+   }finally{button.disabled=false;}
+  };
   const links=d.createElement('p');links.style.cssText='display:flex;gap:12px;flex-wrap:wrap;font-size:13px';
   for(const [key,label] of [['chrome','Chrome Web Store'],['firefox','Firefox Add-ons']]){const a=d.createElement('a');a.href=stores[key];a.textContent=label;a.target='_blank';a.rel='noopener noreferrer';links.append(a);}
+  links.append(download);
   host.append(button,status,links);
   if(host.id==='check-for-updates'&&root.location?.hash==='#check-for-updates'){
    host.scrollIntoView?.({block:'center'});
    button.focus?.({preventScroll:true});
-   if(!info().development&&updateRuntime()?.requestUpdateCheck)void button.onclick();
+   void button.onclick();
   }
  }
  function showAbout(){

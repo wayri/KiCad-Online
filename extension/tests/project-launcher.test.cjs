@@ -2,7 +2,7 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 global.KiCadGitHub=require('../parsing.js');const launch=require('../project-launch.js');
 async function ui(response,search='?source=https%3A%2F%2Fgithub.com%2Fowner%2Frepo&ref=HEAD'){
  const nodes=new Map(),requests=[],replaced=[],events=new Map(),stages=[],warnings=[],diagnostics=[];let hidden=0;
- const node=()=>({textContent:'',hidden:false,className:'',children:[],replaceChildren(){this.children=[];},append(n){this.children.push(n);},addEventListener(type,fn){this[type]=fn;}});
+ const node=()=>({textContent:'',hidden:false,className:'',children:[],setAttribute(name,value){this[name]=value;},replaceChildren(){this.children=[];},append(n){this.children.push(n);},addEventListener(type,fn){this[type]=fn;}});
  const document={getElementById:id=>{if(!nodes.has(id))nodes.set(id,node());return nodes.get(id);},createElement:node};
  vm.runInNewContext(fs.readFileSync(require.resolve('../project-launcher.js'),'utf8'),{document,console:{warn:(...args)=>warnings.push(args.join(' ')),debug:(...args)=>diagnostics.push(args.join(' '))},addEventListener:(name,fn)=>events.set(name,fn),KiCadLoading:{indicator:(host,options)=>{assert.equal(options.fullscreen,true);return{show:stage=>stages.push(stage),hide:()=>hidden++,dispose(){}};}},location:{search,replace:url=>replaced.push(url)},URLSearchParams,KiCadProjectLaunch:launch,chrome:{runtime:{getURL:p=>'moz-extension://test/'+p,sendMessage:async m=>{requests.push(m);return response;}}}});
  await new Promise(setImmediate);return{nodes,requests,replaced,stages,hidden,events,warnings,diagnostics};
@@ -56,3 +56,62 @@ test('denied website reads offer local rendering without requesting account auth
 
 test('project chooser excludes standalone drawings when listing project cards',async()=>{const view=await ui({ok:true,result:{sha:'c'.repeat(40),projects:['root.kicad_pro','sub/child.kicad_pro','elsewhere/sheet.kicad_sch','other/board.kicad_pcb']}});const cards=view.nodes.get('launchProjects').children;assert.equal(cards.length,2);assert.deepEqual(cards.map(c=>new URL(c.href).searchParams.get('file')),['root.kicad_pro','sub/child.kicad_pro']);assert.equal(cards[1].children[1].textContent,'child');assert.equal(cards[1].children[2].textContent,'sub');assert.equal(cards[1].className,'project-choice');});
 test('drawing-only repositories do not mislabel individual drawings as projects',async()=>{const view=await ui({ok:true,result:{sha:'d'.repeat(40),projects:['sheet.kicad_sch','board.kicad_pcb']}});assert.equal(view.nodes.get('launchProjects').children.length,0);assert.equal(view.replaced.length,0);});
+
+
+test('Gerber-only and mixed repositories offer a dedicated fabrication card without redirecting',async()=>{
+ for(const projects of [[],['main.kicad_pro']]){
+  const sha='a'.repeat(40);
+  const view=await ui({ok:true,result:{sha,projects,fabricationCount:3}});
+  assert.equal(view.replaced.length,0);
+  const cards=view.nodes.get('launchProjects').children;
+  assert.equal(cards.length,projects.length+1);
+  const card=cards[0],url=new URL(card.href);
+  assert.match(card.className,/fabrication-choice/);
+  assert.equal(card.children[1].textContent,'Gerbers');
+  assert.equal(url.pathname,'/gerber-viewer.html');
+  assert.equal(url.searchParams.get('repository'),'owner/repo');
+  assert.equal(url.searchParams.get('ref'),sha);
+  assert.equal(url.searchParams.get('scan'),'1');
+  assert.equal(url.searchParams.has('file'),false);
+ }
+});
+
+test('fabrication scan links preserve the selected folder and pinned source',async()=>{
+ const sha='b'.repeat(40),source='https://github.com/owner/repo/tree/main/fab';
+ const view=await ui({ok:true,result:{sha,projects:[],fabricationCount:1,directory:'fab'}},'?source='+encodeURIComponent(source));
+ const url=new URL(view.nodes.get('launchProjects').children[0].href);
+ assert.equal(url.searchParams.get('ref'),sha);
+ assert.equal(url.searchParams.get('file'),'fab/board.gbrjob');
+ const gitlab=new URL(launch.fabricationURL({sha,repository:'group/sub/repo',provider:'gitlab',host:'https://gitlab.example'},p=>'moz-extension://test/'+p));
+ assert.equal(gitlab.searchParams.get('host'),'https://gitlab.example');
+ assert.equal(gitlab.searchParams.get('provider'),'gitlab');
+ const fork=new URL(launch.fabricationURL({sha,repository:'owner/repo',headRepository:'fork/repo'},p=>'moz-extension://test/'+p));
+ assert.equal(fork.searchParams.get('repository'),'fork/repo');
+});
+
+test('Projects opens a pinned repository-root chooser with project cards before fabrication',async()=>{
+ const sha='a'.repeat(40);
+ const file='encoder/Encoder.kicad_sch';
+ const url=new URL(launch.repositoryProjectsURL({repository:'wayri/KERO',ref:sha,file},p=>'chrome-extension://test/'+p));
+ assert.equal(url.searchParams.get('source'),'https://github.com/wayri/KERO/tree/'+sha);
+ const view=await ui({ok:true,result:{sha,projects:['KERO.kicad_pro','encoder/Encoder.kicad_pro','encoder/bank1.kicad_sch'],fabricationCount:4}},url.search);
+ const cards=view.nodes.get('launchProjects').children;
+ assert.equal(view.requests[0].repository,'wayri/KERO');
+ assert.equal(view.requests[0].ref,sha);
+ assert.equal(view.replaced.length,0);
+ assert.deepEqual(cards.map(card=>card.children[1].textContent),['KERO','Encoder']);
+ assert.equal(cards[1]['aria-current'],'true');
+ assert.equal(cards[1].children[0].textContent,'Current project');
+ assert.match(view.nodes.get('launchOther').children[0].href,/gerber-viewer/);
+});
+
+test('repository Projects retains a single card and supports nested GitLab namespaces',async()=>{
+ const sha='b'.repeat(40);
+ const url=new URL(launch.repositoryProjectsURL({repository:'group/subgroup/project',ref:sha,file:'board.kicad_pro',provider:'gitlab',host:'https://gitlab.example'},p=>'chrome-extension://test/'+p));
+ const view=await ui({ok:true,result:{sha,projects:['board.kicad_pro']}},url.search);
+ assert.equal(view.requests[0].source,'https://gitlab.example/group/subgroup/project/-/tree/'+sha);
+ assert.equal(view.requests[0].provider,'gitlab');
+ assert.equal(view.replaced.length,0);
+ assert.equal(view.nodes.get('launchProjects').children.length,1);
+ assert.equal(launch.repositoryProjectsURL({repository:'owner/../repo',ref:sha},String),null);
+});

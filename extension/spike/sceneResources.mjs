@@ -1,6 +1,6 @@
 /* Copyright (c) 2026 wayri. SPDX-License-Identifier: MPL-2.0 */
 /* One owner for shared model buffers, materials and texture lifetime. */
-export function createSceneResources() {
+export function createSceneResources({onChange=()=>{}}={}) {
   let closed=false,revision=0,accountedRevision=-1,allocation=null;
   const retained=new Set(),disposed=new WeakSet(),dynamic=new Map();
   function estimateTextureBytes(resource){
@@ -15,7 +15,7 @@ export function createSceneResources() {
   }
   function track(resource){
     if(!resource||typeof resource!=='object'||typeof resource.dispose!=='function')return resource;
-    if(closed)release(resource);else if(!retained.has(resource)){retained.add(resource);revision++;}
+    if(closed)release(resource);else if(!retained.has(resource)){retained.add(resource);revision++;onChange();}
     return resource;
   }
   function release(resource){

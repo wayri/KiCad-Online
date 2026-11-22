@@ -10,14 +10,14 @@ test('link endpoints choose the named parent entry and child port, not an unrela
  const parent=net('parent','root',{sheetPins:[{sheetId:'a',name:'IN'}],members:[{kind:'sheet_pin',name:'OTHER',sheetId:'a',position:{x:1,y:1}},{kind:'sheet_pin',name:'IN',sheetId:'b',position:{x:2,y:2}},{kind:'sheet_pin',name:'IN',sheetId:'a',position:{x:3,y:4}}]});
  const child=net('child','channel',{hierarchicalNames:['IN'],members:[{kind:'hierarchical_label',name:'OTHER',position:{x:5,y:5}},{kind:'hierarchical_label',name:'IN',position:{x:6,y:7}}]});
  const result=resolve([parent,child],[{netId:'child',instanceId:'root/a'}],placements);
- assert.deepEqual(result.links[0].from.position,{x:3,y:4});assert.deepEqual(result.links[0].to.position,{x:6,y:7});
+ assert.deepEqual(result.links[0].from.position,{x:6,y:7});assert.deepEqual(result.links[0].to.position,{x:3,y:4});
 });
 
 test("repeated channels bind hierarchical labels to their own parent pins",()=>{
   const result=resolve(channels,[{netId:"input",instanceId:"root/a"}],placements);
   assert.deepEqual(identities(result),["root/a:input","root:A"]);
   assert.equal(result.links.length,1);
-  assert.deepEqual(result.links[0],{name:"IN",from:{path:"root",netId:"A",instanceId:"root",position:{x:1,y:2}},to:{path:"channel",netId:"input",instanceId:"root/a",position:{x:1,y:2}}});
+  assert.deepEqual(result.links[0],{name:"IN",to:{path:"root",netId:"A",instanceId:"root",position:{x:1,y:2}},from:{path:"channel",netId:"input",instanceId:"root/a",position:{x:1,y:2}}});
   assert.deepEqual(result.limits,[]);
 });
 test("file-level string selection deliberately aggregates all repeated instances",()=>{
@@ -70,4 +70,33 @@ test("PCB nets and missing drawing positions cannot create bogus endpoints",()=>
   const result=resolve(nets,["a"],placements);
   assert.equal(result.matches.length,3);
   assert.ok(result.links.every(l=>l.from.position===null && l.to.position===null));
+});
+
+
+test('saved input/output ports orient links independently of which sheet was selected',()=>{
+ for(const direction of ['input','output']){
+  const parent=net('p','root',{sheetPins:[{sheetId:'a',name:'NET'}],members:[{kind:'sheet_pin',sheetId:'a',direction,name:'NET',position:{x:10,y:20}}]});
+  const child=net('c','channel',{hierarchicalNames:['NET'],members:[{kind:'hierarchical_label',direction,name:'NET',position:{x:20,y:30}}]});
+  for(const selection of [{netId:'p',instanceId:'root'},{netId:'c',instanceId:'root/a'}]){
+   const edge=resolve([parent,child],[{...selection,position:{x:99,y:99}}],placements).links[0];
+   assert.equal(edge.from.netId,direction==='input'?'p':'c');
+   assert.equal(edge.to.netId,direction==='input'?'c':'p');
+   assert.deepEqual(edge.from.position,direction==='input'?{x:10,y:20}:{x:20,y:30});
+  }
+ }
+});
+
+test('global flow fans out from a unique driver or from the clicked point when drivers conflict',()=>{
+ const sheetIds=['root','aux','third'];
+ const sheets=sheetIds.map(id=>({id,path:id,parentId:null}));
+ for(const origin of ['label','pin','click']){
+  const nets=sheetIds.map((path,index)=>net(path,path,{globalNames:['BUS'],members:[
+    {kind:'global_label',name:'BUS',position:{x:index,y:5},...(origin==='label'&&index===2?{direction:'output'}:{})},
+    {kind:'pin',direction:(origin==='pin'&&index===2||origin==='click'&&index!==1)?'output':'input',position:{x:index,y:7}}
+  ]}));
+  const result=resolve(nets,[{netId:'aux',instanceId:'aux',position:{x:80,y:90}}],sheets);
+  assert.equal(result.links.length,2);
+  assert.ok(result.links.every(edge=>edge.from.path===(origin==='click'?'aux':'third')));
+  assert.deepEqual(result.links[0].from.position,origin==='click'?{x:80,y:90}:{x:2,y:5});
+ }
 });

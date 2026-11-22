@@ -71,6 +71,7 @@ function workspaceRuntime(respond=async()=>[], hooks={}){
   if(hooks.quickView)context.KiCadNetQuickView=hooks.quickView;
   if(hooks.workspaceChrome)context.KiCadWorkspaceChrome=hooks.workspaceChrome;
   if(hooks.sheetOverview)context.KiCadSheetOverview=hooks.sheetOverview;
+  if(hooks.overviewConnectivity)context.KiCadOverviewConnectivity=require('../overview-connectivity.js');
   if(hooks.workBoardPanel)context.KiCadWorkBoardPanel=hooks.workBoardPanel;
   if(hooks.reviewSync)context.KiCadReviewSync=hooks.reviewSync;
   if(hooks.vscode)context.KiCadVSCodeContext=typeof hooks.vscode==='object'?hooks.vscode:{};
@@ -356,6 +357,20 @@ test('whole-drawing comments have a labelled edge marker without inventing sourc
  fire('click',{clientX:400,clientY:300});fire('pointermove',{buttons:0,clientX:440,clientY:330});assert.match(view.get('measurementStatus').textContent,/Live.*12.806/);assert.match(view.get('reviewOverlay').textContent,/X: 10.000 mm/);assert.match(view.get('reviewOverlay').textContent,/Y: 8.000 mm/);
  fire('click',{clientX:440,clientY:330,altKey:true});assert.match(view.get('measurementStatus').textContent,/Pinned.*12.500/);fire('pointermove',{buttons:0,clientX:600,clientY:500});assert.match(view.get('measurementStatus').textContent,/Pinned.*12.500/);
  view.get('clearRuler').click();fire('click',{clientX:400,clientY:300});fire('pointerdown',{button:2,clientX:400,clientY:300});fire('pointerup',{button:2,clientX:400,clientY:300});fire('pointermove',{buttons:0,clientX:440,clientY:300});assert.match(view.get('measurementStatus').textContent,/Live.*10.000/);view.get('measureButton').click();assert.equal(view.get('rulerControls').hidden,true);
+ });
+ test('ruler redraw skips a collapsed drawing host and restores its line when shown',()=>{
+ const view=workspaceRuntime();view.load();view.get('measureButton').click();
+ for(const clientX of [400,440]){
+   const event=new Event('click',{cancelable:true});
+   Object.assign(event,{clientX,clientY:300});view.canvas.canvas.dispatchEvent(event);
+ }
+ const lines=()=>descendants(view.get('reviewOverlay')).filter(node=>node.tagName==='LINE');
+ assert.ok(lines().length);
+ const host=view.get('drawingHost'),getRect=host.getBoundingClientRect;
+ host.getBoundingClientRect=()=>({left:0,top:0,width:0,height:0});
+ view.workspace.draw();assert.equal(lines().length,0);
+ host.getBoundingClientRect=getRect;
+ view.workspace.draw();assert.ok(lines().length);
  });
  test('board extents measurement uses saved outline and reports missing outline',()=>{const view=workspaceRuntime();view.load();view.get('measureButton').click();view.get('measureBoard').click();assert.match(view.get('measurementStatus').textContent,/No saved Edge.Cuts/);view.design.primitives.push({type:'line',layer:'Edge.Cuts',points:[{x:0,y:0},{x:40,y:25}],width:1});view.get('measureBoard').click();assert.match(view.get('reviewOverlay').textContent,/X: 40.000 mm/);assert.match(view.get('reviewOverlay').textContent,/Y: 25.000 mm/);assert.match(view.get('measurementStatus').textContent,/Board extents/);});
 test('a completed ruler result can be replayed after starting another measurement',async()=>{
@@ -2066,12 +2081,66 @@ test('screenshot-only and type-only editor changes advance the optimistic-concur
 });
 
 
-test('ordinary sheet navigation preserves only a matching highlighted net and clears unrelated selections',()=>{
+test('ordinary sheet navigation restores net highlights after visiting an unrelated sheet',()=>{
  const content=name=>`(kicad_sch (version 20250114) (global_label "${name}" (at 0 0) (uuid "g")) (wire (pts (xy 0 0) (xy 10 0)) (uuid "w")))`;
  const files=[{path:'root.kicad_sch',content:content('SUPPLY')},{path:'child.kicad_sch',content:content('SUPPLY')},{path:'other.kicad_sch',content:content('OTHER')}],selections=[];let active=files[0].path;
  const view=workspaceRuntime(undefined,{pcb:false,files,currentFile:()=>active,openSheet:path=>{active=path;},onSelection:value=>selections.push(value)});view.load();view.get('netList').children[0].click();
  view.workspace.followSheet('child.kicad_sch');assert.equal(view.canvas.netHighlight.name,'SUPPLY');assert.equal(view.canvas.netHighlight.path,'child.kicad_sch');assert.equal(selections.at(-1).kind,'net');
- view.workspace.followSheet('other.kicad_sch');assert.equal(view.canvas.netPrimitives.size,0);assert.equal(selections.at(-1).items.length,0);view.workspace.dispose();
+ view.workspace.followSheet('other.kicad_sch');assert.equal(view.canvas.netPrimitives.size,0);assert.equal(selections.at(-1).items.length,0);
+ view.workspace.followSheet('root.kicad_sch');assert.equal(view.canvas.netHighlight.name,'SUPPLY');
+ view.workspace.followSheet('other.kicad_sch');view.workspace.clearHighlights();
+ view.workspace.followSheet('root.kicad_sch');assert.equal(view.canvas.netPrimitives.size,0);view.workspace.dispose();
+});
+
+test('sheet navigation follows saved pins through three levels without lighting another instance',()=>{
+ const sheet=(id,child,x,pin)=>`(sheet (uuid "${id}") (at ${x} 10) (size 10 10)
+   (property "Sheetname" "${id}") (property "Sheetfile" "${child}.kicad_sch")
+   (pin "${pin}" input (at ${x} 15 180)))`;
+ const label=(kind,name,x,id)=>`(${kind} "${name}" (at ${x} 15 0) (uuid "${id}"))`;
+ const wire=(a,b,id)=>`(wire (pts (xy ${a} 15) (xy ${b} 15)) (uuid "${id}"))`;
+ const file=(name,forms)=>({path:name+'.kicad_sch',content:`(kicad_sch (uuid "${name}") ${forms})`});
+ const files=[
+   file('root',sheet('main','channel',10,'IN')+sheet('spare','channel',40,'IN')+label('label','MAIN_FEED',2,'main-label')+wire(2,10,'main-wire')+label('label','SPARE_FEED',31,'spare-label')+wire(31,40,'spare-wire')+label('global_label','SYNC',60,'root-sync')+wire(60,70,'root-sync-wire')),
+   file('channel',sheet('stage','leaf',10,'NEXT')+label('hierarchical_label','IN',2,'in-label')+wire(2,10,'channel-wire')),
+   file('leaf',label('hierarchical_label','NEXT',2,'next-label')+wire(2,10,'leaf-wire')+label('global_label','SYNC',60,'leaf-sync')+wire(60,70,'leaf-sync-wire'))
+ ];
+ const instances=new Map([['root.kicad_sch','/root']]);
+ let active=files[0].path,view;
+ view=workspaceRuntime(undefined,{pcb:false,files,overviewConnectivity:true,currentFile:()=>active,getSheetInstance:path=>instances.get(path),openSheet(path,point,context){
+   active=path;
+   if(context?.instancePath)instances.set(path,context.instancePath);
+   const source=files.find(file=>file.path===path);
+   const design=require('../schematic-renderer.js').build(require('../design-diff.js').parse(source.content),path);
+   view.designs.set(path,design);view.canvas.design=design;view.canvas.primitives=design.primitives;view.workspace.draw();
+ }});
+ view.load();
+ const main=()=>view.get('netList').children.find(row=>row.textContent.includes('MAIN_FEED'));
+ assert.ok(main());main().click();
+ view.workspace.followSheet('channel.kicad_sch',undefined,{instancePath:'/root/main'});
+ assert.ok(view.canvas.netHighlight?.uuids.includes('channel-wire'));
+ view.workspace.followSheet('leaf.kicad_sch',undefined,{instancePath:'/root/main/stage'});
+ assert.ok(view.canvas.netHighlight?.uuids.includes('leaf-wire'));
+ view.get('sheetUp').click();
+ assert.equal(active,'channel.kicad_sch');assert.ok(view.canvas.netHighlight?.uuids.includes('channel-wire'));
+ view.workspace.followSheet('channel.kicad_sch',undefined,{instancePath:'/root/spare'});
+ assert.equal(view.canvas.netPrimitives.size,0);
+ view.workspace.followSheet('leaf.kicad_sch',undefined,{instancePath:'/root/spare/stage'});
+ assert.equal(view.canvas.netPrimitives.size,0);
+ view.get('sheetHome').click();
+ assert.equal(active,'root.kicad_sch');assert.equal(view.canvas.netHighlight?.name,'MAIN_FEED');
+ assert.equal(view.canvas.highlightNets.length,1);
+ assert.ok(view.canvas.netPrimitives.size>0);
+ assert.ok([...view.canvas.netPrimitives].every(primitive=>view.canvas.primitives.includes(primitive)));
+
+ view.workspace.followSheet('leaf.kicad_sch',undefined,{instancePath:'/root/main/stage'});
+ view.get('netList').children.find(row=>row.textContent.includes('NEXT')).click();
+ view.get('multiHighlight').checked=true;
+ view.get('netList').children.find(row=>row.textContent.includes('SYNC')).click();
+ view.get('sheetHome').click();
+ assert.deepEqual(Array.from(view.canvas.highlightNets,net=>net.name).sort(),['MAIN_FEED','SYNC']);
+ view.workspace.followSheet('leaf.kicad_sch',undefined,{instancePath:'/root/spare/stage'});
+ assert.deepEqual(Array.from(view.canvas.highlightNets,net=>net.name),['SYNC']);
+ view.workspace.dispose();
 });
 
 
@@ -2213,5 +2282,138 @@ test('schematic navigation excludes board files from a mixed loaded project',()=
  const view=workspaceRuntime(async()=>[],{pcb:false,files,openSheet:path=>opened.push(path)});view.load();
  assert.deepEqual(view.get('sheetSelect').children.map(option=>option.value).sort(),['child.kicad_sch','root.kicad_sch']);
  view.get('sheetSelect').value='child.kicad_sch';view.get('sheetSelect').onchange();assert.deepEqual(opened,['child.kicad_sch']);
+ view.workspace.dispose();
+});
+
+test('differential-pair prompt highlights both saved lanes in Layout and 3D and dismisses itself',()=>{
+ const source='(kicad_pcb (version 20240108) (layers (0 "F.Cu" signal)) (net 1 "/IO/USB_P0") (net 2 "/IO/USB_N0") (net 3 "/IO/USB_N1") (segment (start 0 0) (end 10 0) (width .2) (layer "F.Cu") (net 1) (uuid "p")) (segment (start 0 1) (end 10 1) (width .2) (layer "F.Cu") (net 2) (uuid "n")) (segment (start 0 2) (end 10 2) (width .2) (layer "F.Cu") (net 3) (uuid "other")) )';
+ const emitted=[],view=workspaceRuntime(undefined,{source,onSelection:value=>emitted.push(value)});
+ view.load();
+ const prompt=view.get('highlightDifferentialPair');
+ const net=name=>({kind:'net',path:'board.kicad_pcb',netName:name});
+ assert.equal(prompt.hidden,true);
+ assert.equal(view.workspace.applyWindowSelection(net('/IO/USB_N1')),true);
+ assert.equal(prompt.hidden,true);
+ assert.equal(view.workspace.applyWindowSelection(net('/IO/USB_P0')),true);
+ assert.equal(prompt.hidden,false);
+ assert.match(prompt.title,/USB_N0/);
+ prompt.click();
+ assert.equal(prompt.hidden,true);
+ assert.deepEqual(Array.from(view.canvas.highlightNets,n=>n.name).sort(),['/IO/USB_N0','/IO/USB_P0']);
+ assert.deepEqual(Array.from(emitted.at(-1).items,item=>item.netName).sort(),['/IO/USB_N0','/IO/USB_P0']);
+ view.workspace.clearHighlights();
+ assert.equal(view.canvas.highlightNets.length,0);
+ assert.equal(prompt.hidden,true);
+ let sceneSelection;
+ view.workspace.setScene({setPopulation(){},setSelection(){},setSelectionPresentation(selection){sceneSelection=selection;}});
+ view.workspace.select3D({net:'/IO/USB_N0',uuid:'n',type:'Track'});
+ assert.equal(prompt.hidden,false);
+ assert.equal(prompt.getAttribute('data-view3d'),'true');
+ prompt.click();
+ assert.deepEqual(Array.from(sceneSelection.netNames).sort(),['/IO/USB_N0','/IO/USB_P0']);
+ assert.equal(prompt.hidden,true);
+ view.workspace.dispose();
+});
+
+test('schematic differential nets pair by saved labels in the current drawing',()=>{
+ const content='(kicad_sch (wire (pts (xy 0 0) (xy 20 0)) (uuid "pa")) (label "DATA+" (at 0 0) (uuid "pl")) (wire (pts (xy 0 5) (xy 20 5)) (uuid "na")) (label "DATA-" (at 0 5) (uuid "nl")))';
+ const view=workspaceRuntime(undefined,{pcb:false,files:[{path:'root.kicad_sch',content}]});
+ view.load();
+ const prompt=view.get('highlightDifferentialPair');
+ assert.equal(view.workspace.applyWindowSelection({kind:'net',path:'root.kicad_sch',netName:'DATA-'}),true);
+ assert.equal(prompt.hidden,false);
+ prompt.click();
+ assert.deepEqual(Array.from(view.canvas.highlightNets,n=>n.name).sort(),['DATA+','DATA-']);
+ assert.equal(prompt.hidden,true);
+ view.workspace.dispose();
+});
+
+test('schematic context menu shows saved alternate functions for a symbol and narrows to the clicked pin',()=>{
+ const content=`(kicad_sch (version 20260206)
+  (lib_symbols (symbol "MCU:Demo"
+   (symbol "Demo_0_1" (rectangle (start -2 2) (end 2 -2) (stroke (width .15)(type default)) (fill(type background))))
+   (symbol "Demo_1_1" (pin input line (at -5 1 0) (length 3) (name "STYLE1")(number "1")(alternate "WRONG_STYLE" input line)))
+   (symbol "Demo_1_2"
+    (rectangle (start -2 2) (end 2 -2) (stroke (width .15)(type default)) (fill(type background)))
+    (pin bidirectional line (at -5 1 0) (length 3) (name "PA0")(number "1")(alternate "USART_TX" output line)(alternate "TIM2_CH1" input clock))
+    (pin bidirectional line (at -5 -1 0) (length 3) (name "PA1")(number "2")(alternate "USART_RX" input line)))
+   (symbol "Demo_2_2" (pin input line (at 5 0 180) (length 2) (name "PB1")(number "3")(alternate "OTHER_UNIT" input line)))))
+  (symbol (lib_id "MCU:Demo") (at 30 40 0) (unit 1) (body_style 2) (uuid "mcu")
+    (property "Reference" "U1" (at 30 36 0))
+    (pin "1" (uuid "pin-1") (alternate "USART_TX"))))`;
+ const view=workspaceRuntime(undefined,{pcb:false,files:[{path:'root.kicad_sch',content}]});
+ view.load();
+ const trigger=primitive=>{
+  view.canvas.query=()=>[primitive];
+  view.canvas.canvas.dispatchEvent(uiEvent('contextmenu',{clientX:280,clientY:200,button:2}));
+  const action=view.get('objectMenu').children.find(n=>n.textContent==='Alternate pin functions…');
+  assert.ok(action);
+  action.click();
+  const dialog=descendants(view.document.body).find(n=>n.className.includes('pin-functions-dialog'));
+  assert.equal(dialog.open,true);
+  return dialog;
+ };
+ const body=view.design.primitives.find(p=>p.uuid==='mcu'&&p.kind==='symbol');
+ let dialog=trigger(body);
+ assert.match(dialog.textContent,/U1/);
+ assert.match(dialog.textContent,/USART_TX/);
+ assert.match(dialog.textContent,/USART_RX/);
+ assert.doesNotMatch(dialog.textContent,/WRONG_STYLE|OTHER_UNIT/);
+ const active=descendants(dialog).filter(n=>n.className==='active-pin-function');
+ assert.equal(active.length,2);
+ assert.ok(active.some(row=>row.textContent.includes('USART_TX')&&row.textContent.includes('Active')));
+ assert.ok(active.some(row=>row.textContent.includes('PA1')&&row.textContent.includes('Active · default')));
+ dialog.close();
+
+ const terminal=view.design.primitives.find(p=>p.ownerUuid==='mcu'&&p.pinNumber==='1'&&p.kind==='pin');
+ dialog=trigger(terminal);
+ assert.match(dialog.textContent,/PA0/);
+ assert.match(dialog.textContent,/TIM2_CH1/);
+ assert.doesNotMatch(dialog.textContent,/USART_RX|PA1/);
+ dialog.close();
+ assert.equal(view.canvas.canvas.focused,true);
+ view.workspace.dispose();
+});
+
+test('drawing download opens one compact modal without replacing the drawing',()=>{
+ const view=workspaceRuntime();view.load();
+ const trigger=view.get('downloadDrawing'),host=view.get('drawingHost'),design=view.canvas.design;
+ trigger.click();trigger.click();
+ const dialogs=view.document.querySelectorAll('dialog[open]');
+ assert.equal(dialogs.length,1);
+ const [dialog]=dialogs;
+ assert.equal(dialog.className,'drawing-download-dialog');
+ assert.equal(dialog.getAttribute('aria-labelledby'),'drawingDownloadTitle');
+ const [,body,footer]=dialog.children;
+ const format=body.children[0].children[0],extent=body.children[1].children[0];
+ assert.equal(format.focused,true);
+ assert.deepEqual(format.children.map(option=>option.value),['pdf','png']);
+ assert.deepEqual(extent.children.map(option=>option.value),['full','viewport']);
+ assert.deepEqual(footer.children.map(button=>button.textContent),['BoM CSV…','Download']);
+ assert.equal(host.hidden,false);
+ dialog.children[0].children[1].click();
+ assert.equal(view.document.body.contains(dialog),false);
+ assert.equal(view.canvas.design,design);
+ trigger.click();view.workspace.dispose();
+ assert.equal(view.document.querySelectorAll('dialog[open]').length,0);
+});
+
+test('view options groups live controls and hides actions until a highlight can use them',()=>{
+ const view=workspaceRuntime();view.load();
+ const popup=view.get('extraReviewControls'),trigger=view.get('reviewToolsButton'),fit=view.get('fitHighlights');
+ const netColors=view.get('netHighlightColor');
+ assert.equal(popup.getAttribute('aria-labelledby'),'reviewOptionsTitle');
+ assert.equal(netColors.parentElement.parentElement.className,'review-option-fields');
+ assert.equal(view.get('keepContextColors').parentElement.hidden,true);
+ assert.equal(fit.parentElement.hidden,true);
+ view.get('netList').children[0].click();
+ assert.equal(fit.parentElement.hidden,false);
+ assert.equal(view.get('previousConnection').parentElement.hidden,false);
+ trigger.click();assert.equal(popup.hidden,false);
+ assert.equal(view.key('Escape').defaultPrevented,true);
+ assert.equal(popup.hidden,true);assert.equal(trigger.focused,true);
+ assert.equal(view.canvas.netHighlight.name,'SIGNAL');
+ view.get('clearHighlights').click();
+ assert.equal(fit.parentElement.hidden,true);
  view.workspace.dispose();
 });

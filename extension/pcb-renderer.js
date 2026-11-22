@@ -7,7 +7,7 @@
   const value = (item) => item && typeof item === "object" && !Array.isArray(item) ? item.quoted : item;
   const kind = (node) => Array.isArray(node) ? String(value(node[0])) : "";
   const children = (node, name) => Array.isArray(node) ? node.filter((part) => Array.isArray(part) && kind(part) === name) : [];
-  const child = (node, name) => children(node, name)[0];
+  const child = (node, name) => Array.isArray(node) ? node.find(part => Array.isArray(part) && kind(part) === name) : undefined;
   const field = (node, name) => value(child(node, name)?.[1]);
   const num = (item, fallback = 0) => { const result = Number(value(item)); return Number.isFinite(result) ? result : fallback; };
   const point = (node, name) => {
@@ -15,7 +15,34 @@
     if (!entry || !Number.isFinite(Number(value(entry[1]))) || !Number.isFinite(Number(value(entry[2])))) return null;
     return { x: num(entry[1]), y: num(entry[2]) };
   };
-  const points = (node) => children(child(node, "pts"), "xy").map((xy) => ({ x: num(xy[1]), y: num(xy[2]) }));
+  function packedZone(coordinates) {
+    let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+    for(let i=0;i<coordinates.length;i+=2){
+      const x=coordinates[i],y=coordinates[i+1];
+      minX=Math.min(minX,x);minY=Math.min(minY,y);maxX=Math.max(maxX,x);maxY=Math.max(maxY,y);
+    }
+    return {zoneCoordinates:coordinates,zoneBounds:{x:minX,y:minY,w:maxX-minX,h:maxY-minY}};
+  }
+  function unpackZone(coordinates) {
+    const points=new Array(coordinates.length/2);
+    for(let i=0;i<points.length;i++)points[i]={x:coordinates[i*2],y:coordinates[i*2+1]};
+    return points;
+  }
+  function hydrateZonePoints(design) {
+    if(!design?.packedZones||design.releaseZonePoints)return design;
+    let cache=new WeakMap();
+    for(const primitive of design.primitives)if(primitive.zoneCoordinates){
+      Object.defineProperty(primitive,'points',{enumerable:true,get(){
+        const coordinates=primitive.zoneCoordinates;
+        let points=cache.get(coordinates);
+        if(!points){points=unpackZone(coordinates);cache.set(coordinates,points);}
+        return points;
+      }});
+    }
+    Object.defineProperty(design,'releaseZonePoints',{value:()=>{cache=new WeakMap();}});
+    return design;
+  }
+  const points = node => children(child(node, "pts"), "xy").map(xy => ({x:num(xy[1]),y:num(xy[2])}));
   const uuid = (node) => String(field(node, "uuid") || field(node, "tstamp") || "");
   const hasAtom = (node, atom) => Array.isArray(node) && node.some((part) => !Array.isArray(part) && value(part) === atom);
   const hasFlag = (node, name) => Array.isArray(node) && node.some((part) => {
@@ -80,6 +107,18 @@
     }
     return oval(height, width).map((p) => ({x:p.y,y:p.x}));
   }
+  const pinOneColor='#c477ff';
+  function firstCopperPadNumber(footprint){
+    let ball=null;
+    for(const pad of children(footprint,'pad')){
+      if(value(pad[2])==='np_thru_hole'||!child(pad,'layers')?.slice(1).some(layer=>/^(?:F|B|F&B|In[0-9]+|\*)\.Cu$/.test(value(layer))))continue;
+      const number=String(value(pad[1])??'');
+      if(number==='1')return number;
+      if(number==='A1')ball=number;
+    }
+    return ball;
+  }
+
   function build(ast, path = "", options = {}) {
     const warnings = [], primitives = [];
     if (kind(ast) !== "kicad_pcb") throw new Error("Expected a KiCad PCB AST.");
@@ -113,7 +152,7 @@
         ownerUuid: owner.ownerUuid || owner.uuid || undefined,
         reference: owner.reference || undefined, kind: owner.kind || kind(node),...netMeta(node),
         ...(owner.kind==='pad'?{name:owner.name,pinNumber:owner.pinNumber,pinName:owner.pinName,netName:owner.netName,netId:owner.netId,netCode:owner.netCode,
-          padCenter:owner.padCenter,padWidth:owner.padWidth,padHeight:owner.padHeight,padAngle:owner.padAngle,padShape:owner.padShape}:{}) };
+          padCenter:owner.padCenter,padWidth:owner.padWidth,padHeight:owner.padHeight,padAngle:owner.padAngle,padShape:owner.padShape,...(owner.pinOne?{pinOne:true}:{})}:{}) };
     }
     function isFilled(node) {
       const fill = child(node,"fill");
@@ -177,7 +216,7 @@
       if (width <= 0 || height <= 0) { warn("Pad with invalid size",node); return; }
       const rawLayers = (child(node,"layers") || []).slice(1).map((part) => String(value(part)));
       const selected = [...new Set(rawLayers.flatMap((item) => item.startsWith("*.")
-        ? layerNames.filter((layer) => layer.endsWith(item.slice(1))) : [item]))];
+        ? layerNames.filter((layer) => layer.endsWith(item.slice(1))) : item==='F&B.Cu'?['F.Cu','B.Cu']:[item]))];
       if (!selected.length) { warn("Pad without renderable layers",node); return; }
       // KiCad serializes the pad angle in board coordinates, even though its
       // position is footprint-local. An omitted angle is therefore zero.
@@ -197,6 +236,7 @@
           kind:"pad", name:String(value(node[1]) || ""), pinNumber:String(value(node[1]) || ""),
           padCenter:{...center}, padWidth:width, padHeight:height, padAngle:-localAngle,padShape:shape,
           pinName:String(field(node,"pinfunction") || ""), ...netMeta(node), padType:String(value(node[2])||""), fill:true };
+        if(meta.pinNumber===footprint.pinOneNumber&&meta.padType!=='np_thru_hole'&&layer.endsWith('.Cu'))meta.pinOne=true;
         if (shape === "circle") push({ type:"pad", x:center.x, y:center.y, r:width/2, ...meta });
         else if (shape === "custom") {
           const options = child(node,"options"), anchor = String(field(options,"anchor") || "");
@@ -276,7 +316,7 @@
         if(local.Reference!==undefined)local.REFERENCE=local.Reference;if(local.Value!==undefined)local.VALUE=local.Value;
         if(uuid(node))variableFields.set(uuid(node),local);
         const reference = local.Reference||"";
-        const owner = { uuid:uuid(node), reference };
+        const owner = { uuid:uuid(node), reference, pinOneNumber:options.silkscreenOnly?null:firstCopperPadNumber(node) };
         const firstPrimitive = primitives.length;
         for (const sub of node.slice(1)) {
           if (!Array.isArray(sub)) continue;
@@ -301,8 +341,10 @@
         const filled = children(node,"filled_polygon");
         if (filled.length) {
           for (const region of filled) {
-            const regionLayer = String(field(region,"layer") || layer), pts = points(region);
-            if (pts.length >= 3) push({ type:"polygon", points:pts, layer:regionLayer, color:colorFor(regionLayer),
+            const regionLayer = String(field(region,"layer") || layer), coordinates=child(region,"pts")?.[1];
+            const geometry=coordinates instanceof Float64Array
+              ? options.packedZones?packedZone(coordinates):{points:unpackZone(coordinates)} : {points:points(region)};
+            if (geometry.zoneCoordinates||geometry.points.length >= 3) push({ type:"polygon", ...geometry, layer:regionLayer, color:colorFor(regionLayer),
               // Filled contours may bridge cut-outs with doubled-back segments.
               // Those segments close the fill; they are not copper outlines.
               fill:true, stroke:false, opacity:.22, uuid:uuid(node) || undefined, kind:"zone",...netMeta(node) });
@@ -322,8 +364,9 @@
       item.kind === "track" ? 0 : item.kind === "via" ? 1 : item.kind === "pad" ? 2 :
       item.kind === "drill" ? 3 : 0;
     primitives.sort((a,b) => priority(a)-priority(b));
-    return { primitives, page, warnings, compatibility, layers:layerNames.length ? layerNames : [...new Set(primitives.map((item) => item.layer))], path };
+    return { primitives, page, warnings, compatibility, layers:layerNames.length ? layerNames : [...new Set(primitives.map((item) => item.layer))], path,
+      ...(options.packedZones&&primitives.some(primitive=>primitive.zoneCoordinates)?{packedZones:true}:{}) };
   }
-  root.KiCadPCBRenderer = { build, colorFor };
+  root.KiCadPCBRenderer = { build, colorFor, firstCopperPadNumber, pinOneColor, hydrateZonePoints };
   if (typeof module === "object" && module.exports) module.exports = root.KiCadPCBRenderer;
 })(typeof globalThis === "object" ? globalThis : this);

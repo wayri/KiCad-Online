@@ -16,7 +16,7 @@ export function selectionMatcher(selection = {}, board = {}) {
   const nets = selectionNetNames(selection, board);
   // A selected net includes the bodies of parts whose saved pads belong to it.
   const connectedParts = new Set();
-  for (const pad of board.pads || []) if (nets.has(pad.net) && pad.ref) connectedParts.add(pad.ref);
+  if(nets.size)for (const pad of board.pads || []) if (nets.has(pad.net) && pad.ref) connectedParts.add(pad.ref);
   return record => Boolean(record && (
     references.has(record.ref) || nets.has(record.net) || uuids.has(record.uuid) ||
     uuids.has(record.id) || (typeof record.id === 'string' && uuids.has(record.id.split(':')[0])) ||

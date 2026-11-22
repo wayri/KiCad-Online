@@ -3,6 +3,7 @@ const fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
 const viewState=require('../view-state.js'),core=require('../owned-canvas.js');
 const tick=()=>new Promise(resolve=>setImmediate(resolve)),plain=value=>JSON.parse(JSON.stringify(value));
 async function revision(query='',extraFiles=[],options={}){
+ const captureFits=options.captureFits;
  const listeners=new Map(),canvasListeners=new Map(),controls=new Map(),reports=[],calls={board:0,page:0,draw:0,disposed:0,attach:0};
  class Element{constructor(){this.attributes={};this.children=[];this.listeners=new Map();this.hidden=false;this.dataset={viewer:'auto'};this.isConnected=true;const classes=new Set();this.classList={add:n=>classes.add(n),remove:n=>classes.delete(n),contains:n=>classes.has(n),toggle(n,on){const next=on??!classes.has(n);if(next)classes.add(n);else classes.delete(n);return next;}};this.style={};}setAttribute(k,v){this.attributes[k]=String(v);}getAttribute(k){return this.attributes[k]??null;}append(...children){this.children.push(...children);}addEventListener(type,fn){if(!this.listeners.has(type))this.listeners.set(type,new Set());this.listeners.get(type).add(fn);}removeEventListener(type,fn){this.listeners.get(type)?.delete(fn);}remove(){}replaceChildren(...children){this.children=[...children];}click(){const result=this.onclick?.();for(const listener of this.listeners.get('click')||[])listener();return result;}}
  Element.prototype.insertBefore=function(child,before){const index=this.children.indexOf(before);if(index<0)this.children.push(child);else this.children.splice(index,0,child);};
@@ -11,7 +12,7 @@ async function revision(query='',extraFiles=[],options={}){
  const canvas={setNetHighlights(){},canvas:new Element(),viewport:{camera},document:null,visibleLayers:new Set(),addEventListener:(type,callback)=>canvasListeners.set(type,callback),resize(){},draw(){calls.draw++;},dispose(){calls.disposed++;},
   setDocument(design,file){this.design=design;this.document={filename:file};this.zoom_to_board();this.draw();},
   setWorksheetVisible(on){this.paperVisible=on;},zoom_to_board(){calls.board++;camera.bbox={x:92,y:192,w:16,h:16};},zoom_to_page(){calls.page++;camera.bbox={x:0,y:0,w:297,h:210};}};
- for(const name of ['focusLayer','restoreLayers','layerPreset'])canvas[name]=function(...args){if(name==='focusLayer'){if(!this.layerSnapshot)this.layerSnapshot=new Set(this.visibleLayers);this.focusedLayer=args[0];this.layerFocusMode=args[1];this.layerPresetName=null;this.visibleLayers.add(args[0]);}else if(name==='layerPreset'){if(!this.layerSnapshot)this.layerSnapshot=new Set(this.visibleLayers);this.focusedLayer=null;this.layerPresetName=args[0];this.visibleLayers=new Set(this.design.layers.filter(layer=>args[0]!=='overview'||['F.Cu','B.Cu','F.SilkS','B.SilkS','Edge.Cuts'].includes(layer)));}else{if(this.layerSnapshot)this.visibleLayers=new Set(this.layerSnapshot);this.layerSnapshot=null;this.focusedLayer=null;this.layerPresetName=null;}};
+ for(const name of ['focusLayer','restoreLayers','layerPreset'])canvas[name]=function(...args){if(name==='focusLayer'){if(!this.layerSnapshot)this.layerSnapshot=new Set(this.visibleLayers);this.focusedLayer=args[0];this.layerFocusMode=args[1];this.layerPresetName=null;this.visibleLayers.add(args[0]);}else if(name==='layerPreset'){if(!this.layerSnapshot)this.layerSnapshot=new Set(this.visibleLayers);this.focusedLayer=null;this.layerPresetName=args[0];this.visibleLayers=new Set(this.design.layers.filter(layer=>args[0]!=='overview'||(/\.Cu$|\.SilkS$/.test(layer)||layer==='Edge.Cuts')));}else{if(this.layerSnapshot)this.visibleLayers=new Set(this.layerSnapshot);this.layerSnapshot=null;this.focusedLayer=null;this.layerPresetName=null;}};
  const initialFile=options.file||(options.pcb?'board.kicad_pcb':'root.kicad_sch');
  const context={Map,AbortController,setTimeout:(fn,ms)=>{const timer=setTimeout(fn,ms);if(ms>100)timer.unref();return timer;},clearTimeout,URL,URLSearchParams,console,location:{search:'?repository=wayri/board&ref=main&file='+initialFile+query},parent,
   document:{getElementById:get,body:new Element(),createElement:()=>new Element(),createElementNS:()=>new Element(),head:new Element()},
@@ -20,7 +21,7 @@ async function revision(query='',extraFiles=[],options={}){
   KiCadSchematicRenderer:{build:(_ast,file,metadata)=>{(calls.schematicBuilds||=[]).push({file,metadata});return {primitives:[],layers:[],page:{width:297,height:210},warnings:[]};}},
   KiCadPCBRenderer:{build:()=>({primitives:[],layers:options.layers||[],page:{width:297,height:210},warnings:[]})},
   SpikeBoard3D:{mountBoard3D(_pane,_source,config){calls.sceneMounts=(calls.sceneMounts||0)+1;calls.modelOptions=config;return{createProbeViewport(holder,config){calls.probeOptions=config;return{setSelection(){},dispose(){}};},getProbeCount(){return calls.activeProbes||0;},dispose(){calls.sceneDisposed=(calls.sceneDisposed||0)+1;},setTheme(){},setTerminalLabels(visible){calls.terminalLabels=visible;}};}},
-  KiCadOwnedCanvas:{bounds:core.bounds,mount:()=>canvas},KiCadReviewWorkspace:{sheetOverviewEntries:require('../review-workspace.js').sheetOverviewEntries,composeSheetOverview:require('../review-workspace.js').composeSheetOverview,refreshSheetOverview:require('../review-workspace.js').refreshSheetOverview,sheetPageHighlights:require('../review-workspace.js').sheetPageHighlights,mount:options=>{calls.workspaceOptions=options;return {selectOverviewNet(...args){calls.overviewNetPick=args;return true;},selectOverviewObject(...args){calls.overviewObjectPick=args;return true;},draw(){},setScene(){},attachCanvas(){calls.attach++;},dispose(){calls.disposed++;},highlightRelated(selection){calls.related=selection;options.onSelection?.(selection);},refreshComments(){calls.refreshed=(calls.refreshed||0)+1;},options};}},
+  KiCadOwnedCanvas:{bounds:core.bounds,mount:()=>canvas},KiCadReviewWorkspace:{sheetOverviewEntries:require('../review-workspace.js').sheetOverviewEntries,composeSheetOverview:require('../review-workspace.js').composeSheetOverview,refreshSheetOverview:require('../review-workspace.js').refreshSheetOverview,sheetPageHighlights:require('../review-workspace.js').sheetPageHighlights,mount:options=>{calls.workspaceOptions=options;return {selectOverviewNet(...args){calls.overviewNetPick=args;return true;},selectOverviewObject(...args){calls.overviewObjectPick=args;return true;},draw(){},setScene(){},fitSelection(){if(!captureFits)return false;(calls.fitModes||=[]).push(get('threePane').hidden?'layout':'3d');return true;},attachCanvas(){calls.attach++;},dispose(){calls.disposed++;},highlightRelated(selection){calls.related=selection;calls.relatedLayoutVisible=get('threePane').hidden&&!canvas.canvas.hidden;options.onSelection?.(selection);return true;},refreshComments(){calls.refreshed=(calls.refreshed||0)+1;},options};}},
   addEventListener:(type,callback)=>listeners.set(type,callback)};
  if(options.windowLink)context.KiCadWindowLink={mount(config){calls.linkOptions=config;return{publishTheme(value){(calls.linkThemes||=[]).push(value);},dispose(){}};}};
  if(options.realRender){context.KiCadFileCompatibility={...require('../file-compatibility.js'),mountStatus:()=>({refresh(){},dispose(){}})};context.KiCadNetModel=require('../net-model.js');context.KiCadPCBRenderer=require('../pcb-renderer.js');context.KiCadSchematicRenderer=require('../schematic-renderer.js');}
@@ -152,12 +153,16 @@ test('remote viewer pins branch before loading drawings and passes the same comm
 test('floating layer selector highlights with visible context, optionally isolates and restores the previous view',async()=>{
  const v=await revision('',[],{pcb:true,layers:['F.Cu','In1.Cu','In2.Cu','B.Cu','Edge.Cuts']});
  const bar=v.get('drawingHost').children.find(child=>child.id==='floatingLayerSelector');
- assert.ok(bar);assert.equal(bar.hidden,false);const toggle=bar.children[0],mode=bar.children[1].children[0],buttons=bar.children[1].children.slice(1).map(node=>node.className==='compact-layer-item'?node.children[0]:node);assert.equal(toggle.attributes['aria-expanded'],'false');toggle.click();assert.equal(toggle.attributes['aria-expanded'],'true');assert.deepEqual(buttons.map(button=>button.dataset.layer),['F.Cu','In1.Cu','In2.Cu','B.Cu','Edge.Cuts','All','Overview','Filled copper','Zone outlines','Worksheet','Numbers','Net names']);
+ assert.ok(bar);assert.equal(bar.hidden,false);const toggle=bar.children[0],mode=bar.children[1].children[0],buttons=bar.children[1].children.slice(1).filter(node=>node.className!=='pin-one-toggle').map(node=>node.className==='compact-layer-item'?node.children[0]:node);assert.equal(toggle.attributes['aria-expanded'],'false');toggle.click();assert.equal(toggle.attributes['aria-expanded'],'true');assert.deepEqual(buttons.map(button=>button.dataset.layer),['F.Cu','In1.Cu','In2.Cu','B.Cu','Edge.Cuts','All','Overview','Filled copper','Zone outlines','Worksheet','Numbers','Net names']);
  v.canvas.visibleLayers=new Set(['F.Cu','Edge.Cuts']);
  buttons[1].click();assert.equal(toggle.attributes['aria-expanded'],'true');assert.equal(toggle.textContent,'In1.Cu');assert.equal(v.canvas.focusedLayer,'In1.Cu');assert.equal(v.canvas.layerFocusMode,'dim');assert.equal(buttons[1].attributes['aria-pressed'],'true');assert.ok(v.canvas.visibleLayers.has('F.Cu'));assert.equal(mode.value,'dim');mode.value='isolate';mode.onchange();assert.equal(v.canvas.layerFocusMode,'isolate');mode.value='dim';mode.onchange();assert.equal(v.canvas.layerFocusMode,'dim');
  buttons.find(button=>button.dataset.layer==='All').click();assert.deepEqual([...v.canvas.visibleLayers],v.canvas.design.layers);assert.equal(v.canvas.focusedLayer,null);
- buttons.find(button=>button.dataset.layer==='Overview').click();assert.deepEqual([...v.canvas.visibleLayers],['F.Cu','B.Cu','Edge.Cuts']);assert.equal(v.canvas.layerPresetName,'overview');assert.equal(buttons.find(button=>button.dataset.layer==='Overview').attributes['aria-pressed'],'true');assert.equal(buttons.find(button=>button.dataset.layer==='All').attributes['aria-pressed'],'false');
- const sidebarEye=v.get('layerList').children[1].children[0].children[0];sidebarEye.checked=true;sidebarEye.onchange();assert.equal(v.canvas.visibleLayers.has('In1.Cu'),true);assert.equal(buttons.find(button=>button.dataset.layer==='Overview').attributes['aria-pressed'],'false');
+ buttons.find(button=>button.dataset.layer==='Overview').click();assert.deepEqual([...v.canvas.visibleLayers],['F.Cu','In1.Cu','In2.Cu','B.Cu','Edge.Cuts']);assert.equal(v.canvas.layerPresetName,'overview');assert.equal(buttons.find(button=>button.dataset.layer==='Overview').attributes['aria-pressed'],'true');assert.equal(buttons.find(button=>button.dataset.layer==='All').attributes['aria-pressed'],'false');
+ const marker=bar.children[1].children.find(node=>node.className==='pin-one-toggle').children[0];
+ assert.equal(marker.type,'checkbox');assert.equal(marker.checked,true);assert.equal(v.canvas.showPinOneMarkers,true);
+ marker.checked=false;marker.onchange();assert.equal(v.canvas.showPinOneMarkers,false);
+ marker.checked=true;marker.onchange();assert.equal(v.canvas.showPinOneMarkers,true);
+ const sidebarEye=v.get('layerList').children[1].children[0].children[0];sidebarEye.checked=false;sidebarEye.onchange();assert.equal(v.canvas.visibleLayers.has('In1.Cu'),false);assert.equal(buttons.find(button=>button.dataset.layer==='Overview').attributes['aria-pressed'],'false');
  buttons.find(button=>button.dataset.layer==='Worksheet').click();assert.equal(v.canvas.paperVisible,true);buttons.find(button=>button.dataset.layer==='Worksheet').click();assert.equal(v.canvas.paperVisible,false);buttons.find(button=>button.dataset.layer==='Net names').click();assert.equal(v.canvas.showNetNames,true);assert.equal(v.get('showNetNames').checked,true);assert.equal(buttons.find(button=>button.dataset.layer==='Net names').attributes['aria-pressed'],'true');buttons.find(button=>button.dataset.layer==='Net names').click();assert.equal(v.canvas.showNetNames,false);
  await v.get('mode3d').click();assert.equal(bar.hidden,true);await v.get('mode3d').click();assert.equal(bar.hidden,false);
  const schematic=await revision();assert.equal(schematic.get('drawingHost').children.some(child=>child.id==='floatingLayerSelector'),false);
@@ -278,7 +283,7 @@ test('net-map shows saved link endpoints and omits isolated net matches',async()
 test('net-map picks respect Part mode and Shift individual picks while forwarding additive net selection',async()=>{
  const v=await revision('',[],{android:true});await v.context.KiCadSheetOverview.open();const hit={sourcePath:'root.kicad_sch',uuid:'wire',kind:'wire',sourceInstanceId:'instance'};
  v.get('selectionMode').value='part';v.selectOverview(hit);assert.deepEqual(v.calls.overviewObjectPick,['root.kicad_sch','wire']);assert.equal(v.calls.overviewNetPick,undefined);
- v.get('selectionMode').value='all';v.selectOverview(hit,{multi:true});assert.deepEqual(v.calls.overviewNetPick,['root.kicad_sch','wire','instance',true]);v.calls.overviewNetPick=null;
+ v.get('selectionMode').value='all';v.selectOverview(hit,{multi:true});assert.deepEqual(v.calls.overviewNetPick,['root.kicad_sch','wire','instance',true,null]);v.calls.overviewNetPick=null;
  v.selectOverview(hit,{individual:true,multi:true});assert.equal(v.calls.overviewNetPick,null);v.context.KiCadSheetOverview.close();
 });
 
@@ -510,4 +515,45 @@ test('miniature preserves canvas hierarchy order with compact cards and faint un
  v.canvas.ctx={};v.context.KiCadSheetHierarchyLinks={...v.context.KiCadSheetHierarchyLinks,drawGuides:(_view,graph,_dark,hasNetLinks)=>styles.push({graph,hasNetLinks})};await v.context.KiCadSheetOverview.open();
  assert.equal(v.canvas.design.overviewPages.length,rects.length);const canvasOrder=[...v.canvas.design.overviewPages].sort((a,b)=>a.y-b.y||a.x-b.x).map(page=>page.path),miniOrder=miniEntries.map((entry,index)=>({path:entry.sheet.path,x:Number(rects[index].x),y:Number(rects[index].y)})).sort((a,b)=>a.y-b.y||a.x-b.x).map(page=>page.path);assert.deepEqual(canvasOrder,miniOrder,'saved ancestry and sibling order are shared, paper dimensions are not');assert.ok(rects.every(rect=>Number(rect.width)===192&&Number(rect.height)===64));
  assert.ok(styles.some(({graph,hasNetLinks})=>graph.links.length&&hasNetLinks===false));v.hide();
+});
+
+test('3D and Layout transitions fit the selection with the destination viewport active',async()=>{
+ const v=await revision('',[],{pcb:true,captureFits:true});
+ v.message({type:'kicad-review:command',command:'workspace-view',mode:'3d'});
+ await tick();
+ assert.equal(v.get('threePane').hidden,false);
+ assert.deepEqual(v.calls.fitModes,['3d']);
+ const selection={kind:'part',reference:'R1',uuid:'symbol',path:'root.kicad_sch'};
+ v.message({type:'kicad-review:command',command:'workspace-view',mode:'layout',selection});
+ await tick();
+ assert.equal(v.get('threePane').hidden,true);
+ assert.equal(v.calls.related,selection);
+ assert.equal(v.calls.relatedLayoutVisible,true);
+ v.hide();
+});
+
+test('M toggles the compact minimap and a quick second M toggles maximized mode',async()=>{
+ const view=await revision('',[],{miniEntries:miniatureEntries(2)});
+ const mini=view.get('drawingHost').children.find(node=>node.className==='sheet-tree-miniature');
+ const [header,body]=mini.children;
+ const close=header.children.find(node=>node.getAttribute('aria-label')==='Close sheet tree');
+ const current=body.children[0].children.find(node=>node.getAttribute('aria-current')==='page');
+ assert.ok(current);
+ close.click();assert.equal(mini.hidden,true);
+ const settle=()=>new Promise(resolve=>setTimeout(resolve,330));
+ assert.equal(view.key('m',[{tagName:'INPUT'}]),false);
+ assert.equal(view.key('m',[],{shiftKey:true}),false);
+ assert.equal(view.key('m',[],{repeat:true}),false);
+ await settle();assert.equal(mini.hidden,true);
+ assert.equal(view.key('m'),true);await settle();
+ assert.equal(mini.hidden,false);assert.equal(mini.classList.contains('maximized'),false);
+ view.key('m');view.key('m');
+ assert.equal(mini.classList.contains('maximized'),true);
+ view.key('m');view.key('m');
+ assert.equal(mini.classList.contains('maximized'),false);assert.equal(mini.hidden,false);
+ view.key('m');await settle();assert.equal(mini.hidden,true);
+ view.key('m');view.key('m');
+ assert.equal(mini.hidden,false);assert.equal(mini.classList.contains('maximized'),true);
+ view.key('m');view.hide();await settle();
+ assert.equal(mini.classList.contains('maximized'),true);
 });

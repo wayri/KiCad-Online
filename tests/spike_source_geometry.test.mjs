@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {createRequire}from'node:module';
-import{sourceZoneGeometry,drillLoopInsideBoard}from'../extension/spike/sourceGeometry.mjs';
+import{sourceZoneGeometry,drillLoopInsideBoard,boardRimGeometry}from'../extension/spike/sourceGeometry.mjs';
 const{parse}=createRequire(import.meta.url)('../extension/design-diff.js');
 const triangle='(pts (xy 0 0) (xy 2 0) (xy 0 2))';
 test('drill holes must be strictly inside the saved outline without crossing cutouts',()=>{
@@ -9,6 +9,7 @@ test('drill holes must be strictly inside the saved outline without crossing cut
  assert.equal(drillLoopInsideBoard([[-1,1],[2,1],[2,2],[-1,2]],outer),false);
  assert.equal(drillLoopInsideBoard([[3,5],[7,5],[7,5.5],[3,5.5]],outer,[hole]),false);
  assert.equal(drillLoopInsideBoard([[4.5,4.5],[5,4.5],[5,5],[4.5,5]],outer,[hole]),false);
+ assert.equal(drillLoopInsideBoard([[3,3],[7,3],[7,7],[3,7]],outer,[hole]),false);
 });
 test('a saved zone boundary never becomes invented copper fill',()=>{
  const ast=parse(`(kicad_pcb (net 1 "GND") (zone (uuid "zone-a") (net 1) (layer "F.Cu") (polygon ${triangle})))`),result=sourceZoneGeometry(ast);
@@ -45,5 +46,21 @@ test('a busy front plane leaves room for saved fills on all 32 copper layers',()
    assert.equal(record.filled,true);assert.equal(record.id,'plane');
    assert.deepEqual(record.points,[[0,0],[2,0],[0,2]]);
   }
+ }
+});
+
+test('board rims never link two holes or a hole to the outside contour',()=>{
+ const rectangle=(x,y,w,h)=>[[x,y],[x+w,y],[x+w,y+h],[x,y+h],[x,y]].map(([x,y])=>({x,y}));
+ const outer=rectangle(0,0,30,20),holes=[rectangle(4,4,2,2),rectangle(21,4,2,2)];
+ const THREE={
+  BufferGeometry:class{setAttribute(name,value){this[name]=value;return this;}},
+  Float32BufferAttribute:class{constructor(array){this.array=Float32Array.from(array);}},
+ };
+ const positions=boardRimGeometry(THREE,{extractPoints:()=>({shape:outer,holes})},1.5).position.array;
+ assert.equal(positions.length,3*4*2*6);
+ for(let i=0;i<positions.length;i+=6){
+  const [x,y,z,x2,y2,z2]=positions.subarray(i,i+6);
+  assert.equal(z,z2);
+  assert.ok([outer,...holes].some(contour=>contour.some((p,j)=>p.x===x&&p.y===y&&contour[j+1]?.x===x2&&contour[j+1].y===y2)));
  }
 });

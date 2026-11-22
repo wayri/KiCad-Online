@@ -47,5 +47,31 @@
   if(info.provider==='gitlab'){params.set('provider','gitlab');params.set('host',info.host||'https://gitlab.com');}
   return getURL(fabrication(file)?'gerber-viewer.html':/(?:\.kicad_pro|\.pro)$/i.test(file)?'project-viewer.html':'browser-viewer.html')+'?'+params;
  }
- const api={context,viewerURL};root.KiCadProjectLaunch=api;if(typeof module==='object'&&module.exports)module.exports=api;
+ function fabricationURL(info,getURL){
+  const ref=info.sha||info.head,repository=info.headRepository||info.repository;
+  if(!/^[a-f0-9]{40}$/i.test(ref||''))throw Error('Fabrication discovery needs a saved revision.');
+  const params=new URLSearchParams({repository,ref,scan:'1'});
+  if(info.directory){
+   const scope=info.directory+'/board.gbrjob';
+   if(!root.KiCadGitHub.filePath(scope))throw Error('Invalid fabrication directory.');
+   params.set('file',scope);
+  }
+  if(info.provider==='gitlab'){params.set('provider','gitlab');params.set('host',info.host||'https://gitlab.com');}
+  return getURL('gerber-viewer.html')+'?'+params;
+ }
+ function repositoryProjectsURL({repository,ref,file,provider,host},getURL){
+  const gitlab=provider==='gitlab',segments=String(repository||'').split('/');
+  if(segments.length<2||(!gitlab&&segments.length!==2)||segments.some(part=>!(/^[A-Za-z0-9_.-]+$/).test(part)||part==='.'||part==='..'))return null;
+  let origin='https://github.com';
+  if(gitlab){
+   try{const url=new URL(host||'https://gitlab.com');if(url.protocol!=='https:'||url.username||url.password||url.pathname!=='/'||url.search||url.hash)return null;origin=url.origin;}catch{return null;}
+  }
+  const revision=typeof ref==='string'&&ref!=='HEAD'?ref:null;
+  if(revision&&revision.split('/').some(part=>!part||part==='.'||part==='..'||/[\s\\:#?]/.test(part)))return null;
+  const branch=revision?(gitlab?'/-/tree/':'/tree/')+revision.split('/').map(encodeURIComponent).join('/'):'';
+  const params=new URLSearchParams({source:origin+'/'+segments.join('/')+branch,ref:revision||'HEAD',projects:'1'});
+  if(file)params.set('current',file);
+  return getURL('project-launcher.html')+'?'+params;
+ }
+ const api={context,viewerURL,fabricationURL,repositoryProjectsURL};root.KiCadProjectLaunch=api;if(typeof module==='object'&&module.exports)module.exports=api;
 })(globalThis);

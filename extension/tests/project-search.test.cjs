@@ -127,3 +127,21 @@ test('saved net-class colors use separate views, priority, Default fallback and 
  assert.equal(api.netClassColor('VCC',config,true),'rgba(220,30,40,1)');assert.equal(api.netClassColor('VCC',config,false),'rgba(30,90,240,0.8)');assert.equal(api.netClassColor('OTHER',config,true),'rgba(80,90,100,1)');assert.equal(api.netClassColor('OTHER',config,false),null);
  for(const value of ['rgba(999,0,0,1)','rgba(0,0,0,-1)','url(https://example.com)','var(--color)','rgba(0,0,0,0)'])assert.equal(api.savedColor(value),null);
 });
+
+
+test('bounded ranking preserves ties, preferred paths and counts for broad queries',()=>{
+ const entries=Array.from({length:240},(_,i)=>({
+  id:'part-'+String(i).padStart(3,'0'),
+  path:i%2?'root.kicad_sch':'board.kicad_pcb',
+  reference:'R'+i,
+  kind:'symbol',
+  properties:{Value:i%4?'precision resistor':'resistor'}
+ })).reverse();
+ const index=createIndex(entries);
+ const preferredPath='root.kicad_sch';
+ const full=search(index,'resistor',{limit:240,preferredPath});
+ const preview=search(index,'resistor',{limit:20,preferredPath});
+ assert.equal(preview.total,240);
+ assert.equal(preview.truncated,true);
+ assert.deepEqual(preview.results,full.results.slice(0,20));
+});

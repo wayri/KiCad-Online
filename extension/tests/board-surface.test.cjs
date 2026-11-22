@@ -35,3 +35,40 @@ test('selection restore retains collapsed substrate opacity and depth writes',{s
  }
  mesh.geometry.dispose();for(const m of originals)m.dispose();
 });
+
+test('zoomed silkscreen preserves saved coordinates and bounds texture memory',{skip:!threePath},async()=>{
+ const THREE=await import(pathToFileURL(threePath).href),{makeSilkscreen}=await import('../spike/boardSurface.mjs');
+ const saved={minX:0,minY:0,maxX:1000,maxY:450};
+ const ctx=new Proxy({},{get(o,k){return o[k]??(()=>{});}});
+ const previous=global.document;global.document={createElement:()=>({getContext:()=>ctx})};
+ try{
+  const [front,back]=makeSilkscreen(THREE,['F.SilkS','B.SilkS'].map(layer=>({type:'line',layer,width:.15,points:[{x:490,y:210},{x:510,y:220}]})),saved,new Map(),1.6,[],16);
+  assert.equal(front.texture.anisotropy,8);
+  const camera=new THREE.OrthographicCamera(-10,10,5,-5,.1,100);
+  camera.position.set(0,10,20);camera.lookAt(0,10,0);camera.updateMatrixWorld();
+  const pixels={width:1600,height:800},view=front.viewRegion(camera,pixels);
+  assert.equal(back.viewRegion(camera,pixels),null);
+  assert.equal(front.needsRefresh(view),true);
+  assert.equal(front.refresh(view),true);
+  const detail=front.detailMap(view),stats=front.sampling();
+  assert.ok(stats.detailPixelsPerMm>60);
+  assert.ok(detail.image.width<=2048&&detail.image.height<=2048);
+  assert.equal(front.needsRefresh(view),false);
+  const u=.5,v=.5+10/front.mesh.geometry.parameters.height;
+  assert.ok(Math.abs(detail.offset.x+u*detail.repeat.x-.5)<1e-8);
+  assert.ok(Math.abs(detail.offset.y+v*detail.repeat.y-.5)<1e-8);
+  assert.equal(front.mesh.material.map,front.texture);
+  camera.position.x=200;camera.lookAt(200,10,0);camera.updateMatrixWorld();
+  const moved=front.viewRegion(camera,pixels);
+  assert.equal(front.detailMap(moved),null);
+  let released=0;detail.addEventListener('dispose',()=>released++);
+  assert.equal(front.refresh(moved),true);
+  assert.equal(released,1);
+  camera.position.set(0,10,-20);camera.lookAt(0,10,0);camera.updateMatrixWorld();
+  assert.equal(front.viewRegion(camera,pixels),null);
+  const backView=back.viewRegion(camera,pixels);
+  assert.equal(back.refresh(backView),true);
+  assert.ok(back.detailMap(backView));
+  for(const face of [front,back]){face.dispose();face.mesh.material.dispose();face.mesh.geometry.dispose();}
+ }finally{global.document=previous;}
+});

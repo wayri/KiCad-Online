@@ -39,6 +39,15 @@
     const sweep=through <= end+1e-12 ? end : turn-end;
     return Math.hypot(ox,oy)*sweep;
   }
+  function pcbPrimitiveMatches(kind, primitive) {
+    switch (kind) {
+      case 'pad': return primitive === 'pad' || primitive === 'drill';
+      case 'zone': return primitive === 'zone' || primitive === 'zone-outline';
+      case 'segment': return primitive === 'track';
+      case 'arc': return primitive === 'arc' || primitive === 'track';
+      default: return primitive === 'via' || primitive === 'drill';
+    }
+  }
   function pcb(path, ast, records, primitives, warn) {
     const nets=new Map(), names=new Map();
     const modernNamedNets=Number(field(ast,'version'))>=20260206;
@@ -62,8 +71,10 @@
     names.forEach((_,code)=>ensure(code));
     const byUuid=new Map(), padPrimitives=new Map(), footprints=new Map(records.filter((r)=>r.kind === "footprint").map((r)=>[r.key,r]));
     for (const p of primitives) if (p.uuid) {
-      if (!byUuid.has(p.uuid)) byUuid.set(p.uuid,[]);
-      byUuid.get(p.uuid).push(p);
+      const existing = byUuid.get(p.uuid);
+      if (!existing) byUuid.set(p.uuid, p);
+      else if (Array.isArray(existing)) existing.push(p);
+      else byUuid.set(p.uuid, [existing, p]);
       if (p.kind === "pad" && p.ownerUuid && p.name != null) {
         const key=JSON.stringify([p.ownerUuid,String(p.name)]);
         if (!padPrimitives.has(key)) padPrimitives.set(key,[]);
@@ -84,12 +95,11 @@
       // Pad primitives may have the footprint UUID only in older files. Never
       // highlight the entire footprint or a different pad sharing that owner.
       const parent=record.kind === "pad" ? footprints.get(record.key.slice(0,record.key.lastIndexOf("/pad:"))) : null;
-      const candidates=uuid ? byUuid.get(uuid) || [] : parent ? padPrimitives.get(JSON.stringify([
-        parent.metadata.uuid,String(value(record.form[1]))])) || [] : [];
-      net.primitives.push(...candidates.filter((p)=> record.kind === "pad" ? p.kind === "pad" || p.kind === "drill" :
-        record.kind === "zone" ? ["zone","zone-outline"].includes(p.kind) :
-          record.kind === "segment" ? p.kind === "track" : record.kind === "arc" ? p.kind === "arc" || p.kind === "track" :
-            p.kind === "via" || p.kind === "drill"));
+      const candidates = uuid ? byUuid.get(uuid) : parent ? padPrimitives.get(JSON.stringify([
+        parent.metadata.uuid, String(value(record.form[1]))])) : undefined;
+      if (Array.isArray(candidates)) {
+        for (const p of candidates) if (pcbPrimitiveMatches(record.kind, p.kind)) net.primitives.push(p);
+      } else if (candidates && pcbPrimitiveMatches(record.kind, candidates.kind)) net.primitives.push(candidates);
       net.members.push({uuid, reference:parent?.metadata.properties.Reference || "", pad:record.kind === "pad" ? String(value(record.form[1])) : "",
         kind:record.kind, position:record.metadata.position});
       const stat=({pad:"pads",segment:"tracks",arc:"tracks",via:"vias",zone:"zones"})[record.kind];
@@ -141,14 +151,14 @@
           if (!p || typeof name!=="string" || !name) continue;
           const pinUuid=field(pin,"uuid"), sheetId=record.metadata.uuid || record.id || record.key;
           const pinRecord={...record,id:`${record.id || record.key}/pin:${pinUuid || name}`,metadata:{...record.metadata,uuid:pinUuid}};
-          const entry=add({record:pinRecord,kind:"sheet_pin",position:p,sheetPin:{sheetId,name}});
+          const entry=add({record:pinRecord,kind:"sheet_pin",position:p,sheetPin:{sheetId,name},direction:value(pin[2])});
           anchors.push({p,index:entry.index});
         }
       } else if (LABELS.has(record.kind) || record.kind === "junction") {
         const p=point(record.form,"at");
         if (!p) continue;
         const entry=add({record,kind:record.kind,position:p,name:LABELS.has(record.kind) ? String(value(record.form[1])) : null,
-          namePriority:({global_label:0,label:2,hierarchical_label:3})[record.kind]});
+          direction:field(record.form,"shape"),namePriority:({global_label:0,label:2,hierarchical_label:3})[record.kind]});
         anchors.push({p,index:entry.index,junction:record.kind === "junction"});
       }
     }
@@ -188,7 +198,7 @@
       const key=JSON.stringify([owner,String(p.pinNumber),p.connectPoint.x,p.connectPoint.y]);
       if (pins.has(key)) {pins.get(key).primitives.push(p); continue;}
       const power=powerSymbols.get(owner), isPower=power && power.pinNumber===String(p.pinNumber);
-      const entry=add({record,kind:"pin",position:p.connectPoint,pin:String(p.pinNumber),primitives:[p],
+      const entry=add({record,kind:"pin",position:p.connectPoint,pin:String(p.pinNumber),primitives:[p],direction:p.pinType,
         name:isPower ? power.name : null,namePriority:isPower ? 1 : undefined,power:!!isPower,flag:powerFlags.has(owner),global:!!(isPower && power.global)});
       pins.set(key,entry); anchors.push({p:p.connectPoint,index:entry.index});
     }
@@ -256,7 +266,7 @@
         net.primitives.push(...((entry.power||entry.flag) ? (byUuid.get(uuid) || []).filter((p)=>!p.frame) : entry.kind === "pin" ? entry.primitives :
           (byUuid.get(uuid) || []).filter((p)=>p.kind === entry.kind || entry.kind==="sheet_pin"&&p.kind==="sheet-pin" || p.kind==="text-overbar"&&(p.electricalKind===entry.kind||entry.kind==="sheet_pin"&&p.electricalKind==="sheet-pin"))));
         net.members.push({uuid,reference:entry.kind === "pin" ? r.metadata.properties.Reference || "" : "",
-          pad:"",pin:entry.pin || "",kind:entry.kind,position:entry.position,...((entry.name||entry.sheetPin?.name)?{name:entry.name||entry.sheetPin.name}:{}),...(entry.sheetPin?{sheetId:entry.sheetPin.sheetId}:{})});
+          pad:"",pin:entry.pin || "",kind:entry.kind,position:entry.position,...(entry.direction&&!entry.flag?{direction:entry.direction}:{}),...((entry.name||entry.sheetPin?.name)?{name:entry.name||entry.sheetPin.name}:{}),...(entry.sheetPin?{sheetId:entry.sheetPin.sheetId}:{})});
         net.stats.lengthMm+=entry.length || 0;
       }
       nets.push(net);
@@ -271,6 +281,7 @@
       if(!recordsByPath.has(record.path))recordsByPath.set(record.path,[]);
       recordsByPath.get(record.path).push(record);
       const count=(counts.get(record.key)||0)+1;counts.set(record.key,count);record.id=count===1 ? record.key : `${record.key}#${count}`;}
+    counts.clear();
     const nets=[], warnings=[], seenWarnings=new Set();
     const warn=(message)=> {if(warnings.length<1000 && !seenWarnings.has(message)){seenWarnings.add(message);warnings.push(message);}};
     for (const file of files) {

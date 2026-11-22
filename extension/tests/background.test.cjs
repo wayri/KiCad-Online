@@ -1331,10 +1331,10 @@ test('inline launch is opt-in, bound to the clicked repository and cannot become
  assert.ok(fixture.raw.every(x=>x.init.credentials==='same-origin'));
 });
 
-test('fabrication-only repositories choose Gerber jobs and keep declared source reads in the website session',async t=>{
+test('fabrication-only repositories advertise their files separately from KiCad projects',async t=>{
  withWebsite(t,'org/fabrication',{'fab/board.gbrjob':'{}','fab/top.gbr':'M02*','fab/drills.xnc':'M48\n%\nM30'});
  const request={type:'repository-detect',source:'https://github.com/org/fabrication',repository:'org/fabrication',ref:'HEAD'},launcher={id:'test-id',url:extensionOrigin+'project-launcher.html'};
- const reply=await message(request,launcher);assert.equal(reply.ok,true,reply.error);assert.deepEqual(reply.result.projects,['fab/board.gbrjob']);
+ const reply=await message(request,launcher);assert.equal(reply.ok,true,reply.error);assert.deepEqual(reply.result.projects,[]);assert.equal(reply.result.fabricationCount,3);
 });
 
 
@@ -1402,4 +1402,19 @@ test('presentation diagnostics cannot cause an unhandled rejection when action U
 test('a subsequent successful action restores the normal account badge',async()=>{
  const before=calls.created.length;await actionListener({id:77,url:'https://example.com/'});
  assert.equal(calls.created.length,before+1);assert.notEqual(calls.badge,'!');assert.doesNotMatch(calls.actionTitle,/workspace could not open/);
+});
+
+
+test('repository discovery finds fabrication alongside a KiCad project without downloading files',async t=>{
+ const repository='org/mixed-fabrication',shaValue=sha('a');
+ const fixture=withWebsite(t,repository,{'board.kicad_pro':'{}','fab/top.gtl':'M02*','fab/holes.drl':'M48'},{
+  entries:d=>d===''?[{path:'board.kicad_pro',type:'file'},{path:'fab',type:'directory'},{path:'linked.gbr',type:'symlink'}]:
+   [{path:'fab/top.gtl',type:'file'},{path:'fab/holes.drl',type:'file'}]
+ });
+ const reply=await message({type:'repository-detect',source:'https://github.com/'+repository,repository,ref:'HEAD'},{id:'test-id',url:extensionOrigin+'project-launcher.html'});
+ assert.equal(reply.ok,true,reply.error);
+ assert.deepEqual(reply.result.projects,['board.kicad_pro']);
+ assert.equal(reply.result.fabricationCount,2);
+ assert.equal(reply.result.sha,shaValue);
+ assert.equal(fixture.raw.length,0);
 });

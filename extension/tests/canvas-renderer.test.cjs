@@ -217,12 +217,13 @@ test('large-board gesture previews skip repeated painting and settle back to the
  const {canvas,listeners,element}=runtime(1,{KiCadMotionWebGL:{Motion,MAX_PIXELS:16000000},requestAnimationFrame:fn=>(frame=fn,1),cancelAnimationFrame:()=>{frame=null;},setTimeout:fn=>(timer=fn,1),clearTimeout:()=>{timer=null;}});
  const primitives=Array.from({length:5000},(_,i)=>({type:'circle',x:i%100,y:Math.floor(i/100),r:.2,layer:'F.Cu'}));
  canvas.setDocument({primitives,layers:['F.Cu']},'large.kicad_pcb');canvas.paint=()=>painted++;
- listeners.get('pointerdown')({button:2,clientX:400,clientY:300,pointerId:1,preventDefault(){}});assert.ok(painted>0);painted=0;
+ listeners.get('pointerdown')({button:2,clientX:400,clientY:300,pointerId:1,preventDefault(){}});assert.equal(painted,0,'pointerdown must not paint a snapshot');
  let frames=0;canvas.addEventListener('kicad:viewframe',()=>frames++);
- listeners.get('pointermove')({clientX:420,clientY:310});frame();assert.equal(canvas.motionActive,true);assert.equal(painted,0);assert.equal(element.style.opacity,'0');assert.equal(frames,1);
+ listeners.get('pointermove')({clientX:420,clientY:310,pointerId:1});frame();assert.equal(canvas.motionActive,true);assert.ok(painted>0);painted=0;
+ listeners.get('pointermove')({clientX:424,clientY:314,pointerId:1});frame();assert.equal(canvas.motionActive,true);assert.equal(painted,0);assert.equal(element.style.opacity,'0');assert.equal(frames,2);
  const camera=canvas.cameraState();listeners.get('pointerup')({pointerId:1});assert.equal(canvas.motionActive,false);assert.equal(element.style.opacity,'');assert.ok(painted>0);assert.deepEqual(canvas.cameraState(),camera);
  listeners.get('wheel')({clientX:400,clientY:300,deltaY:-10,preventDefault(){}});frame();assert.equal(canvas.motionActive,true);timer();assert.equal(canvas.motionActive,false);
- listeners.get('pointerdown')({button:2,clientX:400,clientY:300,pointerId:1,preventDefault(){}});listeners.get('pointermove')({clientX:420,clientY:300});frame();assert.equal(canvas.motionActive,true);canvas.motion.onLost();assert.equal(canvas.motionActive,false);assert.equal(canvas.motionFailed,true);assert.equal(element.style.opacity,'');
+ listeners.get('pointerdown')({button:2,clientX:400,clientY:300,pointerId:1,preventDefault(){}});listeners.get('pointermove')({clientX:420,clientY:300,pointerId:1});frame();assert.equal(canvas.motionActive,true);canvas.motion.onLost();assert.equal(canvas.motionActive,false);assert.equal(canvas.motionFailed,true);assert.equal(element.style.opacity,'');
  canvas.acceleration='off';assert.equal(canvas.prepareMotion(),false);canvas.dispose();assert.equal(disposed,true);assert.equal(timer,null);
 });
 
@@ -230,7 +231,7 @@ test('WebGL initialization failure restores a visible CPU drawing',()=>{
  let frame;class Motion{constructor(){throw Error('GPU disabled');}}
  const {canvas,listeners,element}=runtime(1,{KiCadMotionWebGL:{Motion,MAX_PIXELS:16000000},requestAnimationFrame:fn=>(frame=fn,1),cancelAnimationFrame(){}});
  canvas.setDocument({primitives:Array.from({length:4096},()=>({type:'circle',x:0,y:0,r:1,layer:'F.Cu'})),layers:['F.Cu']},'board.kicad_pcb');
- listeners.get('pointerdown')({button:2,clientX:400,clientY:300,pointerId:1,preventDefault(){}});listeners.get('pointermove')({clientX:410,clientY:300});frame();
+ listeners.get('pointerdown')({button:2,clientX:400,clientY:300,pointerId:1,preventDefault(){}});listeners.get('pointermove')({clientX:410,clientY:300,pointerId:1});frame();
  assert.equal(canvas.motionFailed,true);assert.equal(canvas.motionActive,false);assert.equal(element.style.opacity,'');canvas.dispose();
 });
 
@@ -319,7 +320,7 @@ test('PCB dim mode paints bright saved net geometry above nearly transparent con
 
 test('Overview is a repeatable layer preset distinct from All while Restore retains the previous custom view',()=>{
  const {canvas}=runtime(),layers=['F.Cu','In1.Cu','In2.Cu','B.Cu','F.SilkS','B.SilkS','F.Fab','B.Fab','F.CrtYd','Edge.Cuts'];canvas.setDocument({layers,primitives:[]},'board.kicad_pcb');
- canvas.layerPreset('all');canvas.layerPreset('overview');assert.equal(canvas.layerPresetName,'overview');assert.deepEqual([...canvas.visibleLayers],['F.Cu','B.Cu','F.SilkS','B.SilkS','Edge.Cuts']);canvas.drawGeometry();assert.equal(canvas.layerPresetName,'overview');
+ canvas.layerPreset('all');canvas.layerPreset('overview');assert.equal(canvas.layerPresetName,'overview');assert.deepEqual([...canvas.visibleLayers],['F.Cu','In1.Cu','In2.Cu','B.Cu','F.SilkS','B.SilkS','Edge.Cuts']);canvas.drawGeometry();assert.equal(canvas.layerPresetName,'overview');
  canvas.layerPreset('all');assert.deepEqual([...canvas.visibleLayers],layers);assert.equal(canvas.layerPresetName,'all');canvas.restoreLayers();assert.deepEqual([...canvas.visibleLayers],layers);
  canvas.visibleLayers=new Set(['In1.Cu','Edge.Cuts']);canvas.layerPreset('overview');canvas.restoreLayers();assert.deepEqual([...canvas.visibleLayers],['In1.Cu','Edge.Cuts']);assert.equal(canvas.layerPresetName,null);canvas.layerPreset('overview');canvas.setDocument({layers:['F.Cu'],primitives:[]},'next.kicad_pcb');assert.equal(canvas.layerPresetName,null);canvas.dispose();
 });
@@ -338,7 +339,23 @@ test('schematic net highlight contrasts with white paper and retains readable su
  test('layer presets restore the original view across consecutive focus and preset changes',()=>{const {canvas}=runtime();canvas.setDocument({layers:['F.Cu','In1.Cu','B.Cu','F.SilkS','B.SilkS','Edge.Cuts'],primitives:[]},'board.kicad_pcb');const initial=[...canvas.visibleLayers];canvas.layerPreset('copper');assert.deepEqual([...canvas.visibleLayers],['F.Cu','In1.Cu','B.Cu','Edge.Cuts']);canvas.focusLayer('F.SilkS');canvas.layerPreset('back');assert.deepEqual([...canvas.visibleLayers],['B.Cu','B.SilkS','Edge.Cuts']);canvas.restoreLayers();assert.deepEqual([...canvas.visibleLayers],initial);assert.equal(canvas.layerPreset('unknown'),false);assert.equal(canvas.focusLayer('unknown'),false);canvas.layerPreset('none');assert.equal(canvas.visibleLayers.size,0);canvas.restoreLayers();assert.deepEqual([...canvas.visibleLayers],initial);});
  test('fit layer uses only its drawable geometry and ignores worksheet, hidden and other layers',()=>{const {canvas}=runtime();canvas.setDocument({layers:['F.Cu','B.Cu'],primitives:[{type:'circle',x:20,y:30,r:1,layer:'F.Cu'},{type:'circle',x:900,y:900,r:2,layer:'B.Cu'},{type:'circle',x:800,y:800,r:2,layer:'F.Cu',hidden:true}]},'board.kicad_pcb');canvas.focusLayer('F.Cu');assert.equal(canvas.fitLayer(),true);near(canvas.viewport.camera.center.x,20);near(canvas.viewport.camera.center.y,30);assert.equal(canvas.paperVisible,true);canvas.focusLayer('B.Cu');canvas.primitives=[];assert.equal(canvas.fitLayer(),false);canvas.setDocument({layers:['F.Cu'],primitives:[]},'next.kicad_pcb');assert.equal(canvas.focusedLayer,null);assert.equal(canvas.layerSnapshot,null);});
 
- test('ruler grid spacing coarsens at low zoom and rejects unsafe pitch values',()=>{const {canvas,operations}=runtime();canvas.grid=true;canvas.gridPitch=.25;canvas.viewport.camera.zoom=40;canvas.draw();const dots=operations.filter(op=>op[0]==='fillRect'&&op[3]===1&&op[4]===1);assert.ok(dots.length>0);assert.ok(dots.length<=20000);for(const pitch of [-1,0,Infinity,NaN]){canvas.gridPitch=pitch;assert.doesNotThrow(()=>canvas.draw());}});
+ test('ruler grid remains visible and bounded at working and board-fit scales',()=>{
+  const {canvas,operations}=runtime();
+  canvas.grid=true;
+  canvas.gridPitch=.25;
+  for(const zoom of [40,1.2,.3]){
+    canvas.viewport.camera.zoom=zoom;
+    operations.length=0;
+    canvas.draw();
+    const dots=operations.filter(op=>op[0]==='fillRect'&&op[3]===2&&op[4]===2);
+    assert.ok(dots.length>0&&dots.length<=20000);
+    assert.ok(dots.every(([,x,y])=>x>=-1&&y>=-1&&x<800&&y<600));
+  }
+  for(const pitch of [-1,0,Infinity,NaN]){
+    canvas.gridPitch=pitch;
+    assert.doesNotThrow(()=>canvas.draw());
+  }
+ });
 
 test('canvas click forwards Ctrl, Shift and Command additive-selection intent',()=>{
  const {canvas,listeners}=runtime();canvas.setDocument({primitives:[],layers:['F.Cu']},'board.kicad_pcb');let detail;canvas.addEventListener('kicad:select',event=>detail=event.detail);
@@ -455,15 +472,15 @@ test('quarter-turn camera projection round-trips all orientations and fits rotat
 test('rotated and flipped mouse drag, wheel anchoring and picking preserve saved identity',()=>{
  for(const flipped of [false,true])for(let turn=0;turn<4;turn++){
   const {canvas,listeners}=runtime(),pad={type:'pad',kind:'pad',x:2,y:3,r:1,fill:true,layer:'F.Cu',uuid:'saved-pad'};canvas.setDocument({primitives:[pad],layers:['F.Cu']},'board');const c=canvas.viewport.camera;c.flipped=flipped;c.quarterTurns=turn;c.center.set(0,0);c.zoom=10;
-  const start={x:320,y:250},before=c.screen_to_world(start);listeners.get('pointerdown')({button:2,clientX:start.x,clientY:start.y,pointerId:1,preventDefault(){}});listeners.get('pointermove')({clientX:350,clientY:270});const after=c.screen_to_world({x:350,y:270});near(after.x,before.x);near(after.y,before.y);listeners.get('pointerup')({pointerId:1});
+  const start={x:320,y:250},before=c.screen_to_world(start);listeners.get('pointerdown')({button:2,clientX:start.x,clientY:start.y,pointerId:1,preventDefault(){}});listeners.get('pointermove')({clientX:350,clientY:270,pointerId:1});const after=c.screen_to_world({x:350,y:270});near(after.x,before.x);near(after.y,before.y);listeners.get('pointerup')({pointerId:1});
   const cursor={x:230,y:180},anchor=c.screen_to_world(cursor);listeners.get('wheel')({clientX:cursor.x,clientY:cursor.y,deltaY:-20,preventDefault(){}});const zoomed=c.screen_to_world(cursor);near(zoomed.x,anchor.x);near(zoomed.y,anchor.y);
   const screen=c.world_to_screen(pad);listeners.get('click')({clientX:screen.x,clientY:screen.y});assert.equal(canvas.selected,pad);canvas.dispose();
  }
 });
 
 test('quarter-turn action clears stale GPU gesture state and redraws without changing world geometry',()=>{
- const {canvas,element}=runtime();let hidden=0;canvas.motion={saved:{quarterTurns:0},hide(){hidden++;},dispose(){}};canvas.motionActive=true;canvas.wheelMotion=true;canvas.drag={x:3,y:4};element.style.opacity='0';const point={x:4,y:7},before=JSON.stringify(point),c=canvas.viewport.camera;const center={x:c.center.x,y:c.center.y},zoom=c.zoom;
- assert.equal(canvas.rotateQuarterTurn(),1);assert.equal(canvas.drag,null);assert.equal(canvas.motion.saved,null);assert.equal(canvas.motionActive,false);assert.equal(canvas.wheelMotion,false);assert.equal(element.style.opacity,'');assert.ok(hidden>0);assert.equal(canvas.cameraState().quarterTurns,1);near(c.center.x,center.x);near(c.center.y,center.y);near(c.zoom,zoom);assert.equal(JSON.stringify(point),before);assert.equal(canvas.rotateQuarterTurn(-1),0);assert.equal(canvas.rotateQuarterTurn(Infinity),0);canvas.dispose();
+ const {canvas,element}=runtime();let released=0;canvas.motion={saved:{quarterTurns:0},hide(){},dispose(){released++;}};canvas.motionActive=true;canvas.wheelMotion=true;canvas.drag={x:3,y:4};element.style.opacity='0';const point={x:4,y:7},before=JSON.stringify(point),c=canvas.viewport.camera;const center={x:c.center.x,y:c.center.y},zoom=c.zoom;
+ assert.equal(canvas.rotateQuarterTurn(),1);assert.equal(canvas.drag,null);assert.equal(canvas.motion,null);assert.equal(canvas.motionActive,false);assert.equal(canvas.wheelMotion,false);assert.equal(element.style.opacity,'');assert.equal(released,1);assert.equal(canvas.cameraState().quarterTurns,1);near(c.center.x,center.x);near(c.center.y,center.y);near(c.zoom,zoom);assert.equal(JSON.stringify(point),before);assert.equal(canvas.rotateQuarterTurn(-1),0);assert.equal(canvas.rotateQuarterTurn(Infinity),0);canvas.dispose();
 });
 
 test('rotated native paths, arcs, text bounds and worksheet agree with the camera transform',()=>{
@@ -531,3 +548,116 @@ test('dim context is neutral gray in PCB and schematic while selected layers sta
    assert.notEqual(color,palette.reviewColorFor(layer,dark));
   }
  });
+
+
+test('dense motion previews skip GPU uploads, bound painting and settle at full detail',()=>{
+ let frame,uploads=0;
+ class Motion{constructor(){uploads++;}}
+ const {canvas,listeners}=runtime(1,{KiCadMotionWebGL:{Motion},requestAnimationFrame:fn=>(frame=fn,1),cancelAnimationFrame(){}}),
+  primitives=Array.from({length:21000},(_,i)=>({type:'line',kind:'track',uuid:String(i),
+   layer:i%2?'B.Cu':'F.Cu',points:[{x:i%150,y:Math.floor(i/150)},{x:i%150+.5,y:Math.floor(i/150)}]}));
+ canvas.setDocument({primitives,layers:['F.Cu','B.Cu']},'dense.kicad_pcb');
+ const counts=new Map();
+ canvas.paint=p=>counts.set(p.layer,(counts.get(p.layer)||0)+1);
+ listeners.get('pointerdown')({button:2,clientX:400,clientY:300,pointerId:1,preventDefault(){}});
+ assert.equal(counts.size,0);
+ listeners.get('pointermove')({clientX:415,clientY:300,pointerId:1});
+ frame();
+ assert.equal(uploads,0);
+ assert.equal(counts.size,2);
+ assert.ok([...counts.values()].reduce((a,b)=>a+b,0)<=2800);
+ counts.clear();
+ listeners.get('pointerup')({pointerId:1});
+ assert.ok([...counts.values()].reduce((a,b)=>a+b,0)>20000);
+ canvas.dispose();
+});
+
+test('hover preview keeps front, back and inner copper hues without changing saved selection',()=>{
+ const palette=require('../layer-colors.js'),{canvas}=runtime(1,{KiCadLayerColors:palette});
+ const front={uuid:'front',type:'line',kind:'track',layer:'F.Cu',points:[{x:0,y:0},{x:10,y:0}]};
+ const back={...front,uuid:'back',layer:'B.Cu'};
+ const inner={...front,uuid:'inner',layer:'In1.Cu',points:[{x:0,y:2},{x:10,y:2}]};
+ const primitives=[front,inner,back];
+ canvas.setDocument({primitives,layers:primitives.map(p=>p.layer)},'board.kicad_pcb');
+ assert.equal(canvas.query({x:5,y:0})[0],front);
+ canvas.viewport.camera.flipped=true;
+ assert.equal(canvas.query({x:5,y:0})[0],back);
+ canvas.selected=front;
+ const painted=[],paint=canvas.paint;
+ canvas.paint=function(p,style){paint.call(this,p,style);painted.push([p.layer,this.ctx.strokeStyle,style.hover]);};
+ const hovered={primitives};
+ for(const dark of [true,false]){
+  canvas.dark=dark;
+  canvas.setHoverNet(hovered);
+  assert.deepEqual(painted.splice(0),primitives.map(p=>[p.layer,palette.reviewColorFor(p.layer,dark),true]));
+  canvas.setHoverNet(null);
+ }
+ canvas.visibleLayers.delete('B.Cu');
+ canvas.setHoverNet(hovered);
+ assert.deepEqual(painted.map(([layer])=>layer),['F.Cu','In1.Cu']);
+ canvas.setHoverNet(null);
+ assert.equal(canvas.hoverCanvas.hidden,true);
+ assert.equal(canvas.selected,front);
+ canvas.dispose();
+});
+
+test('a handled canvas pick draws once and dims long context runs in batches',()=>{
+ const {canvas,operations}=runtime();
+ const lines=Array.from({length:2049},(_,i)=>({type:'line',kind:'track',layer:'F.Cu',width:.2,points:[{x:i/300,y:0},{x:i/300,y:1}]}));
+ canvas.setDocument({layers:['F.Cu'],primitives:lines},'dense.kicad_pcb');
+ canvas.viewport.camera.bbox={x:-1,y:-1,w:10,h:5};
+ canvas.setWorksheetVisible(false);
+ const selected=lines[0],hit={primitive:selected,context:{uuid:'selected'}};
+ const handle=event=>{event.preventDefault();canvas.setNetHighlights([{primitives:[selected]}],{mode:'dim',selectionColor:'layer'});canvas.draw();};
+ canvas.addEventListener('kicad:select',handle);
+ operations.length=0;canvas.select(hit);
+ assert.equal(operations.filter(op=>op[0]==='fillRect').length,1);
+ assert.equal(operations.filter(op=>op[0]==='stroke').length,5,'four dim context strokes and one selected trace');
+ assert.equal(operations.filter(op=>op[0]==='lineTo').length,lines.length);
+ canvas.removeEventListener('kicad:select',handle);
+ operations.length=0;canvas.select(hit);
+ assert.equal(operations.filter(op=>op[0]==='fillRect').length,1,'standalone selection also draws once');
+ canvas.dispose();
+});
+
+test('pin 1 copper is marked by default, follows layer visibility, and yields to an exact net highlight',()=>{
+ const renderer=require('../pcb-renderer.js'),{canvas}=runtime(1,{KiCadPCBRenderer:renderer});
+ const first={type:'pad',kind:'pad',pinOne:true,layer:'F.Cu',x:0,y:0,r:1,fill:true,color:'#f00'};
+ const second={...first,pinOne:false,x:3};
+ canvas.setDocument({layers:['F.Cu'],primitives:[first,second]},'pins.kicad_pcb');
+ const painted=new Map();canvas.paint=(p,style)=>painted.set(p,style);
+ canvas.drawGeometry();
+ assert.equal(painted.get(first).color,renderer.pinOneColor);
+ assert.equal(painted.get(second).color,null);
+ canvas.showPinOneMarkers=false;canvas.drawGeometry();
+ assert.equal(painted.get(first).color,null);
+ canvas.showPinOneMarkers=true;
+ canvas.setNetHighlights([{name:'PAIR',primitives:[first]}],{selectionColor:'accent',mode:'dim'});
+ canvas.drawGeometry();
+ assert.equal(painted.get(first).color,'#ffe18b');
+ canvas.visibleLayers.clear();painted.clear();canvas.drawGeometry();
+ assert.equal(painted.size,0);
+ canvas.dispose();
+});
+
+test('selection fit waits for real dimensions when a hidden drawing is revealed',()=>{
+ const {canvas,host}=runtime();
+ const camera=canvas.viewport.camera;
+ const hidden={width:0,height:0};
+ host.getBoundingClientRect=()=>hidden;
+ const initialZoom=camera.zoom;
+ assert.equal(canvas.fitBounds({x:18,y:40,w:4,h:2}),true);
+ assert.equal(camera.zoom,initialZoom);
+ assert.equal(canvas.pendingFit.x,18);
+ hidden.width=1000;hidden.height=600;
+ canvas.resize();
+ assert.equal(camera.zoom,250);
+ assert.deepEqual([camera.center.x,camera.center.y],[20,41]);
+ assert.equal(canvas.pendingFit,null);
+ hidden.width=hidden.height=0;
+ canvas.fitBounds({x:90,y:90,w:5,h:5});
+ canvas.cancelBoundsFit();
+ hidden.width=1000;hidden.height=600;canvas.resize();
+ assert.deepEqual([camera.center.x,camera.center.y],[20,41]);
+ canvas.dispose();
+});

@@ -89,17 +89,23 @@ test('unresolved branch names remain usable in manual comparison lists without i
  h.picker.dispose();
 });
 
-test('dedicated History workspace stays inline, hides its old launcher and disposes cleanly',async()=>{
+test('History inset closes on Escape, restores focus and retains its timeline when reopened',async()=>{
  const previous=globalThis.KiCadHistoryTimeline;globalThis.KiCadHistoryTimeline={mount(){return{update(){},dispose(){}};}};
  try{
-  const workspace={children:[],append(node){this.children.push(node);}};let opened=0,closed=0;
-  const h=harness(async m=>({ok:true,result:m.type==='revision-branches'?{repository:m.repository,branches:[]}:{repository:m.repository,file:m.file,snapshotRef:sha('d'),commits:[]}}),{workspaceHolder:workspace,getCurrentRef:()=>sha('d'),onOpenGraph:()=>opened++,onCloseGraph:()=>closed++});
+  const workspace={children:[],append(node){this.children.push(node);}};let opened=0,closed=0,focused=0;
+  const h=harness(async m=>({ok:true,result:m.type==='revision-branches'?{repository:m.repository,branches:[]}:{repository:m.repository,file:m.file,snapshotRef:sha('d'),commits:[]}}),{workspaceHolder:workspace,getCurrentRef:()=>sha('d'),graphTrigger:()=>({focus(){focused++;}}),onOpenGraph:()=>opened++,onCloseGraph:()=>closed++});
   await h.picker.openGraph();
   assert.equal(h.nodes.some(n=>n.tag==='dialog'),false);
   assert.equal(workspace.children[0].tag,'section');assert.equal(workspace.children[0].hidden,false);
   assert.equal(h.nodes.find(n=>n.tag==='details').hidden,true);assert.equal(opened,1);
-  h.picker.closeGraph();assert.equal(workspace.children[0].hidden,true);assert.equal(closed,1);
-  h.picker.dispose();await h.picker.openGraph();h.picker.closeGraph();assert.equal(opened,1);assert.equal(closed,1);
+  const panel=workspace.children[0],body=panel.children.find(node=>node.className==='history-workspace-body');
+  body.scrollTop=260;
+  let prevented=false;
+  panel.listeners.keydown({key:'Escape',preventDefault(){prevented=true;},stopPropagation(){}});
+  assert.equal(prevented,true);assert.equal(panel.hidden,true);assert.equal(closed,1);assert.equal(focused,1);
+  await h.picker.openGraph();assert.equal(panel.hidden,false);assert.equal(workspace.children[0],panel);assert.equal(body.scrollTop,260);
+  h.picker.closeGraph({restoreFocus:false});assert.equal(panel.hidden,true);assert.equal(focused,1);
+  h.picker.dispose();await h.picker.openGraph();h.picker.closeGraph();assert.equal(opened,2);assert.equal(closed,2);
  }finally{if(previous)globalThis.KiCadHistoryTimeline=previous;else delete globalThis.KiCadHistoryTimeline;}
 });
 test('manual history branch entry appears only on request and labels the successfully resolved branch',async()=>{
@@ -124,11 +130,51 @@ test('revision lookup accepts exact scoped commit and PR targets without a HEAD 
  assert.throws(()=>revisionTarget({...r,provider:'gitlab'},'#12'));
 });
 test('History finds PRs through bounded foreground listing and opens exact canonical target',async()=>{
- const previous=globalThis.KiCadHistoryTimeline;globalThis.KiCadHistoryTimeline={mount(){return{update(){},dispose(){}};}};
+ const previous=globalThis.KiCadHistoryTimeline;let graph;globalThis.KiCadHistoryTimeline={mount(opts){graph=opts;return{update(){},dispose(){}};}};
  try{const launched=[],calls=[],h=harness(async message=>{calls.push(message);return {ok:true,result:{repository:message.repository,pulls:[{number:42,title:'Board revision',state:'open',url:'https://github.com/owner/design/pull/42'}],hasMore:true,warnings:[]}};},{openRevision:url=>launched.push(url)});
  await h.nodes.find(n=>n.textContent==='Browse pull requests').listeners.click();assert.equal(calls[0].type,'revision-pulls');assert.equal(calls[0].repository,'owner/design');
  h.nodes.find(n=>n.textContent==='#42 · Board revision · open').listeners.click();assert.equal(launched[0],'https://github.com/owner/design/pull/42');
  assert.ok(h.nodes.some(n=>n.textContent.includes('More results are available on GitHub')));
- const input=h.nodes.find(n=>n['aria-label']==='Commit SHA, pull request number or URL');input.value='abc1234';h.nodes.find(n=>n.textContent==='Open revision').listeners.click();assert.equal(launched[1],'https://github.com/owner/design/commit/abc1234');h.picker.dispose();
+ await graph.onSearchSubmit('abc1234');
+ await graph.onSearchSubmit('#51');
+ await graph.onSearchSubmit('https://github.com/wayri/KERO/commit/abc1234');
+ await graph.onSearchSubmit('https://github.com/wayri/KERO');
+ await graph.onSearchSubmit('board regulator');
+ await assert.rejects(()=>graph.onSearchSubmit('https://example.org/owner/design'),/Use GitHub/);
+ assert.deepEqual(launched.slice(1),[
+  'https://github.com/owner/design/commit/abc1234','https://github.com/owner/design/pull/51',
+  'https://github.com/wayri/KERO/commit/abc1234','https://github.com/wayri/KERO'
+ ]);
+ h.picker.dispose();
+ }finally{if(previous)globalThis.KiCadHistoryTimeline=previous;else delete globalThis.KiCadHistoryTimeline;}
+});
+
+
+test('preloaded history is shared by the first open, retained on reopen and refreshed explicitly',async()=>{
+ const previous=globalThis.KiCadHistoryTimeline;
+ let graph;globalThis.KiCadHistoryTimeline={mount(options){graph=options;return{update(){},dispose(){}};}};
+ try{
+  let finishCommits;
+  const calls=[],messages=[];
+  const h=harness(m=>{
+   messages.push(m);
+   const base={repository:m.repository,file:m.file,snapshotRef:m.ref};
+   if(m.type==='revision-branches')return {ok:true,result:{...base,branches:[]}};
+   return new Promise(resolve=>{finishCommits=()=>resolve({ok:true,result:{...base,commits:[]}});calls.push(m);});
+  },{preloadHistory:true,getCurrentRef:()=>sha('d')});
+  assert.equal(calls.length,1);
+  const first=h.picker.openGraph();
+  assert.equal(calls.length,1);
+  finishCommits();await first;
+  await h.picker.openGraph();
+  assert.equal(messages.length,2);
+  assert.equal(graph.searchHolder.className,'history-workspace-search');
+  const refresh=h.nodes.find(node=>node['aria-label']==='Refresh history');
+  const done=refresh.listeners.click();
+  assert.equal(refresh['aria-busy'],'true');assert.equal(refresh.disabled,true);assert.equal(calls.length,2);
+  await refresh.listeners.click();assert.equal(calls.length,2);
+  finishCommits();await done;
+  assert.equal(refresh['aria-busy'],'false');assert.equal(refresh.disabled,false);
+  h.picker.dispose();
  }finally{if(previous)globalThis.KiCadHistoryTimeline=previous;else delete globalThis.KiCadHistoryTimeline;}
 });

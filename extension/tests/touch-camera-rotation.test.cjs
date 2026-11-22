@@ -10,7 +10,7 @@ function harness(turn,flipped){
 }
 test('touch drag uses the inverse rotated/flipped camera and preserves the finger world anchor',()=>{
  for(const flipped of [false,true])for(let turn=0;turn<4;turn++){
-  const h=harness(turn,flipped),before=h.camera.screen_to_world({x:100,y:100});h.send('pointerdown',1,110,120);h.send('pointermove',1,140,140);const after=h.camera.screen_to_world({x:130,y:120});near(after.x,before.x);near(after.y,before.y);near(h.camera.zoom,4);h.send('pointerup',1,140,140);assert.equal(h.calls.finish,1);assert.equal(h.calls.click,undefined);h.dispose();assert.equal(h.listeners.size,0);
+  const h=harness(turn,flipped),before=h.camera.screen_to_world({x:100,y:100});h.send('pointerdown',1,110,120);h.send('pointermove',1,140,140);const after=h.camera.screen_to_world({x:130,y:120});near(after.x,before.x);near(after.y,before.y);near(h.camera.zoom,4);h.send('pointerup',1,140,140);assert.equal(h.calls.draw,2);assert.equal(h.calls.finish,0);assert.equal(h.calls.click,undefined);h.dispose();assert.equal(h.listeners.size,0);
  }
 });
 test('two-finger pan and pinch preserve the moving centroid through every quarter-turn and flip',()=>{

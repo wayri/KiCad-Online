@@ -157,3 +157,13 @@ test('compact drawing preparation preserves saved identities and can still rebui
   const unicode='abc Ω 😀 '+String.fromCharCode(0xd800)+'x'+String.fromCharCode(0xdc00);
   assert.equal(sourceByteLength(unicode),Buffer.byteLength(unicode,'utf8'));
 });
+
+test('saved coordinate fast path preserves the AST and falls back for uncommon forms',()=>{
+ const {parse,parseMetadata}=require('../design-diff.js');
+ const fast='(xy +1.25e1 -0\t)',fallback='(xy\n+1.25e1 ; comment\n -0)';
+ const ast=parse(`(kicad_pcb (zone (polygon (pts ${fast} ${fallback} (xy 4 5 extra)))))`);
+ assert.deepEqual(ast[1][1][1],['pts',['xy',12.5,-0],['xy',12.5,-0],['xy',4,5,'extra']]);
+ assert.throws(()=>parse('(kicad_pcb (xy 1e999 2))'),/Invalid numeric/);
+ assert.throws(()=>parse('(kicad_pcb (xy 1 2)'),/Incomplete/);
+ assert.deepEqual(parseMetadata(`(kicad_pcb (version 20240108) (zone ${fast}))`),['kicad_pcb',['version',20240108]]);
+});

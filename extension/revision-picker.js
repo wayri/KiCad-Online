@@ -22,6 +22,20 @@
     }
     return 'https://github.com/'+repository+'/'+path;
   }
+  function historyURL(request,value){
+    const url=new URL(value);
+    if(url.protocol!=='https:'||url.username||url.password||url.search||url.hash)throw Error('Enter a GitHub or GitLab repository, commit, or pull request URL.');
+    const path=url.pathname.replace(/\/$/,'');
+    if(url.origin==='https://github.com'){
+      const repository=path.split('/').slice(1,3).join('/');
+      if(!data.validRepository(repository))throw Error('Enter a GitHub repository URL.');
+      if(path==='/'+repository)return url.origin+path;
+      return revisionTarget({repository},url.href);
+    }
+    if(url.origin!=='https://gitlab.com'&&(request.provider!=='gitlab'||url.origin!==request.host))throw Error('Use GitHub, GitLab.com, or this project’s GitLab host.');
+    if(path.includes('/-/')||!data.validRepository(path.slice(1),'gitlab'))throw Error('Enter a GitLab repository URL.');
+    return url.origin+path;
+  }
   function panelBounds(anchor,width,height,panelHeight=560){
     const pad=8,w=Math.max(1,Math.min(580,width-pad*2)),h=Math.max(1,Math.min(panelHeight,height-pad*2));
     return {left:Math.max(pad,Math.min(anchor.right-w,width-pad-w)),top:Math.max(pad,Math.min(anchor.bottom+4,height-pad-h)),width:w,maxHeight:h};
@@ -38,7 +52,6 @@
     const outside=event=>{if(detail.open&&!detail.contains?.(event.target)&&!event.composedPath?.().includes(detail))detail.open=false;};
     const escape=event=>{if(event.key==='Escape'&&detail.open){event.preventDefault?.();dismiss();}};
     close.addEventListener('click',dismiss);detail.addEventListener('toggle',position);doc.addEventListener?.('pointerdown',outside);doc.addEventListener?.('keydown',escape);host.addEventListener?.('resize',position);host.visualViewport?.addEventListener('resize',position);
-    const note=make('p','Browse repository history, load a commit, or compare it with the displayed revision. Source files stay unchanged.');panel.append(note);
     const advanced=make('details');advanced.append(make('summary','Manual revision comparison'));panel.append(advanced);
     const rows={};
     for(const side of ['base','head']){
@@ -61,14 +74,57 @@
         else options.navigate(comparisonQuery(request,null,sha));
       }catch(error){if(!disposed&&ticket===epoch)tell(error.message);}finally{if(ticket===epoch)busy(false);}
     }
-    async function loadHistory(){
-      const ticket=++epoch;historyLoad.disabled=true;tell('Loading commit history…');
-      try{let historyTarget=historyRef||options.getCurrentRef?.()||request.head;if(historyRef&&!SHA.test(historyTarget)){const resolved=await send('revision-resolve',rows.head,historyTarget);if(!SHA.test(resolved.sha))throw Error('History branch did not resolve to a saved commit.');if(disposed||ticket!==epoch)return;historyTarget=resolved.sha;resolvedGraphHeads.set(historyRef,historyTarget);if(resolvedGraphHeads.size>100)resolvedGraphHeads.delete(resolvedGraphHeads.keys().next().value);const existing=graphBranches.find(b=>b.name===historyRef);if(existing)existing.sha=historyTarget;else graphBranches.push({name:historyRef,sha:historyTarget});}const result=await send('revision-commits',rows.head,historyTarget);if(disposed||ticket!==epoch)return;if(result.file!==request.file||SHA.test(historyTarget)&&result.snapshotRef!==historyTarget||!SHA.test(result.snapshotRef||'')||!Array.isArray(result.commits)||result.commits.length>50||result.commits.some(c=>!SHA.test(c.sha)))throw Error('Invalid bounded commit history.');
-        graphCommits=result.commits;timeline?.update({commits:graphCommits,branches:graphBranches,currentRef:options.getCurrentRef?.()||request.head});historyList.replaceChildren();if(!timeline)for(const commit of result.commits){const row=make('li'),title=make('strong',String(commit.message||'Commit').split('\n')[0].slice(0,240)),meta=make('small',[commit.sha.slice(0,10),commit.author,commit.date].filter(Boolean).join(' · ')),actions=make('div'),open=make('button','Load commit'),compare=make('button','Compare with current');for(const b of [open,compare])b.type='button';open.addEventListener('click',()=>openCommit(commit.sha));compare.addEventListener('click',()=>openCommit(commit.sha,true));actions.append(open,compare);row.append(title,meta,actions);historyList.append(row);}
-        position();tell(`${result.commits.length} commits shown. ${[...(result.warnings||[]),...(result.hasMore?['More history is available on the repository website.']:[])].join(' ')}`);return true;
-      }catch(error){if(!disposed&&ticket===epoch)tell(error.message);}finally{if(!disposed)historyLoad.disabled=false;}
+    let historyTicket=0,historyWork=null,loadedHistory=null,branchWork=null,branchesReady=false;
+    function displayedRef(){return options.getCurrentRef?.()||request.head;}
+    function loadHistory({refresh=false}={}){
+      const branch=historyRef,key=branch||displayedRef();
+      if(historyWork?.key===key)return historyWork.promise;
+      if(!refresh&&loadedHistory?.branch===branch&&(loadedHistory.key===key||!branch&&loadedHistory.snapshot===key)){
+        if(historyWork){historyTicket++;historyWork=null;historyLoad.disabled=false;tell('');}
+        return Promise.resolve(true);
+      }
+      const ticket=++historyTicket;
+      historyLoad.disabled=true;tell('Loading commit history…');
+      const promise=(async()=>{
+        try{
+          let target=key;
+          if(branch&&!SHA.test(target)){
+            const resolved=await send('revision-resolve',rows.head,target);
+            if(disposed||ticket!==historyTicket)return;
+            if(!SHA.test(resolved.sha))throw Error('History branch did not resolve to a saved commit.');
+            target=resolved.sha;
+            resolvedGraphHeads.set(branch,target);
+            if(resolvedGraphHeads.size>100)resolvedGraphHeads.delete(resolvedGraphHeads.keys().next().value);
+            const existing=graphBranches.find(entry=>entry.name===branch);
+            if(existing)existing.sha=target;else graphBranches.push({name:branch,sha:target});
+          }
+          const result=await send('revision-commits',rows.head,target);
+          if(disposed||ticket!==historyTicket)return;
+          if(result.file!==request.file||SHA.test(target)&&result.snapshotRef!==target||!SHA.test(result.snapshotRef||'')||!Array.isArray(result.commits)||result.commits.length>50||result.commits.some(commit=>!SHA.test(commit.sha)))throw Error('Invalid bounded commit history.');
+          loadedHistory={key,branch,snapshot:result.snapshotRef};
+          graphCommits=result.commits;
+          timeline?.update({loading:false,commits:graphCommits,branches:graphBranches,currentRef:displayedRef()});
+          historyList.replaceChildren();
+          if(!timeline)for(const commit of graphCommits){
+            const row=make('li'),title=make('strong',String(commit.message||'Commit').split('\n')[0].slice(0,240)),meta=make('small',[commit.sha.slice(0,10),commit.author,commit.date].filter(Boolean).join(' · ')),actions=make('div'),open=make('button','Load commit'),compare=make('button','Compare with current');
+            for(const button of [open,compare])button.type='button';
+            open.addEventListener('click',()=>openCommit(commit.sha));compare.addEventListener('click',()=>openCommit(commit.sha,true));
+            actions.append(open,compare);row.append(title,meta,actions);historyList.append(row);
+          }
+          position();tell('');return true;
+        }catch(error){if(!disposed&&ticket===historyTicket)tell(error.message);}
+        finally{if(!disposed&&ticket===historyTicket){historyWork=null;historyLoad.disabled=false;}}
+      })();
+      historyWork={key,promise};
+      return promise;
     }
-    historyLoad.addEventListener('click',loadHistory);
+    function prepareHistory(refresh=false){
+      if(disposed||!timeline)return Promise.resolve();
+      const commits=loadHistory({refresh});
+      if(!branchWork&&(refresh||!branchesReady))branchWork=loadGraphBranches().finally(()=>{branchWork=null;});
+      return Promise.all([commits,branchWork]);
+    }
+    historyLoad.addEventListener('click',()=>loadHistory({refresh:true}));
     async function populate(){
       const ticket=++epoch;busy(true);tell('Loading bounded branch lists and file history…');
       try{
@@ -102,61 +158,115 @@
         if(disposed||ticket!==graphBranchTicket)return;
         if(!Array.isArray(listing.branches)||listing.branches.length>100)throw Error('Invalid bounded branch listing.');
         if(listing.branches.some(b=>!b||!data.validRef(b.name)||b.sha&&!SHA.test(b.sha)))throw Error('Invalid branch metadata.');graphBranches=listing.branches.map(b=>({...b,...(resolvedGraphHeads.has(b.name)?{sha:resolvedGraphHeads.get(b.name)}:{})}));
-        graphBranchSelect.replaceChildren();
+        graphBranchSelect.title='';graphBranchSelect.replaceChildren();
         const current=make('option','Displayed revision');current.value='';graphBranchSelect.append(current);
         for(const branch of graphBranches){const option=make('option',branch.name+(branch.isDefault?' · default':''));option.value=branch.name;graphBranchSelect.append(option);}
-        const manual=make('option','Enter another branch or commit…');manual.value=':manual';graphBranchSelect.append(manual);graphBranchSelect.value=graphBranches.some(b=>b.name===historyRef)?historyRef:'';
-        graphBranchNote.textContent=[...(listing.warnings||[]),...(listing.hasMore?['More branches exist beyond this website window. Enter a branch name below.']:[])].join(' ');
+        const manual=make('option','Enter another branch or commit…');manual.value=':manual';graphBranchSelect.append(manual);if(historyRef&&![...graphBranchSelect.children].some(option=>option.value===historyRef)){
+          const option=make('option',SHA.test(historyRef)?'Commit · '+historyRef.slice(0,10):historyRef);option.value=historyRef;graphBranchSelect.append(option);
+        }
+        graphBranchSelect.value=historyRef||'';branchesReady=true;
         timeline?.update({commits:graphCommits,branches:graphBranches,currentRef:options.getCurrentRef?.()||request.head});
-      }catch(error){if(!disposed&&ticket===graphBranchTicket)graphBranchNote.textContent=error.message;}
+      }catch(error){if(!disposed&&ticket===graphBranchTicket)graphBranchSelect.title=error.message;}
     }
-    let graphBranchNote=null,discoveryTicket=0;
+    let discoveryTicket=0;
     function graphWorkspace(){
       if(!root.KiCadHistoryTimeline)return;
-      const embedded=Boolean(options.workspaceHolder),dialog=make(embedded?'section':'dialog');dialog.className='history-workspace-dialog'+(embedded?' history-workspace-inline':'');dialog.hidden=embedded;dialog.setAttribute('aria-label','Repository history and visual comparison');
-      const header=make('header'),identity=make('div'),title=make('h2','History & compare'),scope=make('p',request.headRepository+' · '+request.file),exit=make('button',embedded?'Back to drawing':'Close');
-      identity.append(title,scope);exit.type='button';exit.setAttribute('aria-label',embedded?'Back to drawing':'Close history workspace');header.append(identity,exit);
-      const tools=make('div');tools.className='history-workspace-tools';graphBranchSelect=make('select');graphBranchSelect.setAttribute('aria-label','History branch');
+      const embedded=Boolean(options.workspaceHolder),dialog=make(embedded?'section':'dialog');dialog.className='history-workspace-dialog'+(embedded?' history-workspace-inline':'');dialog.hidden=embedded;if(embedded)dialog.setAttribute('role','dialog');dialog.setAttribute('aria-label','Repository history and visual comparison');
+      const header=make('header'),title=make('h2','History'),searchHolder=make('div'),controlsHolder=make('div'),exit=make('button','×');
+      title.title=request.headRepository+' · '+request.file;
+      searchHolder.className='history-workspace-search';
+      controlsHolder.className='history-workspace-controls';
+      const refresh=make('button','↻');refresh.type='button';refresh.className='history-icon-button';
+      refresh.title='Refresh history';refresh.setAttribute('aria-label',refresh.title);
+      const refreshGlyph=make('span','↻');refreshGlyph.setAttribute('aria-hidden','true');
+      if(root.KiCadUIIcons)refreshGlyph.replaceChildren(root.KiCadUIIcons.icon('refresh'));
+      refresh.replaceChildren(refreshGlyph);
+      refresh.addEventListener('click',async()=>{
+        if(refresh.disabled)return;
+        refresh.disabled=true;refresh.setAttribute('aria-busy','true');
+        try{await prepareHistory(true);}
+        finally{refresh.disabled=false;refresh.setAttribute('aria-busy','false');}
+      });controlsHolder.append(refresh);
+      exit.type='button';exit.className='history-icon-button';exit.setAttribute('aria-label','Close history');exit.title='Close history';header.append(title,searchHolder,controlsHolder,exit);
+      const more=make('div'),done=make('button','Back to history');
+      more.className='history-workspace-secondary';more.hidden=true;done.type='button';
+      const showTools=(section,focus)=>{for(const panel of [tools,discovery,advanced])panel.hidden=panel!==section;more.hidden=false;focus?.focus?.();};
+      const hideTools=()=>{more.hidden=true;searchHolder.firstChild?.focus?.();};
+      done.addEventListener('click',hideTools);
+      const tools=make('div');tools.className='history-workspace-tools';graphBranchSelect=make('select');graphBranchSelect.setAttribute('aria-label','History branch');header.insertBefore?.(graphBranchSelect,controlsHolder);
+      if(!header.insertBefore)header.append(graphBranchSelect);
+      const displayed=make('option','Displayed revision');displayed.value='';graphBranchSelect.append(displayed);
       const branchInput=make('input');branchInput.placeholder='Branch name or commit SHA';branchInput.setAttribute('aria-label','History branch name or commit');
-      const browse=make('button','Browse branch'),refresh=make('button','Refresh history');branchInput.hidden=browse.hidden=true;for(const b of [browse,refresh])b.type='button';
-      const choose=async value=>{if(value&&!data.validRef(value)){tell('Enter a valid branch or commit.');return;}historyRef=value||null;const loaded=await loadHistory();if(loaded&&!disposed&&historyRef===(value||null)){if(value&&![...graphBranchSelect.children].some(o=>o.value===value)){const option=make('option',SHA.test(value)?'Commit · '+value.slice(0,10):value);option.value=value;graphBranchSelect.append(option);}graphBranchSelect.value=value||'';branchInput.hidden=browse.hidden=true;}};
-      graphBranchSelect.addEventListener('change',()=>{const manual=graphBranchSelect.value===':manual';branchInput.hidden=browse.hidden=!manual;if(manual){branchInput.focus?.();return;}return choose(graphBranchSelect.value);});browse.addEventListener('click',()=>choose(branchInput.value.trim()));
+      const browse=make('button','Browse branch');branchInput.hidden=browse.hidden=true;browse.type='button';
+      const choose=async value=>{if(value&&!data.validRef(value)){tell('Enter a valid branch or commit.');return;}historyRef=value||null;const loaded=await loadHistory();if(loaded&&!disposed&&historyRef===(value||null)){if(value&&![...graphBranchSelect.children].some(o=>o.value===value)){const option=make('option',SHA.test(value)?'Commit · '+value.slice(0,10):value);option.value=value;graphBranchSelect.append(option);}graphBranchSelect.value=value||'';branchInput.hidden=browse.hidden=true;if(!more.hidden&&!tools.hidden)hideTools();}};
+      graphBranchSelect.addEventListener('change',()=>{const manual=graphBranchSelect.value===':manual';branchInput.hidden=browse.hidden=!manual;if(manual){showTools(tools,branchInput);return;}return choose(graphBranchSelect.value);});browse.addEventListener('click',()=>choose(branchInput.value.trim()));
       branchInput.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();choose(branchInput.value.trim());}});
-      refresh.addEventListener('click',()=>{loadHistory();loadGraphBranches();});
-      tools.append(graphBranchSelect,branchInput,browse,refresh);
-      const discovery=make('section'),lookup=make('input'),openRevision=make('button','Open revision'),pullsButton=make('button','Browse pull requests'),pullList=make('div'),lookupStatus=make('p');discovery.className='revision-discovery';discovery.setAttribute('aria-label','Find a pull request or commit');lookup.placeholder='Commit SHA, #PR or GitHub URL';lookup.maxLength=2048;lookup.setAttribute('aria-label','Commit SHA, pull request number or URL');lookupStatus.setAttribute('role','status');pullList.className='revision-pull-list';openRevision.type=pullsButton.type='button';
-      const launch=value=>{try{const source=revisionTarget(request,value);if(!options.openRevision)throw Error('Revision launching is unavailable in this host.');options.openRevision(source);}catch(error){lookupStatus.textContent=error.message;}};
-      openRevision.addEventListener('click',()=>launch(lookup.value));lookup.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();launch(lookup.value);}});
+      tools.append(branchInput,browse);
+      const discovery=make('section'),pullsButton=make('button','Browse pull requests'),pullList=make('div'),lookupStatus=make('p');discovery.className='revision-discovery';discovery.setAttribute('aria-label','Pull requests');lookupStatus.setAttribute('role','status');pullList.className='revision-pull-list';pullsButton.type='button';
+      function launch(source){
+        if(!options.openRevision)throw Error('Revision launching is unavailable in this host.');
+        return options.openRevision(source);
+      }
+      async function submitSearch(value){
+        if(/^https?:\/\//i.test(value))return launch(historyURL(request,value));
+        if(/^#[1-9][0-9]{0,8}$/.test(value))return launch(revisionTarget(request,value));
+        if(!/^[a-f0-9]{7,40}$/i.test(value))return;
+        const matches=graphCommits.filter(commit=>commit.sha.toLowerCase().startsWith(value.toLowerCase()));
+        if(matches.length===1)return openCommit(matches[0].sha);
+        if(matches.length>1)throw Error('Enter more characters to identify one commit.');
+        if(request.provider!=='gitlab')return launch(revisionTarget(request,value));
+        const result=await send('revision-resolve',rows.head,value);
+        if(!SHA.test(result.sha)||!result.sha.toLowerCase().startsWith(value.toLowerCase()))throw Error('The requested commit could not be resolved.');
+        if(!disposed)await openCommit(result.sha);
+      }
       pullsButton.hidden=request.provider==='gitlab';pullsButton.addEventListener('click',async()=>{const ticket=++discoveryTicket;pullsButton.disabled=true;lookupStatus.textContent='Loading pull requests from your repository website session…';try{
         const repository=request.pullRepository||request.repository,response=await options.send({type:'revision-pulls',repository,ref:options.getCurrentRef?.()||request.head,file:request.file});if(!response?.ok)throw Error(response?.error||'Pull requests unavailable.');const result=response.result;
         if(disposed||ticket!==discoveryTicket)return;if(result?.repository!==repository||!Array.isArray(result.pulls)||result.pulls.length>50)throw Error('Invalid bounded pull-request listing.');
         const entries=result.pulls.map(pull=>{if(!Number.isSafeInteger(pull.number)||pull.number<1)throw Error('Invalid pull-request number.');const source=revisionTarget(request,'#'+pull.number);if(pull.url&&pull.url!==source)throw Error('Pull-request repository does not match.');return {pull,source};});pullList.replaceChildren();
-        for(const {pull,source}of entries){const row=make('button','#'+pull.number+' · '+String(pull.title||'Pull request').slice(0,240)+(pull.state?' · '+String(pull.state).slice(0,24):''));row.type='button';row.addEventListener('click',()=>launch(source));pullList.append(row);}
-        lookupStatus.textContent=result.pulls.length+' pull requests shown. '+[...(result.warnings||[]),...(result.hasMore?['More results are available on GitHub; enter a PR number to open one directly.']:[])].join(' ');
+        for(const {pull,source}of entries){const row=make('button','#'+pull.number+' · '+String(pull.title||'Pull request').slice(0,240)+(pull.state?' · '+String(pull.state).slice(0,24):''));row.type='button';row.addEventListener('click',()=>{try{launch(source);}catch(error){lookupStatus.textContent=error.message;}});pullList.append(row);}
+        lookupStatus.textContent=result.hasMore?'More results are available on GitHub.':entries.length?'':'No pull requests found.';
       }catch(error){if(!disposed&&ticket===discoveryTicket)lookupStatus.textContent=error.message;}finally{if(!disposed&&ticket===discoveryTicket)pullsButton.disabled=false;}});
-      discovery.append(lookup,openRevision,pullsButton,lookupStatus,pullList);
-      graphBranchNote=make('p');graphBranchNote.className='history-workspace-note';graphBranchNote.setAttribute('role','status');
+      discovery.append(pullsButton,lookupStatus,pullList);
       const holder=make('div');holder.className='history-workspace-body';
-      timeline=root.KiCadHistoryTimeline.mount({holder,commits:[],branches:[],currentRef:options.getCurrentRef?.()||request.head,onOpen:sha=>openCommit(sha),onCompareCurrent:sha=>openCommit(sha,true),onCompare:(base,head)=>{
+      timeline=root.KiCadHistoryTimeline.mount({holder,searchHolder,controlsHolder,repository:request.headRepository,onSearchSubmit:submitSearch,loading:true,commits:[],branches:[],actions:[
+        ...(request.provider!=='gitlab'?[['Browse pull requests…',()=>{showTools(discovery,pullsButton);pullsButton.click();}]]:[]),
+        ['Compare by revision…',()=>{advanced.open=true;showTools(advanced,rows.base.input);}]
+      ],currentRef:options.getCurrentRef?.()||request.head,onOpen:sha=>openCommit(sha),onCompareCurrent:sha=>openCommit(sha,true),onCompare:(base,head)=>{
         if(disposed||!SHA.test(base)||!SHA.test(head)||base===head)return;
         const query=comparisonQuery({...request,repository:request.headRepository,oldFile:request.file},base,head);
         (options.navigateComparison||options.navigate)(query);
       },onError:error=>tell(error?.message||String(error))});
-      const help=make('p','Connections follow verified Git parents. Unavailable ancestry stays unknown. Select Base and Head to inspect source-bound design deltas.');
-      help.className='history-workspace-note';
-      dialog.append(header,tools,discovery,graphBranchNote,holder,advanced,status,help);(options.workspaceHolder||doc.body).append(dialog);historyDialog=dialog;if(embedded)detail.hidden=true;
-      const closeGraph=()=>{if(disposed)return;if(embedded)dialog.hidden=true;else dialog.close();epoch++;graphBranchTicket++;busy(false);options.onCloseGraph?.();summary.focus?.();};
-      graphDismiss=closeGraph;exit.addEventListener('click',closeGraph);
-      dialog.addEventListener('cancel',()=>{epoch++;graphBranchTicket++;busy(false);summary.focus?.();});
-      const openGraph=()=>{if(disposed)return Promise.resolve();detail.open=false;dialog.dataset.theme=doc.body.dataset?.uiTheme||'dark';if(embedded){dialog.hidden=false;options.onOpenGraph?.();}else if(!dialog.open)dialog.showModal();busy(false);return graphCommits.length?Promise.resolve():Promise.all([loadHistory(),loadGraphBranches()]);};
+      more.append(done,tools,discovery,advanced);
+      dialog.append(header,more,status,holder);(options.workspaceHolder||doc.body).append(dialog);historyDialog=dialog;if(embedded)detail.hidden=true;
+      const closeGraph=({restoreFocus=true}={})=>{
+        if(disposed||(embedded?dialog.hidden:!dialog.open))return;
+        if(embedded)dialog.hidden=true;else dialog.close();
+        epoch++;busy(false);timeline?.closeMenu?.();more.hidden=true;options.onCloseGraph?.();
+        if(restoreFocus)(options.graphTrigger?.()||summary).focus?.();
+      };
+      graphDismiss=closeGraph;exit.addEventListener('click',()=>closeGraph());
+      dialog.addEventListener('cancel',event=>{event.preventDefault?.();closeGraph();});
+      dialog.addEventListener('keydown',event=>{
+        if(event.key!=='Escape'||event.defaultPrevented||!embedded&&more.hidden)return;
+        event.preventDefault();event.stopPropagation();if(more.hidden)closeGraph();else hideTools();
+      });
+      const openGraph=()=>{
+        if(disposed)return Promise.resolve();
+        detail.open=false;dialog.dataset.theme=doc.body.dataset?.uiTheme||'dark';
+        if(embedded){dialog.hidden=false;options.onOpenGraph?.();exit.focus?.();}
+        else if(!dialog.open)dialog.showModal();
+        busy(false);
+        return prepareHistory();
+      };
       summary.addEventListener('click',event=>{event.preventDefault();openGraph();});
       historyLoad.addEventListener('click',()=>{if(!dialog.open)openGraph();});
       return openGraph;
     }
     const openGraph=graphWorkspace();
-    const closeGraph=()=>graphDismiss?.();
+    const closeGraph=options=>graphDismiss?.(options);
+    if(options.preloadHistory)void prepareHistory();
 
-    return {populate,openComparison,loadHistory,openCommit,openGraph,closeGraph,dispose(){disposed=true;epoch++;graphBranchTicket++;discoveryTicket++;timeline?.dispose();historyDialog?.remove();doc.removeEventListener?.('pointerdown',outside);doc.removeEventListener?.('keydown',escape);host.removeEventListener?.('resize',position);host.visualViewport?.removeEventListener('resize',position);detail.remove();}};
+    return {populate,openComparison,loadHistory,openCommit,openGraph,closeGraph,dispose(){disposed=true;epoch++;historyTicket++;graphBranchTicket++;discoveryTicket++;timeline?.dispose();historyDialog?.remove();doc.removeEventListener?.('pointerdown',outside);doc.removeEventListener?.('keydown',escape);host.removeEventListener?.('resize',position);host.visualViewport?.removeEventListener('resize',position);detail.remove();}};
   }
-  const api={comparisonQuery,revisionTarget,mount,panelBounds};root.KiCadRevisionPicker=api;if(typeof module==='object'&&module.exports)module.exports=api;
+  const api={comparisonQuery,revisionTarget,historyURL,mount,panelBounds};root.KiCadRevisionPicker=api;if(typeof module==='object'&&module.exports)module.exports=api;
 })(typeof globalThis==='object'?globalThis:this);

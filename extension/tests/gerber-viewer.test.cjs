@@ -69,3 +69,18 @@ test('a negative job reference hides a previously imported positive layer instea
  const job=JSON.stringify({FilesAttributes:[{Path:'top.gtl',FilePolarity:'Negative'}]});app.get('files').files=[localSource('board.gbrjob',job),localSource('top.gtl',film)];app.get('files').onchange();await waitStatus(app,/Negative job-file image polarity/);
  const row=app.get('layers').children[0],checkbox=row.children[0].children[0].children[0];assert.equal(checkbox.checked,false);assert.equal(checkbox.disabled,true);app.get('showAll').onclick();assert.equal(app.get('layers').children[0].children[0].children[0].children[0].checked,false);app.get('export').onclick();assert.equal(JSON.parse(app.exports[0][1]).analysis.coverage,'partial');
 });
+
+
+test('repository scan uses its folder scope and loads discovered Gerbers at the pinned revision',async()=>{
+ const sha='a'.repeat(40),paths=['fab/top.gbr','fab/bottom.gbl'];
+ const app=harness({search:'?repository=owner%2Frepo&ref='+sha+'&scan=1&file=fab%2Fboard.gbrjob',sendMessage:async msg=>{
+  if(msg.type==='project-inventory')return {ok:true,result:{files:paths.map(path=>({path})),snapshotRef:sha}};
+  assert.ok(paths.includes(msg.file));
+  return {ok:true,result:{content:film}};
+ }});
+ await waitStatus(app,/2 files loaded/);
+ assert.deepEqual(app.requests.map(r=>[r.type,r.file]),[
+  ['project-inventory','fab/board.gbrjob'],['project-file',paths[0]],['project-file',paths[1]]
+ ]);
+ assert.ok(app.requests.every(r=>r.ref===sha));
+});

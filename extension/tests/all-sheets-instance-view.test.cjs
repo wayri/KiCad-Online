@@ -48,11 +48,11 @@ test('stacked canvas preserves front-copy picking identity and routes airwires t
 });
 const page=(path,placements=[])=>({path,label:path,placements,design:{page:{width:297,height:210},primitives:[]},groups:[]});
 
-test('broad all-sheet hierarchies wrap into readable ranks with bounded titles and intact identities',()=>{
+test('broad all-sheet hierarchies keep siblings in a shared depth row with bounded titles and intact identities',()=>{
  const root=page('root',[{id:'root'}]),entries=[root,...Array.from({length:30},(_,i)=>({...page('sheets/child-'+String(i).padStart(2,'0'),[{id:'child-'+i,parentId:'root'}]),label:'SubSheets/Shared_very_long_hierarchical_sheet_name_'+i+'.kicad_sch',instanceCount:64,instanceLabel:'Root / repeated channel '+i}))];
  const result=composeSheetOverview(entries),pages=result.pages,byPath=new Map(pages.map(p=>[p.path,p]));
- assert.equal(pages.length,31);assert.ok(result.design.page.width<=7*(297+35),'wide branches use at most seven columns');
- assert.ok(new Set(pages.slice(1).map(p=>p.y)).size>1,'children wrap into several rows');
+ assert.equal(pages.length,31);assert.equal(result.design.page.width,30*297+29*24);
+ assert.equal(new Set(pages.slice(1).map(p=>p.y)).size,1,'children share the same depth row');
  for(const a of pages)for(const b of pages)if(a!==b)assert.ok(a.x+a.w+3<=b.x||b.x+b.w+3<=a.x||a.y+a.h+32<=b.y||b.y+b.h+32<=a.y,'paper and header gutters do not overlap');
  for(const child of pages.slice(1))assert.ok(child.y>pages[0].y,'all descendants stay below their parent');
  const titles=result.design.primitives.filter(p=>p.kind==='overview-title');assert.equal(titles.length,31);assert.ok(titles.every(p=>p.maxTextWidth===297&&p.minDisplayWidthPx>=60));assert.ok(titles[1].text.endsWith(' ×64'));assert.ok(!titles[1].text.includes('SubSheets/'));

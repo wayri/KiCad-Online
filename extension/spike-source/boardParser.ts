@@ -139,7 +139,7 @@ export function orderedCopperLayerNames(
   return [...ordered, ...recovered];
 }
 
-type SExpr = string | number | {quoted:string} | SExpr[];
+type SExpr = string | number | {quoted:string} | Float64Array | SExpr[];
 type Node = SExpr[];
 
 const EPSILON = 0.015;
@@ -194,7 +194,7 @@ function numberAt(node: Node | undefined, index: number, fallback = 0): number {
 }
 
 function atomAt(value:SExpr|undefined):string|number|undefined {
-  return value&&typeof value==='object'&&!Array.isArray(value)?value.quoted:typeof value==='string'||typeof value==='number'?value:undefined;
+  return value&&typeof value==='object'&&!Array.isArray(value)&&!(value instanceof Float64Array)?value.quoted:typeof value==='string'||typeof value==='number'?value:undefined;
 }
 function stringAt(node: Node | undefined, index: number, fallback = ""): string {
   const value=atomAt(node?.[index]);return typeof value==='string'?value:typeof value==='number'?String(value):fallback;
@@ -215,6 +215,12 @@ function xyzAt(node: Node | undefined, key: string, fallback: [number, number, n
 function pointsAt(node: Node | undefined): Point[] {
   const pointsNode = node ? child(node, "pts") : undefined;
   if (!pointsNode) return [];
+  const packed = pointsNode[1];
+  if (packed instanceof Float64Array) {
+    const points: Point[] = [];
+    for (let i = 0; i < packed.length; i += 2) points.push([packed[i], packed[i + 1]]);
+    return points;
+  }
   return children(pointsNode, "xy").map((value) => [numberAt(value, 1), numberAt(value, 2)]);
 }
 
@@ -495,9 +501,9 @@ export function parseKicadBoard(source: string, preparedRoot?: Node, options: {z
       const polygonNodes = children(item, "filled_polygon");
       const selectedPolygons = polygonNodes.length ? polygonNodes : children(item, "polygon");
       selectedPolygons.forEach((polygon, index) => {
-        const pts=child(polygon, "pts");let pointCount=0;
+        const pts=child(polygon, "pts");let pointCount=pts?.[1] instanceof Float64Array ? pts[1].length/2 : 0;
         for(const entry of pts || [])if(isNode(entry)&&stringAt(entry,0)==="xy")pointCount++;
-        if(pointCount<3)return;
+        if(!Number.isInteger(pointCount)||pointCount<3)return;
         const layer = layerOf(polygon, defaultLayer),net=netName(item);
         layers.add(layer);zoneLayerNames.add(layer);
         if(options.zonePoints===false)return;

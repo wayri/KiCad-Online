@@ -25,6 +25,7 @@
   }
   try{const saved=JSON.parse(globalThis.localStorage?.getItem('kicad:workspace-theme:v1')||'null');if(saved)applyWorkspaceTheme(saved,false);}catch{}
   const pendingSelections=new Map();
+  let workspaceSelection=null;
   const outerLoads=new Map(),loadRows=new Map();
   function loadOperation(key,label,work,retry){
     const previous=outerLoads.get(key);if(previous)previous.stop('Loading replaced.');
@@ -53,50 +54,111 @@
   let linked = Boolean(request.base && !["added", "removed"].includes(request.status));
   let manualMode = false, changes = null, loading = null;
   let pairedFile=null,crossLinked=true,pairEpoch=0;
-  function crossSelectionState(enabled){crossLinked=enabled;$('crossSelectToggle')?.setAttribute('aria-pressed',String(enabled));if(!enabled)pendingSelections.clear();}
+  function crossSelectionState(enabled){crossLinked=enabled;$('crossSelectToggle')?.setAttribute('aria-pressed',String(enabled));if(!enabled){pendingSelections.clear();workspaceSelection=null;}}
   const entryFile=request.file;
   const projectName=String(entryFile||request.repository?.split('/').at(-1)||'Project').split('/').at(-1).replace(/\.(?:kicad_(?:pro|sch|pcb)|pro|sch|brd)$/i,'').replace(/[\x00-\x1f\x7f]/g,'').slice(0,200)||'Project';
   const projectHeading=$('workspaceProjectName');if(projectHeading){projectHeading.textContent=projectName;projectHeading.title=projectName+' · '+(request.repository||'');}
-  function workspaceTitle(mode){const labels={project:'Project',schematic:'Schematic',layout:'Layout','3d':'3D',bom:'BoM',simulation:'Simulation',history:'History',draftsman:'Draftsman',split:'Split view'};document.title=projectName+' · '+(labels[mode]||'Review')+' — KiCad Online';}
+  function workspaceTitle(mode){const labels={project:'Project',schematic:'Schematic',layout:'Layout','3d':'3D',bom:'BoM',simulation:'Simulation',draftsman:'Draftsman',split:'Split view'};document.title=projectName+' · '+(labels[mode]||'Review')+' — KiCad Online';}
 
   const isDrawing=path=>data.validPath(path),isBoard=path=>/\.kicad_pcb$/i.test(path||'');
   const validEntry=path=>isDrawing(path)||Boolean(globalThis.KiCadGitHub?.filePath(path));
-  let activeWorkspace=isDrawing(entryFile)?(isBoard(entryFile)?'layout':'schematic'):'project',inventoryPromise=null,tabEpoch=0,pickerMounted=false,revisionPicker=null,historyReturnWorkspace=null,chooserMode='split',latestHierarchy=null;
+  let activeWorkspace=isDrawing(entryFile)?(isBoard(entryFile)?'layout':'schematic'):'project',inventoryPromise=null,tabEpoch=0,pickerMounted=false,revisionPicker=null,chooserMode='split',latestHierarchy=null,latestHierarchySide=null;
   let workspaceHelpers=null;const tabs=new Map();let bomBrowser=null,bomReturnWorkspace=null,bomModelPromise=null,bomMode='schematic',bomSelection=null,bomAssembly=null,bomAssemblyEpoch=0;
   async function loadBomDrawing(){if(!bomModelPromise)bomModelPromise=(async()=>{let file=isDrawing(request.file)?request.file:null;if(!file){const result=await inventory(),drawings=result.files.map(f=>f.path).filter(isDrawing),stem=entryFile.replace(/\.[^.]+$/,''),matching=drawings.filter(path=>path.replace(/\.kicad_[^.]+$/i,'')===stem);file=matching.find(path=>!isBoard(path))||matching[0]||(drawings.length===1?drawings[0]:null);}if(!file)throw Error('Open the schematic or PCB for this project before choosing BoM.');return send({type:'project',repository:request.headRepository,ref:request.head,file});})().then(reply=>{if(!reply?.ok)throw Error(reply?.error||'Could not read drawing parts.');const files=reply.result;if(!Array.isArray(files)||files.length>128)throw Error('Invalid drawing project.');const snapshot=KiCadDesignDiff.prepareProject(files),model=KiCadDesignModel.buildProject(files,null,snapshot);return{files,snapshot,model,warnings:files.map(f=>f.discoveryWarning).filter(Boolean)};}).catch(error=>{bomModelPromise=null;throw error;});const saved=await bomModelPromise,model=bomAssembly?KiCadDesignModel.buildProject(saved.files,bomAssembly.config,saved.snapshot):saved.model,variant=bomAssembly?.variant||'default';const applied=KiCadDesignModel.applyVariant(model,variant),resolved=globalThis.KiCadBomBrowser?.resolveDrawing?.(applied,saved.files,{rootFile:request.file,sheets:model.sheets.filter(sheet=>sheet.kind==='schematic'),snapshot:saved.snapshot})||{objects:applied,warnings:[]};return{objects:resolved.objects,variant,variantName:model.variants.find(v=>v.id===variant)?.name||'Saved design',warnings:[...saved.warnings,...model.warnings,...resolved.warnings]};}
   async function bomCompanion(mode,chosen){const board=mode!=='schematic',result=await inventory(),choices=result.files.map(f=>f.path).filter(file=>isDrawing(file)&&isBoard(file)===board),stem=entryFile.replace(/\.kicad_[^.]+$/i,''),matching=choices.filter(file=>file.replace(/\.kicad_[^.]+$/i,'')===stem),file=chosen&&choices.includes(chosen)?chosen:isBoard(entryFile)===board&&isDrawing(entryFile)?entryFile:matching.length===1?matching[0]:choices.length===1?choices[0]:null;if(!file)return{choices,message:choices.length?'Choose the companion drawing for this project.':'No matching saved drawing was found.'};bomMode=mode;return{file,url:chrome.runtime.getURL(board?'pcb-viewer.html':'schematic-viewer.html')+'?'+new URLSearchParams({repository:request.headRepository,ref:request.head,file,workspace:'1',headerViews:'1',headerSearch:'1',bomCompanion:'1',viewSession,...providerContext})};}
   function selectBomPart(part){const api=globalThis.KiCadPairedReview,selection=part?.kind==='group'?{kind:'group',items:part.items.map(item=>api?.partSelection(item)).filter(Boolean).slice(0,200)}:api?.partSelection(part);if(!selection||!api?.validSelection(selection))return;bomSelection=selection;for(const [side,frame]of frames)if(side!=='base')frame.contentWindow?.postMessage({type:'kicad-review:command',command:'highlight-related',selection},origin());}
-  let pendingViewAction=params.get('view')==='3d'?'3d':null,workspaceSearch=null,pendingSearchResult=null;
+  const drawingSources=new Map(),drawingMembers=new Map();
+  function readDrawing(file){
+    if(!drawingSources.has(file)){
+      const pending=send({type:'project',repository:request.headRepository,ref:request.head,file}).then(reply=>{
+        if(!reply?.ok||!Array.isArray(reply.result)||!reply.result.some(source=>source.path===file))throw Error(reply?.error||'Saved project drawing unavailable.');
+        drawingMembers.set(file,new Set(reply.result.map(source=>source.path)));
+        return reply.result;
+      }).catch(error=>{if(drawingSources.get(file)===pending)drawingSources.delete(file);throw error;});
+      while(drawingSources.size>=4){const oldest=drawingSources.keys().next().value;drawingSources.delete(oldest);drawingMembers.delete(oldest);}
+      drawingSources.set(file,pending);
+    }
+    return drawingSources.get(file);
+  }
+  globalThis.KiCadWorkspaceDrawingSource=(child,repository,ref,file)=>{
+    if(repository!==request.headRepository||ref!==request.head||
+        !['head','pair','bom'].some(side=>{
+          const frame=frames.get(side);
+          return frame?.contentWindow===child&&new URL(frame.src).searchParams.get('file')===file;
+        }))return null;
+    return readDrawing(file);
+  };
+  let drawingMode=null,pendingViewAction=params.get('view')==='3d'?'3d':null,workspaceSearch=null,pendingSearchResult=null;
   function dispatchWorkspaceView(){
     if(!pendingViewAction)return;
     const board=(pendingViewAction==='bom'&&isBoard(request.file))||['layout','3d','draftsman'].includes(pendingViewAction)||(pendingViewAction==='simulation'&&activeWorkspace==='layout');
     const side=[...frames.keys()].find(side=>side!=='base'&&views.has(side)&&isBoard(views.get(side).file)===board);
-    if(!side)return;const mode=pendingViewAction;pendingViewAction=null;
-    frames.get(side).contentWindow?.postMessage({type:'kicad-review:command',command:'workspace-view',mode},origin());
+    if(!side)return;const mode=pendingViewAction;pendingViewAction=null;drawingMode=mode;
+    const frame=frames.get(side);
+    const selection=crossLinked&&['schematic','layout','3d'].includes(mode)&&workspaceSelection?.frame!==frame?workspaceSelection?.selection:undefined;
+    frame.contentWindow?.postMessage({type:'kicad-review:command',command:'workspace-view',mode,...(selection?{selection}:{})},origin());
     for(const [key,button]of tabs){button.classList.toggle('active',key===mode);button.setAttribute('aria-pressed',String(key===mode));}
   }
-  async function openWorkspaceView(name){if(name==='bom'){tabEpoch++;pairEpoch++;pendingViewAction=null;if(activeWorkspace!=='bom')bomReturnWorkspace=activeWorkspace;markWorkspace('bom');$('changesPanel').hidden=true;if(!bomBrowser&&globalThis.KiCadBomBrowser)bomBrowser=KiCadBomBrowser.mount({document,holder:$('bomWorkspace'),scope:{repository:request.headRepository,ref:request.head,file:entryFile,...providerContext},inventory:()=>inventory(()=>bomBrowser.show()),url:page=>chrome.runtime.getURL(page),loadDrawing:loadBomDrawing,companion:bomCompanion,onSelect:selectBomPart,onFrame:frame=>{frames.delete('bom');views.delete('bom');if(frame)frames.set('bom',frame);},onDrawing:async()=>{const mode=isBoard(request.file)?'layout':'schematic';await openWorkspaceView(mode);pendingViewAction='bom';dispatchWorkspaceView();}});await bomBrowser?.show();return;}if(name==='history'){mountPicker();if(revisionPicker?.openGraph)return revisionPicker.openGraph();status('Open a repository drawing to browse history.');return;}if(name==='project'&&params.get('projectShell')==='1'&&parent!==globalThis){parent.postMessage({type:'kicad-review:show-project-settings'},location.origin);return;}pendingViewAction=name==='project'?null:name;await chooseWorkspace(['3d','draftsman'].includes(name)?'layout':name==='simulation'?(isBoard(request.file)?'layout':'schematic'):name);dispatchWorkspaceView();}
+  async function openWorkspaceView(name){if(name==='bom'){tabEpoch++;pairEpoch++;pendingViewAction=null;if(activeWorkspace!=='bom')bomReturnWorkspace=activeWorkspace;markWorkspace('bom');$('changesPanel').hidden=true;if(!bomBrowser&&globalThis.KiCadBomBrowser)bomBrowser=KiCadBomBrowser.mount({document,holder:$('bomWorkspace'),scope:{repository:request.headRepository,ref:request.head,file:entryFile,...providerContext},inventory:()=>inventory(()=>bomBrowser.show()),url:page=>chrome.runtime.getURL(page),loadDrawing:loadBomDrawing,companion:bomCompanion,onSelect:selectBomPart,onFrame:frame=>{frames.delete('bom');views.delete('bom');if(frame)frames.set('bom',frame);},onDrawing:async()=>{const mode=isBoard(request.file)?'layout':'schematic';await openWorkspaceView(mode);pendingViewAction='bom';dispatchWorkspaceView();}});await bomBrowser?.show();return;}if(name==='history'){
+    mountPicker();
+    if(revisionPicker?.openGraph){
+      if(!$('historyWorkspace').hidden){revisionPicker.closeGraph();return;}
+      return revisionPicker.openGraph();
+    }
+    status('Open a repository drawing to browse history.');return;
+  }if(name==='project'&&params.get('projectShell')==='1'&&parent!==globalThis){parent.postMessage({type:'kicad-review:show-project-settings'},location.origin);return;}pendingViewAction=name==='project'?null:name;await chooseWorkspace(['3d','draftsman'].includes(name)?'layout':name==='simulation'?(isBoard(request.file)?'layout':'schematic'):name);dispatchWorkspaceView();}
   function dispatchSearchResult(){
     if(!pendingSearchResult)return;
-    const side=[...frames.keys()].find(side=>side!=='base'&&views.has(side)&&(pendingSearchResult.action==='sheet-tree'?!isBoard(views.get(side).file):!pendingSearchResult.path||views.get(side).file===pendingSearchResult.path));
-    if(!side)return;const result=pendingSearchResult;pendingSearchResult=null;
+    const {side,result}=pendingSearchResult;
+    if(!views.has(side)||!frames.has(side))return;
+    pendingSearchResult=null;
     frames.get(side).contentWindow?.postMessage({type:'kicad-review:command',command:'search-result',result},origin());
   }
-  async function openSearchResult(result){if(result?.kind==='command'&&result.action==='sheet-tree'){pendingSearchResult=result;await openWorkspaceView('schematic');dispatchSearchResult();return;}
+  function hasLoadedSheet(side,path){
+    return (side===latestHierarchySide&&latestHierarchy?.ref===request.head&&
+      latestHierarchy.hierarchy?.sheets?.some(sheet=>sheet.path===path))||
+      drawingMembers.get(frameFile(side))?.has(path);
+  }
+  function frameFile(side){const frame=frames.get(side);return frame?new URL(frame.src).searchParams.get('file'):null;}
+  async function openSearchResult(result){
+    if(result?.kind==='command'&&result.action==='sheet-tree'){
+      await openWorkspaceView('schematic');
+      const side=['head','pair'].find(side=>frameFile(side)&&!isBoard(frameFile(side)));
+      if(side){pendingSearchResult={side,result};dispatchSearchResult();}
+      return;
+    }
     if(!globalThis.KiCadGitHub.filePath(result.path))throw Error('Invalid search result path.');
     if(result.kind==='draft'){
       const file=result.sourceFile||(isDrawing(result.path)?result.path:null);if(!file||!data.validPath(file))throw Error('Open the exact source PCB for this Draftsman document first.');
       markWorkspace('draftsman');comparison.hidden=true;$('projectWorkspace').hidden=true;
       const frame=element('iframe');frame.title='Draftsman source '+file;frame.src=chrome.runtime.getURL(isBoard(file)?'pcb-viewer.html':'schematic-viewer.html')+'?'+new URLSearchParams({repository:request.headRepository,ref:request.head,file,workspace:'1',headerViews:'1',headerSearch:'1',...providerContext});
-      $('searchWorkspace').replaceChildren(frame);$('searchWorkspace').hidden=false;frames.set('search',frame);pendingSearchResult={...result,path:file};return;
+      $('searchWorkspace').replaceChildren(frame);$('searchWorkspace').hidden=false;frames.set('search',frame);pendingSearchResult={side:'search',result:{...result,path:file}};return;
     }
     if(isDrawing(result.path)){
-      if(result.path===request.file||result.path===pairedFile){displayDrawing(result.path);pendingSearchResult=result;dispatchSearchResult();if(result.view==='3d')await openWorkspaceView('3d');return;}
-      const query=new URLSearchParams({repository:request.headRepository,head:request.head,file:result.path,viewSession,...providerContext,...(params.get('projectShell')==='1'?{projectShell:'1'}:{})});
-      if(result.uuid)query.set('focusUuid',result.uuid);
-      if(result.netName)query.set('focusNet',result.netName);
-      if(Number.isFinite(result.position?.x)&&Number.isFinite(result.position?.y)){query.set('focusX',result.position.x);query.set('focusY',result.position.y);}
-      if(result.view==='3d')query.set('view','3d');location.assign(chrome.runtime.getURL('browser-viewer.html')+'?'+query);return;
+      tabEpoch++;pairEpoch++;pendingViewAction=null;
+      const board=isBoard(result.path),mode=board?'layout':'schematic';
+      let side=['head','pair'].find(side=>frameFile(side)===result.path||!board&&hasLoadedSheet(side,result.path));
+      if(!side){
+        let entry=result.path;
+        if(!board){
+          for(const [file,members]of drawingMembers)if(!isBoard(file)&&members.has(result.path)){entry=file;break;}
+        }
+        const sameType=isDrawing(request.file)&&isBoard(request.file)===board;
+        if(sameType)throw Error('This sheet is unavailable in the open schematic.');
+        displayDrawing(entry);
+        side=entry===request.file?'head':'pair';
+      }else if(activeWorkspace!==mode){
+        markWorkspace(mode);
+        if(pairedFile)pairView(side==='head'?'main':'companion');else setMode('head');
+        toolbar.hidden=true;
+      }
+      if(result.view==='3d'||board&&drawingMode==='3d'){
+        drawingMode='3d';
+        for(const [key,button]of tabs){button.classList.toggle('active',key==='3d');button.setAttribute('aria-pressed',String(key==='3d'));}
+      }else drawingMode=mode;
+      pendingSearchResult={side,result};
+      dispatchSearchResult();
+      return;
     }
     const page=/\.pdf$/i.test(result.path)?'pdf-viewer.html':result.kind==='report'&&!/\.kicad_pro$/i.test(result.path)?'analysis-viewer.html':'project-viewer.html';
     markWorkspace(result.kind==='report'&&!/\.kicad_pro$/i.test(result.path)?'simulation':'project');comparison.hidden=true;$('projectWorkspace').hidden=true;
@@ -106,12 +168,29 @@
   function mountWorkspaceSearch(){
     if(workspaceSearch||!globalThis.KiCadWorkspaceSearch)return;
     const scope={repository:request.headRepository,ref:request.head,file:entryFile,provider,host:providerContext.host||'https://github.com'};
-    workspaceSearch=KiCadWorkspaceSearch.mount({document,host:globalThis,holder:$('workspaceSearchHost'),scope,request:async(type,extra)=>{const reply=await send({type,...scope,...extra});if(!reply?.ok)throw Error(reply?.error||'Project search unavailable.');return reply.result;},getDrafts:()=>KiCadWorkspaceSearch.scopedDrafts(localStorage,scope),open:openSearchResult});
+    workspaceSearch=KiCadWorkspaceSearch.mount({document,host:globalThis,holder:$('workspaceSearchHost'),scope,
+      project:{loadDrawing:readDrawing,loadInventory:()=>searchInventory(),openDrawings:[pairedFile||params.get('pairedFile')].filter(isDrawing)},
+      activePath:()=>activeWorkspace==='schematic'?latestHierarchy?.hierarchy?.active:activeWorkspace==='layout'?(isBoard(request.file)?request.file:pairedFile):entryFile,request:async(type,extra)=>{const reply=await send({type,...scope,...extra});if(!reply?.ok)throw Error(reply?.error||'Project search unavailable.');return reply.result;},getDrafts:()=>KiCadWorkspaceSearch.scopedDrafts(localStorage,scope),open:openSearchResult});
     addEventListener('pagehide',()=>workspaceSearch?.destroy(),{once:true});
   }
+  async function searchInventory(){
+    // Share the metadata read without showing a second loading dialog over the drawing.
+    if(!inventoryPromise)inventoryPromise=send({type:'project-inventory',repository:request.headRepository,ref:request.head,file:entryFile}).then(reply=>{
+      if(!reply?.ok||!Array.isArray(reply.result?.files)||reply.result.files.length>20000)throw Error(reply?.error||'Related file listing unavailable.');
+      return reply.result;
+    }).catch(error=>{inventoryPromise=null;throw error;});
+    return inventoryPromise;
+  }
   function sourceFor(file){if(!validEntry(file))return;const removed=request.status==='removed'&&file===request.file;const repo=removed?request.repository:request.headRepository,ref=removed?request.base:request.head;$('sourceLink').href=`${provider==='gitlab'?providerContext.host:'https://github.com'}/${repo}/${provider==='gitlab'?'-/blob':'blob'}/${encodeURIComponent(ref)}/${file.split('/').map(encodeURIComponent).join('/')}`;}
-  function markWorkspace(name){activeWorkspace=name;workspaceTitle(name);const split=$('splitView');if(split){split.setAttribute('aria-pressed',String(name==='split'));split.textContent=name==='split'?'Unsplit':'Split view';split.title=name==='split'?'Return to one drawing':'Split schematic and layout';} for(const [key,button]of tabs){button.classList.toggle('active',key===name);button.setAttribute('aria-pressed',String(key===name));}if($('searchWorkspace'))$('searchWorkspace').hidden=true;frames.delete('search');views.delete('search');comparison.hidden=['project','history','bom'].includes(name);if($('historyWorkspace'))$('historyWorkspace').hidden=name!=='history';if($('bomWorkspace'))$('bomWorkspace').hidden=name!=='bom';if(name==='history')$('changesPanel').hidden=true;$('projectWorkspace').hidden=name!=='project';toolbar.hidden=true;revealWorkspaceTab();sourceFor(name==='project'?entryFile:name==='schematic'&&data.validPath(latestHierarchy?.hierarchy?.active)?latestHierarchy.hierarchy.active:name==='layout'?(isBoard(request.file)?request.file:pairedFile):request.file);}
-  function mountPicker(){if(pickerMounted||!isDrawing(request.file)||!globalThis.KiCadRevisionPicker)return;pickerMounted=true;revisionPicker=globalThis.KiCadRevisionPicker.mount({holder:$('projectTools'),workspaceHolder:$('historyWorkspace'),onOpenGraph:()=>{if(activeWorkspace!=='history')historyReturnWorkspace=activeWorkspace;markWorkspace('history');},onCloseGraph:()=>markWorkspace(historyReturnWorkspace||'schematic'),request:{...request,pullNumber:undefined},openRevision:source=>location.assign(chrome.runtime.getURL('project-launcher.html')+'?'+new URLSearchParams({source})),getCurrentRef:()=>views.get('head')?.ref||request.head,send:message=>send(message),navigateComparison:query=>location.assign(`${chrome.runtime.getURL(globalThis.KiCadVSCodeContext||globalThis.KiCadAndroidRuntime?'browser-viewer.html':'comparison-viewer.html')}?${query}`),navigate:query=>location.assign(`${chrome.runtime.getURL('browser-viewer.html')}?${query}`)});}
+  function markWorkspace(name){if(!$('historyWorkspace').hidden)revisionPicker?.closeGraph?.({restoreFocus:false});activeWorkspace=name;workspaceTitle(name);const split=$('splitView');if(split){split.setAttribute('aria-pressed',String(name==='split'));split.textContent=name==='split'?'Unsplit':'Split view';split.title=name==='split'?'Return to one drawing':'Split schematic and layout';} for(const [key,button]of tabs){button.classList.toggle('active',key===name);button.setAttribute('aria-pressed',String(key===name));}if($('searchWorkspace'))$('searchWorkspace').hidden=true;frames.delete('search');views.delete('search');comparison.hidden=['project','bom'].includes(name);if($('bomWorkspace'))$('bomWorkspace').hidden=name!=='bom';$('projectWorkspace').hidden=name!=='project';toolbar.hidden=true;revealWorkspaceTab();sourceFor(name==='project'?entryFile:name==='schematic'&&data.validPath(latestHierarchy?.hierarchy?.active)?latestHierarchy.hierarchy.active:name==='layout'?(isBoard(request.file)?request.file:pairedFile):request.file);}
+  function setHistoryOpen(open){
+    $('historyWorkspace').hidden=!open;
+    const trigger=tabs.get('history');
+    trigger?.setAttribute('aria-expanded',String(open));
+    trigger?.setAttribute('aria-pressed',String(open));
+    trigger?.classList.toggle('active',open);
+  }
+  function mountPicker(){if(pickerMounted||!isDrawing(request.file)||!globalThis.KiCadRevisionPicker)return;pickerMounted=true;revisionPicker=globalThis.KiCadRevisionPicker.mount({holder:$('projectTools'),workspaceHolder:$('historyWorkspace'),preloadHistory:true,graphTrigger:()=>tabs.get('history'),onOpenGraph:()=>setHistoryOpen(true),onCloseGraph:()=>setHistoryOpen(false),request:{...request,pullNumber:undefined},openRevision:source=>location.assign(chrome.runtime.getURL('project-launcher.html')+'?'+new URLSearchParams({source})),getCurrentRef:()=>views.get('head')?.ref||request.head,send:message=>send(message),navigateComparison:query=>location.assign(`${chrome.runtime.getURL(globalThis.KiCadVSCodeContext||globalThis.KiCadAndroidRuntime?'browser-viewer.html':'comparison-viewer.html')}?${query}`),navigate:query=>location.assign(`${chrome.runtime.getURL('browser-viewer.html')}?${query}`)});}
   function projectWorkspace(){
     if(!$('projectWorkspace').children.length){const frame=element('iframe');frame.title='Project settings and constraints';frame.src=chrome.runtime.getURL('project-viewer.html')+'?'+new URLSearchParams({repository:request.headRepository,ref:request.head,file:entryFile,projectOnly:'1',...providerContext});$('projectWorkspace').append(frame);frames.set('project',frame);frame.addEventListener('load',()=>{if(workspaceTheme)frame.contentWindow.postMessage({type:'kicad-review:command',command:'set-theme',...workspaceTheme},origin());});}
     markWorkspace('project');$('changesPanel').hidden=true;
@@ -143,15 +222,28 @@
   }
   function revealWorkspaceTab(){tabs.get(activeWorkspace)?.scrollIntoView?.({block:'nearest',inline:'nearest'});}
   addEventListener('resize',revealWorkspaceTab);
-  function workspaceTabs(){const menu=element('details'),summary=element('summary','More'),panel=element('div');menu.id='workspaceHelpers';summary.setAttribute('aria-label','More workspace tools');menu.append(summary,panel);workspaceHelpers=panel;$('projectTools').append(menu);addEventListener('pointerdown',event=>{if(menu.open&&!menu.contains?.(event.target))menu.open=false;});addEventListener('keydown',event=>{if(event.key==='Escape'&&menu.open){menu.open=false;summary.focus?.();}});if(globalThis.KiCadReviewWorkspace?.mountNavigationHelp){const content=element('details');content.id='shortcutHelp';globalThis.KiCadReviewWorkspace.mountNavigationHelp(document,$('projectTools'),content);}if(!globalThis.KiCadVSCodeContext&&!globalThis.KiCadAndroidRuntime&&['chrome-extension:','moz-extension:'].includes(location.protocol)){const home=element('button');home.type='button';home.id='openProjectDashboard';home.title='Project dashboard and recently accessed projects';home.setAttribute('aria-label','Project dashboard');if(globalThis.KiCadUIIcons)home.append(KiCadUIIcons.icon('dashboard'));home.append(element('span','Projects'));home.addEventListener('click',()=>globalThis.open(chrome.runtime.getURL('dashboard.html'),'_blank','noopener'));$('workspaceTabs').append(home);}for(const [name,label,icon]of [['project','Project','folder'],['schematic','Schematic','sheet'],['layout','Layout','board'],['3d','3D','cube'],['bom','BoM','assembly'],['draftsman','Draftsman','draftsman'],['simulation','Simulation','analytics'],['history','History','repository']]){const button=element('button');button.type='button';button.title=label;button.setAttribute('aria-label',label+' view');if(globalThis.KiCadUIIcons)button.append(KiCadUIIcons.icon(icon));button.append(element('span',label));button.addEventListener('click',()=>{menu.open=false;openWorkspaceView(name);});tabs.set(name,button);if(['project','draftsman'].includes(name)){panel.append(button);}else $('workspaceTabs').append(button);}markWorkspace(activeWorkspace);}
+  addEventListener('keydown',event=>{
+    if(event.key.toLowerCase()!=='m'||event.shiftKey||event.ctrlKey||event.altKey||event.metaKey||event.defaultPrevented||event.repeat||event.isComposing)return;
+    if(!['schematic','split'].includes(activeWorkspace)||!$('historyWorkspace').hidden)return;
+    if(event.composedPath().some(node=>node?.isContentEditable||/^(INPUT|TEXTAREA|SELECT)$/.test(node?.tagName||'')))return;
+    const side=['head','pair'].find(side=>views.has(side)&&frameFile(side)&&!isBoard(frameFile(side)));
+    if(!side)return;
+    event.preventDefault();
+    frames.get(side)?.contentWindow?.postMessage({type:'kicad-review:command',command:'sheet-map-shortcut'},origin());
+  });
+  function workspaceTabs(){const menu=element('details'),summary=element('summary','More'),panel=element('div');menu.id='workspaceHelpers';summary.setAttribute('aria-label','More workspace tools');menu.append(summary,panel);workspaceHelpers=panel;$('projectTools').append(menu);addEventListener('pointerdown',event=>{if(menu.open&&!menu.contains?.(event.target))menu.open=false;});addEventListener('keydown',event=>{if(event.key==='Escape'&&menu.open){menu.open=false;summary.focus?.();}});if(globalThis.KiCadReviewWorkspace?.mountNavigationHelp){const content=element('details');content.id='shortcutHelp';globalThis.KiCadReviewWorkspace.mountNavigationHelp(document,$('projectTools'),content);}if(!globalThis.KiCadVSCodeContext&&!globalThis.KiCadAndroidRuntime&&['chrome-extension:','moz-extension:'].includes(location.protocol)){const home=element('button');home.type='button';home.id='openProjectDashboard';home.title='Projects in this repository';home.setAttribute('aria-label','Projects in this repository');if(globalThis.KiCadUIIcons)home.append(KiCadUIIcons.icon('dashboard'));home.append(element('span','Projects'));home.addEventListener('click',()=>{
+    const url=globalThis.KiCadProjectLaunch?.repositoryProjectsURL({repository:request.headRepository,ref:views.get('head')?.ref||request.head,file:entryFile,...providerContext},p=>chrome.runtime.getURL(p));
+    globalThis.open(url||chrome.runtime.getURL('dashboard.html'),'_blank','noopener');
+  });$('workspaceTabs').append(home);}for(const [name,label,icon]of [['project','Project','folder'],['schematic','Schematic','sheet'],['layout','Layout','board'],['3d','3D','cube'],['bom','BoM','assembly'],['draftsman','Draftsman','draftsman'],['simulation','Simulation','analytics'],['history','History','repository']]){const button=element('button');button.type='button';button.title=label;button.setAttribute('aria-label',label+' view');if(name==='history'){button.setAttribute('aria-expanded','false');button.setAttribute('aria-controls','historyWorkspace');button.setAttribute('aria-haspopup','dialog');}if(globalThis.KiCadUIIcons)button.append(KiCadUIIcons.icon(icon));button.append(element('span',label));button.addEventListener('click',()=>{menu.open=false;openWorkspaceView(name);});tabs.set(name,button);if(['project','draftsman'].includes(name)){panel.append(button);}else $('workspaceTabs').append(button);}markWorkspace(activeWorkspace);}
   function projectControl(text,handler){const button=element('button',text);button.type='button';button.addEventListener('click',event=>{if($('workspaceHelpers'))$('workspaceHelpers').open=false;handler(event);});if(workspaceHelpers&&!['Split view','Theme'].includes(text)){workspaceHelpers.append(button);}else $('projectTools').append(button);return button;}
   function companionValid(path){return data.validPath(path)&&/\.kicad_pcb$/i.test(path)!==/\.kicad_pcb$/i.test(request.file);}
   function pairView(mode='both'){
     toolbar.hidden=Boolean(pairedFile);comparison.classList.toggle('single',!pairedFile);comparison.classList.toggle('paired',Boolean(pairedFile));comparison.classList.toggle('focus-pane',Boolean(pairedFile)&&mode!=='both');
     $('headKind').textContent=/\.kicad_pcb$/i.test(request.file)?'PCB LAYOUT':'SCHEMATIC';$('basePanel').hidden=true;$('headPanel').hidden=mode==='companion';$('pairPanel').hidden=!pairedFile||mode==='main';$('changesPanel').hidden=true;
   }
-  function openPair(path){
+  function openPair(path,includeInSearch=false){
     if(!companionValid(path)){status('Choose a schematic and a PCB from the same repository revision.',true);return;}
+    if(includeInSearch)workspaceSearch?.setCompanion?.(path);
     pairEpoch++;pairedFile=path;linked=false;manualMode=true;showProject('pair',request.headRepository,request.head,path);$('pairRef').textContent=request.head.slice(0,12);$('pairKind').textContent=/\.kicad_pcb$/i.test(path)?'PCB LAYOUT':'SCHEMATIC';markWorkspace('split');pairView();$('pairControls').hidden=false;$('splitOptions').hidden=false;$('pairChooser').hidden=true;status('Cross-highlight uses saved symbol identities, unique references and unambiguous saved sheet-qualified net names. Cameras remain independent.');
   }
   function pairTools(){
@@ -164,14 +256,18 @@
       }catch(error){if(epoch===pairEpoch)status(error.message+' Enter a repository-relative companion path.',true);}finally{split.disabled=false;}
     });
     split.id='splitView';split.setAttribute('aria-pressed','false');
-    const chooser=element('span');chooser.id='pairChooser';chooser.hidden=true;const select=element('select');select.id='companionSelect';select.setAttribute('aria-label','Companion drawing');select.addEventListener('change',()=>{if(select.value){tabEpoch++;pairEpoch++;if(chooserMode==='single')displayDrawing(select.value);else openPair(select.value);$('pairChooser').hidden=true;}});const path=element('input');path.id='companionPath';path.placeholder='Repository-relative companion path';path.setAttribute('aria-label','Companion path');const open=element('button','Open pair');open.addEventListener('click',()=>{tabEpoch++;pairEpoch++;const file=path.value.trim()||select.value;if(chooserMode==='single'){if(isDrawing(file)){displayDrawing(file);$('pairChooser').hidden=true;}else status('Enter a valid repository-relative drawing path.',true);}else openPair(file);});const close=element('button','×');close.type='button';close.id='closePairChooser';close.title='Close drawing chooser';close.setAttribute('aria-label','Close drawing chooser');const dismissChooser=()=>{tabEpoch++;pairEpoch++;chooser.hidden=true;split.disabled=false;split.focus?.();};close.addEventListener('click',dismissChooser);chooser.append(select,path,open,close);$('projectTools').append(chooser);
+    const chooser=element('span');chooser.id='pairChooser';chooser.hidden=true;const select=element('select');select.id='companionSelect';select.setAttribute('aria-label','Companion drawing');select.addEventListener('change',()=>{if(select.value){tabEpoch++;pairEpoch++;if(chooserMode==='single')displayDrawing(select.value);else openPair(select.value,true);$('pairChooser').hidden=true;}});const path=element('input');path.id='companionPath';path.placeholder='Repository-relative companion path';path.setAttribute('aria-label','Companion path');const open=element('button','Open pair');open.addEventListener('click',()=>{tabEpoch++;pairEpoch++;const file=path.value.trim()||select.value;if(chooserMode==='single'){if(isDrawing(file)){displayDrawing(file);$('pairChooser').hidden=true;}else status('Enter a valid repository-relative drawing path.',true);}else openPair(file,true);});const close=element('button','×');close.type='button';close.id='closePairChooser';close.title='Close drawing chooser';close.setAttribute('aria-label','Close drawing chooser');const dismissChooser=()=>{tabEpoch++;pairEpoch++;chooser.hidden=true;split.disabled=false;split.focus?.();};close.addEventListener('click',dismissChooser);chooser.append(select,path,open,close);$('projectTools').append(chooser);
     addEventListener('pointerdown',event=>{if(!chooser.hidden&&!chooser.contains?.(event.target)&&!event.composedPath?.().includes(chooser)&&event.target!==split){tabEpoch++;pairEpoch++;chooser.hidden=true;split.disabled=false;}});
     addEventListener('keydown',event=>{if(event.key==='Escape'&&!chooser.hidden){event.preventDefault?.();dismissChooser();}});
     const detail=element('details');detail.className='split-options';detail.id='splitOptions';detail.hidden=true;detail.append(element('summary','Split options'));const controls=element('span');controls.id='pairControls';controls.hidden=true;detail.append(controls);
     const add=(text,handler)=>{const node=element('button',text);node.type='button';node.addEventListener('click',handler);controls.append(node);return node;};
     const sync=projectControl('Cross-select',()=>{crossSelectionState(!crossLinked);sendCommand('detach-sync',{enabled:crossLinked});});sync.id='crossSelectToggle';sync.setAttribute('aria-pressed','true');sync.title='Toggle cross-selection across schematic, layout and detached views';sync.setAttribute('data-icon','link');
     add('Both panes',()=>pairView());add(/\.kicad_pcb$/i.test(request.file)?'PCB only':'Schematic only',()=>pairView('main'));add(/\.kicad_pcb$/i.test(request.file)?'Schematic only':'PCB only',()=>pairView('companion'));const stack=add('Stack panes',()=>{comparison.classList.toggle('vertical');});
-    function closeSplit(){tabEpoch++;pairEpoch++;pairedFile=null;frames.delete('pair');views.delete('pair');pendingSelections.delete('pair');$('pairDrawing').replaceChildren();$('pairPanel').hidden=true;controls.hidden=true;$('splitOptions').hidden=true;markWorkspace(isBoard(request.file)?'layout':'schematic');comparison.classList.toggle('paired',false);comparison.classList.toggle('focus-pane',false);comparison.classList.toggle('vertical',false);toolbar.hidden=true;$('headKind').textContent='HEAD';setMode('head');status('');}(workspaceHelpers||$('projectTools')).append(detail);
+    function closeSplit(){
+      tabEpoch++;pairEpoch++;
+      markWorkspace(isBoard(request.file)?'layout':'schematic');
+      pairView('main');status('');
+    }(workspaceHelpers||$('projectTools')).append(detail);
     const theme=projectControl('Theme',()=>{const next=(workspaceTheme?.drawingTheme||document.body?.dataset?.drawingTheme||'dark')==='dark'?'light':'dark';applyWorkspaceTheme({uiTheme:next,drawingTheme:next});});themeControl=theme;theme.id='workspaceTheme';theme.setAttribute('data-icon','theme');theme.title='Toggle light / dark in all open panes';theme.setAttribute('aria-pressed',String((workspaceTheme?.drawingTheme||'dark')==='dark'));
     projectControl('Pop out',async()=>{try{const reply=await send({type:'open-viewer-window',repository:request.headRepository,ref:request.head,file:request.file,...(pairedFile?{pairedFile}:{})});if(!reply?.ok)throw new Error(reply?.error||'Could not open viewer window.');}catch(error){status(error.message,true);}});
     projectControl('Fit panes',()=>sendCommand('fit-drawing'));
@@ -286,11 +382,13 @@
       try{const raw=JSON.stringify(message.config??{schemaVersion:1,variants:[]});if(raw.length>1024*1024)return;const config=KiCadDesignModel.parseVariantConfig(raw,'variants.json');if(message.variant!=='default'&&!config.variants.some(v=>v.id===message.variant))return;if(!views.has(side)&&bomAssembly)return;const next={variant:message.variant,config};if(JSON.stringify(next)===JSON.stringify(bomAssembly))return;bomAssembly=next;for(const [target,frame]of frames)if(target!==side&&target!=='base'&&views.has(target))frame.contentWindow?.postMessage({type:'kicad-review:command',command:'assembly-variant',repository:request.headRepository,ref:request.head,file:new URL(frame.src).searchParams.get('file'),...next},origin());const epoch=++bomAssemblyEpoch;if(bomBrowser)loadBomDrawing().then(result=>{if(epoch===bomAssemblyEpoch)bomBrowser?.refreshDrawing?.(result);}).catch(error=>status('BoM variant could not be applied: '+error.message,true));}catch{}return;
     }
     if(event.data?.type==='kicad-review:focus-project-search'){workspaceSearch?.input.focus();workspaceSearch?.input.select?.();return;}
-    if(event.data?.type==='kicad-review:hierarchy'&&['head','pair'].includes(side)&&!isBoard(new URL(frames.get(side).src).searchParams.get('file'))){latestHierarchy={...event.data,repository:request.headRepository,ref:request.head};if(activeWorkspace==='schematic')sourceFor(latestHierarchy.hierarchy?.active);parent.postMessage(latestHierarchy,origin());$('projectWorkspace').children[0]?.contentWindow?.postMessage(latestHierarchy,origin());return;}
+    if(event.data?.type==='kicad-review:hierarchy'&&['head','pair'].includes(side)&&!isBoard(new URL(frames.get(side).src).searchParams.get('file'))){latestHierarchySide=side;latestHierarchy={...event.data,repository:request.headRepository,ref:request.head};if(activeWorkspace==='schematic')sourceFor(latestHierarchy.hierarchy?.active);parent.postMessage(latestHierarchy,origin());$('projectWorkspace').children[0]?.contentWindow?.postMessage(latestHierarchy,origin());return;}
     if(event.data?.type==='kicad-review:comments-changed'){
       for(const [name,frame] of frames)if(name!==side)frame.contentWindow?.postMessage({type:'kicad-review:command',command:'refresh-comments'},origin());return;
     }
-    if(!pairedFile||!crossLinked||!['head','pair'].includes(side)||event.data?.type!=='kicad-review:selection'||!globalThis.KiCadPairedReview?.validSelection(event.data.selection))return;
+    if(!crossLinked||!['head','pair'].includes(side)||event.data?.type!=='kicad-review:selection'||!globalThis.KiCadPairedReview?.validSelection(event.data.selection))return;
+    workspaceSelection={frame:frames.get(side),selection:event.data.selection};
+    if(!pairedFile)return;
     const target=side==='head'?'pair':'head';
     if(!views.has(target)){pendingSelections.set(target,event.data.selection);return;}
     frames.get(target)?.contentWindow?.postMessage({type:'kicad-review:command',command:'highlight-related',selection:event.data.selection},origin());
@@ -443,10 +541,11 @@
     control("Full sheets", null, () => sendCommand("fit-page"));
     $("changeSearch").addEventListener("input", renderChanges);
     $("changeFilter").addEventListener("change", renderChanges);
+    mountWorkspaceSearch();
     if (request.base) showProject("base", request.status === "added" ? "" : request.repository, request.base, request.oldFile);
     if(isDrawing(request.file))showProject("head", request.status === "removed" ? "" : request.headRepository, request.head, request.file);
     status("");workspaceTabs();pairTools();if(!isDrawing(entryFile))projectWorkspace();
-    mountPicker();mountWorkspaceSearch();
+    mountPicker();
     if(request.base){const compare=projectControl(request.pullNumber?'Compare commits':'Comparison controls',()=>{comparison.hidden=false;$('projectWorkspace').hidden=true;toolbar.hidden=!toolbar.hidden;});compare.setAttribute('aria-controls','toolbar');}
   }
   start().catch(error=>{

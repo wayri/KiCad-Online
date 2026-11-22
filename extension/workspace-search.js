@@ -1,4 +1,4 @@
-/* Lazy, source-bound workspace search. Repository text is always inert data. */
+/* Source-bound workspace search. Repository text is always inert data. */
 ((root)=>{
   'use strict';
   const Search=root.KiCadProjectSearch||(typeof require==='function'?require('./project-search.js'):null);
@@ -6,13 +6,13 @@
   const Diff=root.KiCadDesignDiff||(typeof require==='function'?require('./design-diff.js'):null);
   const Draftsman=root.KiCadDraftsmanModel||(typeof require==='function'?require('./draftsman-model.js'):null);
   const MiB=1024*1024;
-  const LIMITS=Object.freeze({drawings:128,drawingBytes:8*MiB,sourceBytes:96*MiB,
+  const LIMITS=Object.freeze({drawings:128,drawingBytes:64*MiB,sourceBytes:96*MiB,
     inventory:20000,reports:12,reportBytes:MiB,reportTotalBytes:4*MiB,drafts:32,draftKeys:256,draftBytes:4*MiB,draftTotalBytes:8*MiB,
     jsonNodes:12000,records:50000,results:80,scopes:4,debounce:160});
   const caches=new Map();let nextId=0;
   const safePath=path=>typeof path==='string'&&path.length<=1000&&!path.startsWith('/')&&
     !/^[A-Za-z]:/.test(path)&&!/[\\\x00-\x1f\x7f]/.test(path)&&path.split('/').every(p=>p&&p!=='.'&&p!=='..');
-  const drawing=path=>/\.kicad_(sch|pcb)$/i.test(path);
+  const drawing=path=>/\.(?:kicad_(?:sch|pcb)|sch)$/i.test(path);
   const bytes=text=>new TextEncoder().encode(text).byteLength;
   const text=(value,max=500)=>String(value??'').slice(0,max);
   const normalizedScope=scope=>({repository:scope?.repository||'',ref:scope?.ref||'',provider:scope?.provider||'github',host:scope?.host||'https://github.com'});
@@ -68,15 +68,15 @@
     for(const file of (input.files||[]).slice(0,LIMITS.drawings)){
       if(!safePath(file?.path)||!drawing(file.path)||typeof file.content!=='string')continue;
       if(drawingPaths.has(file.path)){warnings.add(file.path+': duplicate drawing source omitted.');continue;}drawingPaths.add(file.path);
-      if(file.content.length>LIMITS.drawingBytes){warnings.add(file.path+': drawing exceeds 8 MiB and was omitted.');continue;}
+      if(file.content.length>LIMITS.drawingBytes){warnings.add(file.path+': drawing exceeds 64 MiB and was omitted.');continue;}
       const size=bytes(file.content);
-      if(size>LIMITS.drawingBytes){warnings.add(file.path+': drawing exceeds 8 MiB and was omitted.');continue;}
+      if(size>LIMITS.drawingBytes){warnings.add(file.path+': drawing exceeds 64 MiB and was omitted.');continue;}
       if(sourceBytes+size>LIMITS.sourceBytes){warnings.add('Drawing search reached its 96 MiB source budget.');break;}
       sourceBytes+=size;files.push(file);
     }
-    if((input.files||[]).length>LIMITS.drawings||input.totalDrawings>files.length)warnings.add(`Indexed ${files.length} of ${input.totalDrawings??input.files.length} drawings (maximum 128, 8 MiB each, 96 MiB total).`);
+    if((input.files||[]).length>LIMITS.drawings||input.totalDrawings>files.length)warnings.add(`Indexed ${files.length} of ${input.totalDrawings??input.files.length} drawings (maximum 128, 64 MiB each, 96 MiB total).`);
     let sheets=[];const netTables=new Map();
-    for(const file of files.filter(f=>/\.kicad_pcb$/i.test(f.path))){
+    for(const file of files.filter(f=>/\.kicad_pcb$/i.test(f.path)&&/\(net\s+\d+\s+"/.test(f.content))){
       try{
         const ast=(dependencies.diff||Diff).parse(file.content),table=new Map();
         for(const form of ast){if(Array.isArray(form)&&form[0]==='net'&&typeof form[2]?.quoted==='string')table.set(String(form[1]),form[2].quoted);}
@@ -168,10 +168,13 @@
     return ['sheet tree','sheet browser','sheet navigator','show sheet tree','open sheet tree','minimap','mini map','sheet map'].includes(key)?[{kind:'command',action:'sheet-tree',label:'Show sheet browser',detail:'Reopen the floating schematic sheet tree',path:''}]:[];
   }
   function searchRecords(index,query,options={}){
-    const result=(options.search||Search).search(index.index,query,{limit:LIMITS.results*4}),seen=new Set(),results=[];
+    const result=(options.search||Search).search(index.index,query,{limit:LIMITS.results*4,preferredPath:options.preferredPath}),seen=new Set(),results=[];
     for(const match of result.results){
       const record=match.object.workspaceResult,key=JSON.stringify([record.kind,record.path,record.id||record.uuid||record.reference||record.label]);
-      if(seen.has(key))continue;seen.add(key);results.push({...record,query,detail:match.snippets?.map(s=>s.text).join(' · ').slice(0,240)||record.detail});
+      if(seen.has(key))continue;
+      seen.add(key);
+      const snippets=[...new Set((match.snippets||[]).map(item=>item.text).filter(value=>value!==record.label))];
+      results.push({...record,query,detail:snippets.join(' · ').slice(0,240)||record.detail});
       if(results.length===(options.limit||LIMITS.results))break;
     }
     return {...result,results,total:results.length,truncated:result.truncated||seen.size>=LIMITS.results,warnings:index.warnings};
@@ -181,20 +184,12 @@
     if(reply?.ok===false)throw Error(reply.error||'Project read failed.');
     return reply?.ok===true?reply.result:reply;
   }
-  async function load(options){
-    const scope={...options.scope},warnings=[];let saved={},inventory={};
-    const checkSnapshot=(value,expected)=>{if(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(expected||'')&&value?.snapshotRef&&String(value.snapshotRef).toLowerCase()!==expected.toLowerCase())throw Error('Project response revision did not match the requested immutable snapshot.');};
-    try{saved=await read(options.request,'project-search-files',scope);if(!Array.isArray(saved?.files))throw Error('Invalid project drawing response.');checkSnapshot(saved,scope.ref);}
-    catch(error){saved={};warnings.push('Drawing content unavailable: '+text(error.message));}
-    let snapshotRef=saved.snapshotRef||scope.ref;
-    try{inventory=await read(options.request,'project-inventory',{...scope,ref:snapshotRef});if(!Array.isArray(inventory?.files))throw Error('Invalid project inventory.');checkSnapshot(inventory,snapshotRef);}
-    catch(error){inventory={};warnings.push('File inventory unavailable: '+text(error.message));}
-    if(!saved.files&&!inventory.files)throw Error(warnings.join(' '));
-    if(!saved.snapshotRef&&inventory.snapshotRef)snapshotRef=inventory.snapshotRef;
+  async function loadReports(options,scope,inventory,snapshotRef){
+    const warnings=[];
     const reports=[];let total=0,attempted=0;
     for(const item of (inventory.files||[]).slice(0,LIMITS.inventory)){
       const path=typeof item==='string'?item:item?.path;
-      if(!safePath(path)||!reportPath(path))continue;
+      if(!safePath(path)||!reportPath(path)&&!(options.project&&/\.(?:kicad_pro|pro)$/i.test(path)))continue;
       if(attempted>=LIMITS.reports){warnings.push('Saved report content is limited to 12 eligible files.');break;}
       if(Number.isFinite(item.size)&&(item.size>LIMITS.reportBytes||item.size+total>LIMITS.reportTotalBytes)){warnings.push(path+': report exceeds the saved-text byte budget.');continue;}
       attempted++;
@@ -208,30 +203,178 @@
         total+=size;reports.push({path,content:file.content});
       }catch(error){warnings.push(path+': '+text(error.message));}
     }
-    return buildRecords({...saved,inventory:inventory.files||[],reports,scope,snapshotRef,warnings:[...warnings,...warningsOf(saved),...warningsOf(inventory)]},options.dependencies);
+    return {reports,warnings};
+  }
+  const projectStem=path=>path.replace(/\.(?:kicad_(?:pro|sch|pcb)|pro|sch)$/i,'');
+  const folder=path=>path.split('/').slice(0,-1).join('/');
+  function relatedInventory(inventory,paths,anchors){
+    const supported=/\.(?:kicad_pro|pro|wbk|raw|csv|tsv|json|pdf|gbr|gerber|drl|kicad_wks|kicad_dru|kicad_sym|kicad_mod|step|stp|wrl|glb|svg|png|bmp|jpe?g)$/i;
+    const entries=inventory.slice(0,LIMITS.inventory);
+    const valid=entries.filter(item=>safePath(item?.path));
+    const projectFile=/\.(?:kicad_pro|pro)$/i;
+    const stems=new Set(anchors.map(projectStem));
+    const ownDirectories=new Set(),otherProjects=new Map();
+    for(const {path}of valid){
+      if(!projectFile.test(path))continue;
+      const directory=folder(path),stem=projectStem(path);
+      if(stems.has(stem))ownDirectories.add(directory);
+      else{
+        if(!otherProjects.has(directory))otherProjects.set(directory,[]);
+        otherProjects.get(directory).push(stem);
+      }
+    }
+    const namedFor=(path,stem)=>['.','-','_'].some(separator=>path.startsWith(stem+separator));
+    return valid.filter(item=>{
+      const path=item.path;
+      if(paths.has(path))return true;
+      if(!supported.test(path))return false;
+      if(projectFile.test(path))return stems.has(projectStem(path));
+      const directory=folder(path);
+      const namedStem=[...stems].find(stem=>directory===folder(stem)&&namedFor(path,stem));
+      if(namedStem)return !otherProjects.get(directory)?.some(stem=>stem.length>namedStem.length&&namedFor(path,stem));
+      // Shared folders have no implicit ownership. A nested project ends its parent's scope.
+      const parts=path.split('/').slice(0,-1);
+      while(parts.length||ownDirectories.has('')){
+        const current=parts.join('/');
+        if(otherProjects.has(current))return false;
+        if(ownDirectories.has(current)){
+          if(current===directory)return true;
+          const relative=path.slice(current?current.length+1:0);
+          return /^(?:analysis|reports?|results?|simulations?|models?|fabrication|gerbers?|manufacturing)\//i.test(relative);
+        }
+        if(!parts.length)break;
+        parts.pop();
+      }
+      return false;
+    });
+  }
+  function scopedProject(options,build){
+    const {scope,project}=options,snapshotRef=scope.ref,entry=scope.file,anchor=projectStem(entry);
+    const inputs=new Map(),warnings=[];
+    const loadDrawing=path=>{
+      if(!inputs.has(path))inputs.set(path,Promise.resolve().then(()=>project.loadDrawing(path)).then(files=>{
+        if(!Array.isArray(files)||!files.some(file=>file.path===path))throw Error('Saved drawing unavailable: '+path);
+        const rootPath=!/\.kicad_pcb$/i.test(path)?root.KiCadBrowserData?.rootSheetPath(files,path)||path:path;
+        return {path,rootPath,files};
+      }));
+      return inputs.get(path);
+    };
+    const primary=drawing(entry)?[entry]:[anchor+(/\.pro$/i.test(entry)?'.sch':'.kicad_sch'),anchor+'.kicad_pcb'];
+    const first=Promise.any(primary.map(loadDrawing));
+    const paths=new Set(),anchors=new Set([entry]);
+    const buildDrawing=({rootPath,files})=>{
+      anchors.add(rootPath);
+      const fresh=files.filter(file=>safePath(file.path)&&drawing(file.path)&&!paths.has(file.path));
+      for(const file of fresh)paths.add(file.path);
+      return build({files:fresh,inventory:fresh.map(file=>({path:file.path})),scope,snapshotRef,warnings:fresh.map(file=>file.discoveryWarning).filter(Boolean)});
+    };
+    const merge=(a,b)=>({...a,records:[...a.records,...b.records].slice(0,LIMITS.records),index:{...a.index,entries:[...a.index.entries,...b.index.entries].slice(0,LIMITS.records)},
+      warnings:[...new Set([...a.warnings,...b.warnings])],drawings:a.drawings+b.drawings,reportCount:a.reportCount+b.reportCount});
+    const source={pending:true};
+    source.core=first.then(buildDrawing,()=>build({scope,snapshotRef,inventory:[{path:entry}],warnings:['Saved drawings are unavailable for this project.']}));
+    const drawings=first.then(async selected=>{
+      const stem=projectStem(selected.rootPath),other=/\.kicad_pcb$/i.test(selected.path)?stem+'.kicad_sch':stem+'.kicad_pcb';
+      const requested=[...new Set([...primary,other,...(project.openDrawings||[])])].filter(path=>safePath(path)&&drawing(path)&&path!==selected.path);
+      const companions=await Promise.allSettled(requested.map(loadDrawing));
+      let indexed=await source.core;
+      for(const result of companions)if(result.status==='fulfilled')indexed=merge(indexed,await buildDrawing(result.value));
+      return indexed;
+    },()=>source.core);
+    source.stages=[drawings];
+    // Supplemental file discovery never holds up drawing results.
+    const listing=first.catch(()=>null).then(()=>project.loadInventory?.()).catch(error=>{
+      warnings.push('Related file listing unavailable: '+text(error.message));return null;
+    });
+    source.complete=Promise.all([drawings,listing]).then(async([indexed,inventory])=>{
+      if(inventory?.snapshotRef&&String(inventory.snapshotRef).toLowerCase()!==snapshotRef.toLowerCase()){
+        warnings.push('Related file listing revision did not match the open project.');inventory=null;
+      }
+      const entries=relatedInventory(inventory?.files||[],paths,[...anchors]).filter(item=>!paths.has(item.path));
+      const settings=entries.filter(item=>/\.(?:kicad_pro|pro)$/i.test(item.path));
+      const extra=await loadReports(options,scope,{files:[...settings,...entries.filter(item=>reportPath(item.path))]},snapshotRef);
+      return merge(indexed,await build({scope,snapshotRef,inventory:entries,reports:extra.reports,warnings:[...warnings,...extra.warnings]}));
+    }).finally(()=>{source.pending=false;});
+    for(const stage of [source.core,drawings])stage.catch(()=>{});
+    return source;
+  }
+  async function load(options){
+    const build=(source)=>root.KiCadLoading?.run&&!options.dependencies?
+      root.KiCadLoading.run('workspace-search',source,()=>buildRecords(source)):
+      Promise.resolve().then(()=>buildRecords(source,options.dependencies));
+    if(options.project)return scopedProject(options,build);
+    const scope={...options.scope},warnings=[];let saved={},inventory={};
+    const checkSnapshot=(value,expected)=>{if(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(expected||'')&&value?.snapshotRef&&String(value.snapshotRef).toLowerCase()!==expected.toLowerCase())throw Error('Project response revision did not match the requested immutable snapshot.');};
+    try{saved=await read(options.request,'project-search-files',scope);if(!Array.isArray(saved?.files))throw Error('Invalid project drawing response.');checkSnapshot(saved,scope.ref);}
+    catch(error){saved={};warnings.push('Drawing content unavailable: '+text(error.message));}
+    let snapshotRef=saved.snapshotRef||scope.ref;
+    try{inventory=Array.isArray(saved.inventory)?{files:saved.inventory,snapshotRef:saved.snapshotRef}:await read(options.request,'project-inventory',{...scope,ref:snapshotRef});if(!Array.isArray(inventory?.files))throw Error('Invalid project inventory.');checkSnapshot(inventory,snapshotRef);}
+    catch(error){inventory={};warnings.push('File inventory unavailable: '+text(error.message));}
+    if(!saved.files&&!inventory.files)throw Error(warnings.join(' '));
+    if(!saved.snapshotRef&&inventory.snapshotRef)snapshotRef=inventory.snapshotRef;
+    const input={...saved,inventory:inventory.files||[],scope,snapshotRef,
+      warnings:[...warnings,...warningsOf(saved),...warningsOf(inventory)]};
+    const core=build(input);
+    const source={core,pending:true};
+    source.complete=Promise.all([core,loadReports(options,scope,inventory,snapshotRef)]).then(async([indexed,extra])=>{
+      if(!extra.reports.length)return {...indexed,warnings:[...indexed.warnings,...extra.warnings]};
+      const supplemental=await build({...extra,scope,snapshotRef});
+      if(!indexed.index.entries.length)return {...supplemental,warnings:[...new Set([...indexed.warnings,...supplemental.warnings])]};
+      return {...indexed,index:{...indexed.index,entries:[...indexed.index.entries,...supplemental.index.entries]},
+        warnings:[...new Set([...indexed.warnings,...supplemental.warnings])],reportCount:supplemental.reportCount};
+    }).finally(()=>{source.pending=false;});
+    return source;
   }
   function createController(options){
-    let epoch=0,disposed=false;const cache=options.cache||caches,key=scopeKey(options.scope);
+    let epoch=0,disposed=false;const cache=options.cache||caches;
+    const directory=String(options.scope?.file||'').split('/').slice(0,-1).join('/');
     function ensure(){
+      const openDrawings=options.project?.openDrawings?.slice();
+      const key=JSON.stringify([scopeKey(options.scope),options.project?options.scope.file:directory,openDrawings]);
       if(!cache.has(key)){
         while(cache.size>=LIMITS.scopes)cache.delete(cache.keys().next().value);
-        const promise=load(options).catch(error=>{if(cache.get(key)===promise)cache.delete(key);throw error;});cache.set(key,promise);
+        const clear=()=>{if(cache.get(key)===promise)cache.delete(key);};
+        const promise=load(options.project?{...options,project:{...options.project,openDrawings}}:options).then(source=>{source.complete.catch(clear);return source;},error=>{clear();throw error;});
+        cache.set(key,promise);
       }
       return cache.get(key);
     }
     return {
-      async search(query){
+      preload(){return ensure().then(source=>source.core);},
+      setCompanion(path){
+        if(!options.project||options.project.openDrawings?.[0]===path)return;
+        options.project.openDrawings=path?[path]:[];
+        epoch++;
+        void this.preload().catch(()=>{});
+      },
+      async search(query,onPartial){
         const ticket=++epoch;if(disposed||!query.trim())return null;const commands=toolResults(query);if(commands.length)return{results:commands,total:commands.length,truncated:false,warnings:[]};
-        let indexed;try{indexed=await ensure();}catch(error){if(disposed||ticket!==epoch)return null;throw error;}if(disposed||ticket!==epoch)return null;
+        const ranking={...options.dependencies,preferredPath:options.activePath?.()||options.scope?.file};
+        let indexed;
+        try{
+          const source=await ensure();
+          if(onPartial&&source.pending){
+            let preceding;
+            for(const stage of [source.core,...(source.stages||[])]){
+              const indexed=await stage;
+              if(disposed||ticket!==epoch)return null;
+              if(source.pending&&indexed!==preceding)onPartial(searchRecords(indexed,query,ranking));
+              preceding=indexed;
+            }
+          }
+          indexed=await source.complete;
+        }catch(error){if(disposed||ticket!==epoch)return null;throw error;}
+        if(disposed||ticket!==epoch)return null;
         let index=indexed;
         if(options.getDrafts){
           // Drafts are re-read on each explicit query; the immutable source load is shared.
           try{
             const drafts=await options.getDrafts();if(disposed||ticket!==epoch)return null;
-            if(drafts?.length){const local=buildRecords({drafts,scope:options.scope},options.dependencies);index={...indexed,index:{...indexed.index,entries:[...indexed.index.entries,...local.index.entries]},warnings:[...new Set([...indexed.warnings,...local.warnings])]};}
+            const allowed=options.project?new Set(indexed.records.filter(record=>record.kind==='file'&&drawing(record.path)).map(record=>record.path)):null;
+            const localDrafts=allowed?drafts?.filter(draft=>allowed.has(draft.source?.file)):drafts;
+            if(localDrafts?.length){const local=buildRecords({drafts:localDrafts,scope:options.scope},options.dependencies);index={...indexed,index:{...indexed.index,entries:[...indexed.index.entries,...local.index.entries]},warnings:[...new Set([...indexed.warnings,...local.warnings])]};}
           }catch{index={...indexed,warnings:[...indexed.warnings,'Local Draftsman drafts could not be read.']};}
         }
-        return searchRecords(index,query,options.dependencies);
+        return searchRecords(index,query,ranking);
       },
       cancel(){epoch++;},destroy(){disposed=true;epoch++;}
     };
@@ -240,13 +383,18 @@
     const document=options.document||root.document,holder=options.holder||options.host;
     const make=(tag,value)=>{const node=document.createElement(tag);if(value!==undefined)node.textContent=value;return node;};
     const host=make('div');host.className='workspace-project-search';
-    const input=make('input');input.type='search';input.placeholder='Search entire project';input.autocomplete='off';input.maxLength=2048;
-    input.setAttribute('aria-label','Search entire project');input.setAttribute('role','combobox');input.setAttribute('aria-autocomplete','list');input.setAttribute('aria-expanded','false');
+    const input=make('input');input.type='search';input.placeholder='Search open KiCad project';input.autocomplete='off';input.maxLength=2048;
+    input.setAttribute('aria-label','Search open KiCad project');input.setAttribute('role','combobox');input.setAttribute('aria-autocomplete','list');input.setAttribute('aria-expanded','false');
     const popover=make('div');popover.className='workspace-project-search-popup';popover.hidden=true;
     const status=make('p','Search saved objects, files, simulations and Draftsman. Ctrl+K to focus.');status.className='workspace-search-status';status.setAttribute('role','status');status.setAttribute('aria-live','polite');
     const list=make('div');list.id='workspace-search-results-'+(++nextId);list.setAttribute('role','listbox');input.setAttribute('aria-controls',list.id);
-    const warnings=make('p');warnings.className='workspace-search-warnings';popover.append(status,list,warnings);host.append(input,popover);holder.append(host);
-    const controller=createController(options);let timer=null,epoch=0,rows=[],active=-1,disposed=false;
+    const coverage=make('details'),warnings=make('p');
+    coverage.className='workspace-search-coverage';coverage.hidden=true;
+    warnings.className='workspace-search-warnings';coverage.append(make('summary','Search coverage'),warnings);
+    popover.append(status,list,coverage);
+    if(root.KiCadUIIcons)host.append(root.KiCadUIIcons.icon('search'));
+    host.append(input,popover);holder.append(host);
+    const controller=createController(options);if(options.project)void controller.preload().catch(()=>{});let timer=null,epoch=0,rows=[],active=-1,disposed=false;
     function reveal(){popover.hidden=false;input.setAttribute('aria-expanded','true');}
     function dismiss(){clearTimeout(timer);epoch++;controller.cancel();popover.hidden=true;input.setAttribute('aria-expanded','false');input.removeAttribute('aria-activedescendant');}
     async function open(result){
@@ -256,31 +404,49 @@
       active=index;for(let i=0;i<rows.length;i++)rows[i].setAttribute('aria-selected',String(i===active));
       if(rows[active]){input.setAttribute('aria-activedescendant',rows[active].id);rows[active].scrollIntoView?.({block:'nearest'});}
     }
+    function render(result,pending=false){
+      const previous=rows[active]?.result;
+      const sameResult=item=>previous&&item.kind===previous.kind&&item.path===previous.path&&
+        (item.uuid||item.id||item.label)===(previous.uuid||previous.id||previous.label);
+      status.textContent=result.error||(
+        `${result.results.length} result${result.results.length===1?'':'s'}${pending?' · Indexing related files…':result.truncated?' · More matches available':''}`
+      );
+      warnings.textContent=pending?'':result.warnings.filter(w=>!w.startsWith('Coverage:')).join(' ');
+      coverage.hidden=!warnings.textContent;
+      list.replaceChildren();rows=[];active=-1;input.removeAttribute('aria-activedescendant');
+      for(const [i,item]of result.results.entries()){
+        const row=make('div');row.className='workspace-search-result';row.id=list.id+'-'+i;row.setAttribute('role','option');row.setAttribute('aria-selected','false');
+        const button=make('button');button.type='button';button.className='workspace-search-open';
+        const matched=item.detail&&item.detail!==item.label?make('small',item.detail):null;
+        const kind=item.objectKind||item.kind;
+        const category=kind.charAt(0).toUpperCase()+kind.slice(1).replaceAll('_',' ');
+        button.append(make('strong',item.label),make('small',item.path?category+' · '+item.path:item.detail));
+        if(item.path&&matched)button.append(matched);
+        button.addEventListener('click',()=>open(item));row.append(button);
+        if(item.canShow3D){const three=make('button','Show in 3D');three.type='button';three.className='workspace-search-3d';three.addEventListener('click',()=>open({...item,view:'3d'}));row.append(three);}
+        row.result=item;list.append(row);rows.push(row);
+      }
+      const selected=result.results.findIndex(sameResult);
+      if(selected>=0)activate(selected);
+    }
     async function run(){
       const query=input.value,ticket=++epoch;if(!query.trim()){dismiss();return;}
       reveal();status.textContent='Searching saved project…';list.replaceChildren();rows=[];active=-1;
       try{
-        const result=await controller.search(query);if(!result||disposed||ticket!==epoch)return;
-        status.textContent=result.error||`${result.results.length} result${result.results.length===1?'':'s'}${result.truncated?' · more matches; narrow your search':''}`;
-        warnings.textContent=result.warnings.join(' ');
-        for(const [i,item]of result.results.entries()){
-          const row=make('div');row.className='workspace-search-result';row.id=list.id+'-'+i;row.setAttribute('role','option');row.setAttribute('aria-selected','false');
-          const button=make('button');button.type='button';button.className='workspace-search-open';button.append(make('strong',item.label),make('small',item.kind+' · '+item.path),make('small',item.detail));button.addEventListener('click',()=>open(item));row.append(button);
-          if(item.canShow3D){const three=make('button','Show in 3D');three.type='button';three.className='workspace-search-3d';three.addEventListener('click',()=>open({...item,view:'3d'}));row.append(three);}
-          row.result=item;list.append(row);rows.push(row);
-        }
-      }catch(error){if(!disposed&&ticket===epoch){status.textContent='Search unavailable: '+text(error.message)+'. Type again to retry.';warnings.textContent='';}}
+        const result=await controller.search(query,partial=>{if(partial.results.length&&!disposed&&ticket===epoch)render(partial,true);});
+        if(result&&!disposed&&ticket===epoch)render(result);
+      }catch(error){if(!disposed&&ticket===epoch){status.textContent='Search unavailable: '+text(error.message)+'. Type again to retry.';warnings.textContent='';coverage.hidden=true;}}
     }
-    function onInput(){clearTimeout(timer);epoch++;controller.cancel();rows=[];active=-1;list.replaceChildren();input.removeAttribute('aria-activedescendant');if(!input.value.trim()){dismiss();return;}reveal();timer=setTimeout(run,LIMITS.debounce);}
+    function onInput(){clearTimeout(timer);epoch++;controller.cancel();rows=[];active=-1;list.replaceChildren();input.removeAttribute('aria-activedescendant');if(!input.value.trim()){dismiss();return;}reveal();status.textContent='Searching saved project…';warnings.textContent='';coverage.hidden=true;timer=setTimeout(run,LIMITS.debounce);}
     function onKey(event){
       if(event.key==='Escape'){dismiss();return;}
       if(event.key==='ArrowDown'||event.key==='ArrowUp'){event.preventDefault();reveal();if(rows.length)activate((active+(event.key==='ArrowDown'?1:active<0?0:-1)+rows.length)%rows.length);return;}
-      if(event.key==='Enter'){event.preventDefault();clearTimeout(timer);if(rows[active]&&!popover.hidden)open(rows[active].result);else run();}
+      if(event.key==='Enter'){event.preventDefault();clearTimeout(timer);const selected=rows[active<0?0:active];if(selected&&!popover.hidden)open(selected.result);else run();}
     }
     function onGlobalKey(event){if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='k'&&!event.altKey){event.preventDefault();input.focus();input.select?.();reveal();}}
     function onOutside(event){if(!host.contains(event.target))dismiss();}
     input.addEventListener('input',onInput);input.addEventListener('keydown',onKey);document.addEventListener('keydown',onGlobalKey);document.addEventListener('pointerdown',onOutside);
-    return {input,popover,controller,destroy(){disposed=true;dismiss();controller.destroy();document.removeEventListener('keydown',onGlobalKey);document.removeEventListener('pointerdown',onOutside);host.remove();}};
+    return {input,popover,controller,setCompanion(path){dismiss();controller.setCompanion(path);},destroy(){disposed=true;dismiss();controller.destroy();document.removeEventListener('keydown',onGlobalKey);document.removeEventListener('pointerdown',onOutside);host.remove();}};
   }
   const api={LIMITS,safePath,toolResults,scopedDrafts,buildRecords,searchRecords,createController,mount};root.KiCadWorkspaceSearch=api;
   if(typeof module==='object'&&module.exports)module.exports=api;

@@ -2,6 +2,7 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 global.KiCadBrowserData=require('../browser-data.js');global.KiCadGitHub=require('../parsing.js');global.KiCadReviewComments=require('../review-comments.js');global.KiCadGitLabProvider=require('../gitlab-provider.js');
 let listener,sidecarChecks=0;const store=new Map();global.KiCadReviewFileStore={status:async()=>{sidecarChecks++;return {connected:true};},read:async()=>[]};global.KiCadGitHubReviewApi={tokenStatus:()=>{throw new Error('GitHub token accessed');}};
+global.KiCadGerberRenderer=require('../gerber-renderer.js');
 global.importScripts=()=>{};global.chrome={runtime:{id:'test',getURL:path=>'chrome-extension://test/'+path,onMessage:{addListener:callback=>listener=callback}},action:{onClicked:{addListener(){}}},storage:{local:{get:async key=>({[key]:store.get(key)}),set:async items=>{for(const [key,value]of Object.entries(items))store.set(key,value);}}}};
 const worker=require('../background.js'),viewer={id:'test',url:'chrome-extension://test/browser-viewer.html'},tab={id:'test',url:'https://gitlab.com/group/board/-/blob/main/board.kicad_pcb'};
 const message=(request,sender=viewer)=>new Promise(resolve=>{if(!listener(request,sender,resolve))resolve({ignored:true});});

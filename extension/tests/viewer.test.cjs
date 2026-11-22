@@ -30,7 +30,7 @@ function viewer(parameters, read, extras={}) {
   }
   const elements = new Map();
   const get = (id) => { if (!elements.has(id)) elements.set(id, new Element()); return elements.get(id); };
-  get('changesPanel').hidden = true; get('changeFilter').value = 'all';
+  get('historyWorkspace').hidden = true; get('changesPanel').hidden = true; get('changeFilter').value = 'all';
   const timers=new Set();const calls = [], listeners = new Map(), parentMessages=[],parent={postMessage:(message,origin)=>parentMessages.push({message,origin})};
   const document={getElementById:get,createElement:tag=>new Element(tag)};
   vm.runInNewContext(source, { URL, URLSearchParams, Number, Map, Set, Promise, parent,crypto:require('node:crypto').webcrypto,
@@ -385,23 +385,28 @@ test('failed mutable revision opens a single error pane rather than stale Base a
  await tick();assert.equal(view.get('basePanel').hidden,true);assert.match(view.get('headDrawing').textContent,/could not be loaded/);assert.match(view.get('status').textContent,/Website session unavailable/);assert.doesNotMatch(view.get('headDrawing').textContent,/Loading/);
 });
 
-test('History is a top-level workspace tab and returning preserves the existing drawing frame',async()=>{
+test('History toggles an inset and leaves the active workspace and drawing intact',async()=>{
  let picker;
- const view=viewer({...parameters,base:''},()=>({ok:false,error:'No drawing lookup expected'}),{KiCadRevisionPicker:{mount(options){picker=options;return{openGraph(){options.onOpenGraph();return Promise.resolve();}};}}});
+ const view=viewer({...parameters,base:''},()=>({ok:false,error:'No drawing lookup expected'}),{KiCadRevisionPicker:{mount(options){picker=options;return{openGraph(){options.onOpenGraph();return Promise.resolve();},closeGraph(){options.onCloseGraph();}};}}});
  const tab=name=>[...view.get('workspaceTabs').children,...view.get('workspaceHelpers').children[1].children].find(b=>b.getAttribute('aria-label')===name+' view');
- const frame=view.get('headDrawing').children[0];
+ const frame=view.get('headDrawing').children[0],title=view.document.title;
  tab('History').click();await tick();
  assert.equal(picker.workspaceHolder,view.get('historyWorkspace'));
  assert.equal(view.get('historyWorkspace').hidden,false);
- assert.equal(view.get('comparison').hidden,true);
- assert.equal(tab('History').getAttribute('aria-pressed'),'true');
+ assert.equal(view.get('comparison').hidden,false);
+ assert.equal(view.document.title,title);
+ assert.equal(tab('History').getAttribute('aria-expanded'),'true');
+ assert.equal(tab('Schematic').getAttribute('aria-pressed'),'true');
  assert.equal(view.calls.length,0);
- tab('Schematic').click();await tick();
+ tab('History').click();await tick();
  assert.equal(view.get('historyWorkspace').hidden,true);
- assert.equal(view.get('headDrawing').children[0],frame);
+ assert.equal(tab('History').getAttribute('aria-expanded'),'false');
  tab('History').click();await tick();picker.onCloseGraph();
  assert.equal(view.get('historyWorkspace').hidden,true);
- assert.equal(tab('Schematic').getAttribute('aria-pressed'),'true');
+ tab('History').click();await tick();tab('Project').click();await tick();
+ assert.equal(view.get('historyWorkspace').hidden,true);
+ assert.equal(view.get('projectWorkspace').hidden,false);
+ assert.equal(view.get('headDrawing').children[0],frame);
 });
 
 test('BoM top tab uses head inventory and preserves the loaded drawing',async()=>{let options,shows=0;const view=viewer({...parameters,base:''},message=>message.type==='project-inventory'?{ok:true,result:{files:[{path:'BoM.csv'}]}}:{ok:true,result:[]},{KiCadBomBrowser:{mount(value){options=value;return {show:async()=>{shows++;await value.inventory();}};}}});const drawing=view.get('headDrawing').children[0];const tab=view.get('workspaceTabs').children.find(n=>n.attributes['aria-label']==='BoM view');assert(tab);tab.click();await tick();assert.equal(view.get('comparison').hidden,true);assert.equal(view.get('bomWorkspace').hidden,false);assert.equal(options.scope.repository,'fork/board');assert.equal(options.scope.ref,parameters.head);assert.equal(view.calls.find(x=>x.type==='project-inventory').repository,'fork/board');assert.equal(view.get('headDrawing').children[0],drawing);view.get('workspaceTabs').children.find(n=>n.attributes['aria-label']==='Schematic view').click();await tick();assert.equal(view.get('bomWorkspace').hidden,true);assert.equal(view.get('headDrawing').children[0],drawing);});
@@ -409,7 +414,9 @@ test('BoM top tab uses head inventory and preserves the loaded drawing',async()=
 test('one split button opens and closes a paired drawing without a second Unsplit control',async()=>{
  const view=viewer({...parameters,base:''},message=>message.type==='drawing-files'?{ok:true,result:{files:['board.kicad_pcb']}}:{ok:true,result:[]});
  const split=view.get('splitView');split.click();await tick();assert.equal(split.textContent,'Unsplit');assert.equal(split.getAttribute('aria-pressed'),'true');assert.equal(view.get('pairPanel').hidden,false);
- assert.equal(view.get('projectTools').children.filter(n=>n.textContent==='Unsplit').length,1);split.click();await tick();assert.equal(split.textContent,'Split view');assert.equal(split.getAttribute('aria-pressed'),'false');assert.equal(view.get('pairPanel').hidden,true);assert.equal(view.get('pairDrawing').children.length,0);
+ assert.equal(view.get('projectTools').children.filter(n=>n.textContent==='Unsplit').length,1);split.click();await tick();assert.equal(split.textContent,'Split view');assert.equal(split.getAttribute('aria-pressed'),'false');assert.equal(view.get('pairPanel').hidden,true);
+ const companion=view.get('pairDrawing').children[0];assert.ok(companion);
+ split.click();await tick();assert.equal(view.get('pairDrawing').children[0],companion);assert.equal(view.calls.length,1);
 });
 test('BoM loads exact saved project parts and keeps companion frame selection synchronized',async()=>{
  let options,lastSelection;const view=viewer({...parameters,base:''},message=>message.type==='project-inventory'?{ok:true,result:{files:[{path:'new.kicad_sch'},{path:'new.kicad_pcb'}]}}:message.type==='project'?{ok:true,result:[{path:'new.kicad_sch',content:sch('4k7')}]}:{ok:true,result:[]},{KiCadDesignModel:require('../design-model.js'),KiCadBomBrowser:{mount(value){options=value;return {show:async()=>{},select(value){lastSelection=value;}};}}});
@@ -464,4 +471,61 @@ test('only the primary drawing relays explicit workspace theme changes to detach
 test('workspace shows a stable project name and identifies the project in its tab title',async()=>{
  const view=viewer({...parameters,file:'hardware/My Controller.kicad_sch'},async()=>({ok:true,result:[]}));await tick();
  assert.equal(view.get('workspaceProjectName').textContent,'My Controller');assert.match(view.get('workspaceProjectName').title,/wayri\/board/);assert.match(view.document.title,/^My Controller · Schematic — KiCad Online$/);
+});
+
+test('a drawing tab carries the latest selection into a companion that was not loaded yet',async()=>{
+ const v=viewer({...parameters,base:'',file:'board.kicad_sch'},()=>({ok:true,result:{files:[{path:'board.kicad_pcb'}]}}));
+ const head=v.get('headDrawing').children[0],origin='chrome-extension://test-id';
+ const selection={kind:'part',reference:'R1',uuid:'schematic-r1',path:'board.kicad_sch'};
+ const message=(frame,data)=>v.message({origin,source:frame.contentWindow,data});
+ const ready=(frame,file)=>message(frame,{type:'kicad-review:view',phase:'ready',file,view:{x:0,y:0,zoom:1}});
+ ready(head,'board.kicad_sch');
+ message(head,{type:'kicad-review:selection',selection});
+ v.get('workspaceTabs').children.find(n=>n.getAttribute('aria-label')==='Layout view').click();
+ await tick();
+ const layout=v.get('pairDrawing').children[0];
+ ready(layout,'board.kicad_pcb');
+ const command=layout.messages.find(({message})=>message.command==='workspace-view').message;
+ assert.equal(command.mode,'layout');
+ assert.deepEqual(command.selection,selection);
+ v.get('workspaceTabs').children.find(n=>n.getAttribute('aria-label')==='Schematic view').click();
+ assert.equal(head.messages.at(-1).message.mode,'schematic');
+ assert.equal(head.messages.at(-1).message.selection,undefined,'the source frame keeps its current selection');
+});
+
+test('search shares the opening drawing read and locates an indexed subsheet in its existing frame', async()=>{
+ let search,shared;const reads=[];
+ const file='board.kicad_sch',child='sub/child.kicad_sch';
+ const view=viewer({...parameters,base:'',file},message=>{
+   reads.push(message);return {ok:true,result:[{path:file,content:sch('10k')},{path:child,content:sch('100k')}]};
+ },{KiCadWorkspaceSearch:{mount(options){search=options;shared=options.project.loadDrawing(file);return{destroy(){}};}}});
+ const frame=view.get('headDrawing').children[0];
+ assert.equal((await shared).length,2);
+ assert.equal((await search.project.loadDrawing(file)).length,2);
+ assert.equal(reads.length,1);
+ await search.open({kind:'object',path:child,uuid:'one'});
+ assert.equal(view.get('headDrawing').children[0],frame);
+ assert.equal(frame.messages.length,0);
+ view.message({origin:'chrome-extension://test-id',source:frame.contentWindow,data:{type:'kicad-review:view',phase:'ready',file,view:{x:0,y:0,zoom:1}}});
+ assert.equal(frame.messages.at(-1).message.result.path,child);
+ await search.open({kind:'object',path:child,uuid:'one'});
+ assert.equal(view.get('headDrawing').children[0],frame);
+ assert.equal(frame.messages.at(-1).message.command,'search-result');
+ assert.equal(reads.length,1);
+});
+
+test('workspace M routes to the ready schematic while header inputs keep their keystrokes',()=>{
+ const view=viewer({...parameters,base:''},()=>({ok:false,error:'No drawing read expected'}));
+ const schematic=view.get('headDrawing').children[0];
+ view.message({origin:'chrome-extension://test-id',source:schematic.contentWindow,data:{type:'kicad-review:view',phase:'ready',file:parameters.file,view:{x:0,y:0,zoom:1}}});
+ const press=nodes=>{
+   let handled=false;
+   view.dispatch('keydown',{key:'m',composedPath:()=>nodes,preventDefault(){handled=true;}});
+   return handled;
+ };
+ assert.equal(press([{tagName:'INPUT'}]),false);
+ assert.equal(press([]),true);
+ assert.equal(schematic.messages.at(-1).message.command,'sheet-map-shortcut');
+ view.get('historyWorkspace').hidden=false;
+ assert.equal(press([]),false);
 });

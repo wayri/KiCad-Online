@@ -55,7 +55,7 @@ test('bounds reject oversized drawing/report content, retain file names and disc
  const many=Array.from({length:129},(_,i)=>({path:i+'.kicad_sch',content:'(kicad_sch)'}));
  const index=buildRecords({files:many,totalDrawings:129},{model});assert.equal(parsed,1);assert.match(index.warnings.join(' '),/128 of 129/);
  const large=buildRecords({files:[{path:'huge.kicad_pcb',content:'x'.repeat(LIMITS.drawingBytes+1)}],inventory:[{path:'huge.kicad_pcb'}],reports:[{path:'run.csv',content:'x'.repeat(LIMITS.reportBytes+1)}]});
- assert.equal(large.drawings,0);assert.equal(searchRecords(large,'huge.kicad_pcb').results[0].kind,'file');assert.match(large.warnings.join(' '),/8 MiB/);assert.match(large.warnings.join(' '),/1 MiB/);
+ assert.equal(large.drawings,0);assert.equal(searchRecords(large,'huge.kicad_pcb').results[0].kind,'file');assert.match(large.warnings.join(' '),/64 MiB/);assert.match(large.warnings.join(' '),/1 MiB/);
  const binary=buildRecords({reports:[{path:'run.raw',content:'binary\0sensitive'}]});assert.equal(searchRecords(binary,'sensitive').results.length,0);assert.match(binary.warnings.join(' '),/binary output/);
 });
 
@@ -152,7 +152,7 @@ function all(node,tag){return node.children.flatMap(c=>[...(c.tagName===tag?[c]:
 test('header combobox uses inert nodes, keyboard navigation, 3D action, dismissal and lazy Ctrl+K',async()=>{
  const document=new Document(),holder=new Node('header'),opened=[];let reads=0;
  const ui=mount({document,holder,scope,cache:new Map(),open:async item=>opened.push(item),request:async type=>{reads++;return type==='project-search-files'?{files:[board]}:{files:[{path:'<img onerror=alert(1)>.csv'}]};}});
- assert.equal(ui.input.attributes['aria-label'],'Search entire project');assert.equal(ui.input.attributes.role,'combobox');assert.equal(reads,0);
+ assert.equal(ui.input.attributes['aria-label'],'Search open KiCad project');assert.equal(ui.input.attributes.role,'combobox');assert.equal(reads,0);
  document.fire('keydown',{ctrlKey:true,key:'k'});assert.equal(ui.input.focused,true);assert.equal(reads,0);
  ui.input.value='U1';ui.input.fire('keydown',{key:'Enter'});await pause();
  const option=all(holder,'div').find(n=>n.attributes.role==='option');assert.ok(option);
@@ -178,4 +178,90 @@ test('input debounce keeps new queries from opening stale results and cleared in
  ui.input.value='U1';ui.input.fire('input');ui.input.value='';ui.input.fire('input');await new Promise(resolve=>setTimeout(resolve,LIMITS.debounce+20));assert.equal(reads,0);
  ui.input.value='U1';ui.input.fire('keydown',{key:'Enter'});await pause();ui.input.fire('keydown',{key:'ArrowDown'});
  ui.input.value='missing';ui.input.fire('input');ui.input.fire('keydown',{key:'Enter'});await pause();assert.equal(opened.length,0);assert.equal(all(holder,'button').length,0);ui.destroy();
+});
+
+
+test('drawing matches arrive while saved reports are still loading and reuse the pinned inventory',async()=>{
+ const report=deferred(),started=deferred(),partial=deferred(),calls=[];
+ const controller=createController({scope,cache:new Map(),request:async(type,extra)=>{
+  calls.push(type);
+  if(type==='project-search-files')return {files:[board],inventory:[{path:'run.csv'}],snapshotRef:scope.ref};
+  assert.equal(type,'project-file');
+  assert.equal(extra.ref,scope.ref);
+  started.resolve();
+  await report.promise;
+  return {path:'run.csv',content:'U1,voltage'};
+ }});
+ const complete=controller.search('U1',partial.resolve);
+ await started.promise;
+ assert.equal((await partial.promise).results[0].uuid,'part-1');
+ report.resolve();
+ assert.ok((await complete).results.some(r=>r.path==='run.csv'));
+ assert.deepEqual(calls,['project-search-files','project-file']);
+ let repeated=false;
+ await controller.search('U1',()=>{repeated=true;});
+ assert.equal(repeated,false);
+ controller.destroy();
+});
+
+test('nested projects at the same commit do not reuse a different folder search index',async()=>{
+ const cache=new Map(),calls=[];
+ const request=async(type,extra)=>{
+  assert.equal(type,'project-search-files');
+  calls.push(extra.file);
+  return {files:[{...board,path:extra.file}],inventory:[],snapshotRef:scope.ref};
+ };
+ for(const file of ['a/board.kicad_pcb','b/board.kicad_pcb']){
+  const controller=createController({scope:{...scope,file},request,cache});
+  assert.equal((await controller.search('ref:U1')).results[0].path,file);
+  controller.destroy();
+ }
+ assert.equal(calls.length,2);
+});
+
+
+test('equal reference matches prefer the current drawing without changing the shared source index',async()=>{
+ let current=sheet.path;
+ const controller=createController({scope,cache:new Map(),activePath:()=>current,request:async()=>({
+  files:[board,sheet],inventory:[],snapshotRef:scope.ref
+ })});
+ assert.equal((await controller.search('U1')).results[0].uuid,'symbol-1');
+ current=board.path;
+ const result=await controller.search('U1');
+ assert.equal(result.results[0].uuid,'part-1');
+ assert.ok(result.results.every(row=>row.detail!=='U1 · U1 · U1'));
+ controller.destroy();
+});
+
+test('open project search starts before typing, exposes drawn parts before inventory, and excludes sibling projects',async()=>{
+ const listing=deferred(),companion=deferred(),reads=[],reportReads=[];
+ const pcb={...board,path:'product/board.kicad_pcb'};
+ const sch={...sheet,path:'product/board.kicad_sch'};
+ const child={...sheet,path:'product/blocks/child.kicad_sch',content:sheet.content.replace('CONTROLLER','CHILD_VALUE').replace('symbol-1','child-symbol')};
+ const controller=createController({scope:{...scope,file:pcb.path},cache:new Map(),project:{
+   loadDrawing(path){reads.push(path);return path===pcb.path?[pcb]:companion.promise;},
+   loadInventory:()=>listing.promise
+ },request:async(type,extra)=>{
+   assert.equal(type,'project-file');assert.equal(extra.ref,scope.ref);reportReads.push(extra.file);
+   return {path:extra.file,content:extra.file.endsWith('.kicad_pro')?'{"name":"board settings"}':'Frequency,Voltage'};
+ }});
+ await controller.preload();
+ assert.deepEqual(reads,[pcb.path,sch.path]);
+ const partial=deferred(),complete=controller.search('CONTROLLER',partial.resolve);
+ assert.equal((await partial.promise).results[0].uuid,'part-1');
+ companion.resolve([sch,child]);
+ listing.resolve({snapshotRef:scope.ref,files:[
+   {path:'product/board.kicad_pro'},{path:'product/board-ac.csv'},
+   {path:'product/board-other.kicad_pro'},{path:'product/board-other.kicad_pcb'},{path:'product/board-other-sweep.csv'},
+   {path:'product/backup/board.kicad_sch'},{path:'other/board.kicad_pro'},
+   {path:'other/board-ac.csv'}
+ ]});
+ await complete;
+ assert.deepEqual((await controller.search('CHILD_VALUE')).results.map(r=>r.uuid),['child-symbol']);
+ assert.deepEqual((await controller.search('Frequency')).results.map(r=>r.path),['product/board-ac.csv']);
+ assert.equal((await controller.search('board-other')).results.length,0);
+ assert.equal((await controller.search('other/')).results.length,0);
+ assert.deepEqual(reads,[pcb.path,sch.path]);
+ assert.deepEqual(reportReads,['product/board.kicad_pro','product/board-ac.csv']);
+ controller.destroy();
 });

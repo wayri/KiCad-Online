@@ -44,11 +44,11 @@
     loading?.show('Resolving drawing revision…');
     if(!globalThis.KiCadVSCodeContext&&!/^[a-f0-9]{40}$/i.test(ref)){const resolved=await loadSend({type:'revision-resolve',repository,ref,file:rootFile});if(!resolved?.ok||!/^[a-f0-9]{40}$/i.test(resolved.result?.sha||''))throw new Error(resolved?.error||'Git revision could not be resolved.');ref=resolved.result.sha;}
     loading?.show('Fetching drawing files and discovering sheets…');
-    const reply=await loadSend({type:'project',repository,ref,file:rootFile});
-
-    if(!reply?.ok)throw new Error(reply?.error||'Could not retrieve the KiCad project.');
-
-    const files=reply.result;if(!Array.isArray(files)||!files.some(file=>file.path===rootFile))throw new Error('No KiCad file at this revision.');
+    let sharedSource=null;
+    try{if(parent!==globalThis)sharedSource=parent.KiCadWorkspaceDrawingSource?.(globalThis,repository,ref,rootFile);}catch{/* A site embedding this viewer has a different origin. */}
+    const reply=sharedSource?null:await loadSend({type:'project',repository,ref,file:rootFile});
+    if(!sharedSource&&!reply?.ok)throw new Error(reply?.error||'Could not retrieve the KiCad project.');
+    const files=sharedSource?await loadWait(sharedSource):reply.result;if(!Array.isArray(files)||!files.some(file=>file.path===rootFile))throw new Error('No KiCad file at this revision.');
 
     if(!pcb){const resolvedRoot=KiCadBrowserData.rootSheetPath(files,requestedFile);if(resolvedRoot)rootFile=resolvedRoot;else if(files.length&&!files.some(file=>file.discoveryWarning))files[0].discoveryWarning='The saved schematic hierarchy has no unambiguous root. Choose a sheet in the navigator.';}
     const focusedEntry=params.has('focusX')&&params.has('focusY')&&['focusX','focusY'].every(key=>Number.isFinite(Number(params.get(key)))&&Math.abs(Number(params.get(key)))<=1e6);
@@ -68,14 +68,15 @@
 
     loading?.show('Preparing saved objects and drawing geometry…');
     const prepare=()=>{
-      const snapshot=KiCadDesignDiff.prepareProject(files,{forConnectivity:true}),model=KiCadDesignModel.buildProject(files,null,snapshot,{forConnectivity:true});
+      const snapshot=KiCadDesignDiff.prepareProject(files,{forConnectivity:true,compactCopper:pcb}),model=KiCadDesignModel.buildProject(files,null,snapshot,{forConnectivity:true});
       const sheets=files.filter(file=>/\.(kicad_sch|sch)$/i.test(file.path));
-      const design=(pcb?KiCadPCBRenderer:KiCadSchematicRenderer).build(KiCadDesignDiff.preparedFile(snapshot,initialFile),initialFile,{textVariables:files.find(f=>f.path===initialFile)?.textVariables,sheetNumber:sheets.findIndex(file=>file.path===initialFile)+1,sheetCount:sheets.length,sheetName:'/',...(globalThis.KiCadFileCompatibility?.textContext?.(files,initialFile,{rootFile:initialFile,parse:(content,file)=>KiCadDesignDiff.preparedFile(snapshot,file.path)})||{})});
+      const design=(pcb?KiCadPCBRenderer:KiCadSchematicRenderer).build(KiCadDesignDiff.preparedFile(snapshot,initialFile),initialFile,{packedZones:pcb,textVariables:files.find(f=>f.path===initialFile)?.textVariables,sheetNumber:sheets.findIndex(file=>file.path===initialFile)+1,sheetCount:sheets.length,sheetName:'/',...(globalThis.KiCadFileCompatibility?.textContext?.(files,initialFile,{rootFile:initialFile,parse:(content,file)=>KiCadDesignDiff.preparedFile(snapshot,file.path)})||{})});
       const nets=globalThis.KiCadNetModel?.build(files,new Map([[initialFile,design]]),snapshot);
       return {model,design,nets};
     };
     const prepared=globalThis.KiCadLoading?await KiCadLoading.run('drawing',{files,rootFile:initialFile,pcb},prepare,{signal:loadController?.signal,onStage:stage=>loading.show(stage)}):prepare();
     if(disposed)return;if(loadController?.signal.aborted)throw loadController.signal.reason;
+    if(pcb)KiCadPCBRenderer.hydrateZonePoints?.(prepared.design);
     if(prepared.rules)Object.defineProperty(prepared.model,'_rules',{value:new Map(prepared.rules)});
 
     if($('refBadge')){$('refBadge').textContent=ref.length>20?ref.slice(0,17)+'…':ref;$('refBadge').title=ref;}
@@ -125,8 +126,21 @@
 
     const setStatusText=(id,value)=>{const node=$(id);if(node&&node.textContent!==value)node.textContent=value;};
     let syncFloatingLayers=()=>{};
-    const afterFrame=()=>{syncFloatingLayers();workspace?.draw();if(!scene)setStatusText('renderMode',canvas.motionActive?'2D · WebGL':'2D');const backend=canvas.motionActive?'webgl-motion':'canvas2d';if(host.dataset.renderBackend!==backend)host.dataset.renderBackend=backend;setStatusText('accelerationStatus',canvas.motionFailed?'WebGL unavailable; using Canvas2D.':canvas.acceleration==='off'?'Canvas2D only.':'WebGL gesture previews on large drawings when available; source geometry is redrawn after each gesture.');setStatusText('viewScale',Math.round(canvas.viewport.camera.zoom/4*100)+'%');setStatusText('drawingViewLabel',canvas.netHighlight?(canvas.highlightCount>1?`${canvas.highlightCount} highlight groups`:canvas.netHighlight.name?'Highlighted net · '+canvas.netHighlight.name:'Highlighted components'):canvas.paperVisible?(pcb?'PCB worksheet':'Schematic sheet'):'Board view');report(false);};
-    const originalDraw=canvas.draw.bind(canvas);canvas.draw=()=>{originalDraw();afterFrame();};canvas.addEventListener('kicad:viewframe',afterFrame);
+    const afterFrame=()=>{syncFloatingLayers();workspace?.draw();if(!scene)setStatusText('renderMode',canvas.motionActive?'2D · WebGL':'2D');const backend=canvas.motionActive?'webgl-motion':'canvas2d';if(host.dataset.renderBackend!==backend)host.dataset.renderBackend=backend;setStatusText('accelerationStatus',canvas.motionFailed?'WebGL unavailable; using Canvas2D.':canvas.acceleration==='off'?'Canvas2D only.':'Gesture previews use a bounded drawing while moving and restore full detail when movement ends.');setStatusText('viewScale',Math.round(canvas.viewport.camera.zoom/4*100)+'%');setStatusText('drawingViewLabel',canvas.netHighlight?(canvas.highlightCount>1?`${canvas.highlightCount} highlight groups`:canvas.netHighlight.name?'Highlighted net · '+canvas.netHighlight.name:'Highlighted components'):canvas.paperVisible?(pcb?'PCB worksheet':'Schematic sheet'):'Board view');report(false);};
+    const drawingOverlays=[$('reviewOverlay'),$('commentPins')];
+    const showOverlays=visible=>{
+      for(const node of drawingOverlays)if(node&&node.style.visibility!==(visible?'':'hidden'))node.style.visibility=visible?'':'hidden';
+    };
+    const originalDraw=canvas.draw.bind(canvas);
+    canvas.draw=()=>{originalDraw();showOverlays(true);afterFrame();};
+    canvas.addEventListener('kicad:viewframe',()=>{
+      showOverlays(false);
+      const backend=canvas.motionActive?'webgl-motion':'canvas2d';
+      if(host.dataset.renderBackend!==backend)host.dataset.renderBackend=backend;
+      if(!scene)setStatusText('renderMode',canvas.motionActive?'2D · WebGL':'2D');
+      setStatusText('viewScale',Math.round(canvas.viewport.camera.zoom/4*100)+'%');
+      report(false);
+    });
 
     canvas.canvas.addEventListener?.('pointermove',event=>{const rect=canvas.canvas.getBoundingClientRect(),point=canvas.viewport.camera.screen_to_world({x:event.clientX-rect.left,y:event.clientY-rect.top});setStatusText('cursorCoords',`${point.x.toFixed(2)}, ${point.y.toFixed(2)} mm`);});
 
@@ -134,7 +148,11 @@
 
       if(!position||![position.x,position.y].every(Number.isFinite)||Math.abs(position.x)>1e6||Math.abs(position.y)>1e6||scene)return false;
 
-      canvas.resize();const c=canvas.viewport.camera,b=c.bbox,w=Math.max(12,Math.min(40,b.w)),h=Math.max(12,Math.min(40,b.h));c.bbox={x:position.x-w/2,y:position.y-h/2,w,h};canvas.draw();return true;
+      const c=canvas.viewport.camera,b=c.bbox,w=Math.max(12,Math.min(40,b.w)),h=Math.max(12,Math.min(40,b.h));
+      const framed={x:position.x-w/2,y:position.y-h/2,w,h};
+      if(canvas.fitBounds)canvas.fitBounds(framed);
+      else{canvas.resize();c.bbox=framed;}
+      canvas.draw();return true;
 
     };
 
@@ -149,7 +167,7 @@
     floatingLayers.addEventListener('wheel',event=>{if(scene||event.ctrlKey)return;event.preventDefault();event.stopPropagation();layerWheel+=(event.deltaY||event.deltaX||0)*(event.deltaMode===1?16:event.deltaMode===2?400:1);if(Math.abs(layerWheel)<30||Date.now()-lastLayerCycle<120)return;stepCopper(layerWheel>0?1:-1);layerWheel=0;lastLayerCycle=Date.now();},{passive:false});
     floatingLayers.addEventListener('keydown',event=>{if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key))return;event.preventDefault();event.stopPropagation();stepCopper(['ArrowRight','ArrowDown'].includes(event.key)?1:-1);});
     floatingLayers.hidden=true;if(pcb)host.append(floatingLayers);
-    let floatingSignature='',floatingToggle=null,floatingFocusMode=null,layerKeyboard=false,layerHovered=false;
+    let floatingSignature='',floatingToggle=null,floatingFocusMode=null,floatingPinOne=null,layerKeyboard=false,layerHovered=false;
     const compactLayerBar=!globalThis.KiCadAndroidUI;
     const placeFloatingLayers=()=>{
       if(!compactLayerBar)return;
@@ -191,6 +209,15 @@
           floatingButtons.set(name,button);(targetNode||(compactLayerBar?layerOptions:floatingLayers)).append(button);return button;
         };
         floatingFocusMode=document.createElement('select');floatingFocusMode.setAttribute('aria-label','Layer selection style');floatingFocusMode.title='Highlight keeps other visible layers as context; Isolate hides them';for(const [value,label]of [['dim','Highlight layer'],['isolate','Isolate layer']]){const option=document.createElement('option');option.value=value;option.textContent=label;floatingFocusMode.append(option);}floatingFocusMode.value=$('layerFocusMode').value==='isolate'?'isolate':'dim';floatingFocusMode.onchange=()=>{$('layerFocusMode').value=floatingFocusMode.value;if(canvas.focusedLayer)canvas.focusLayer(canvas.focusedLayer,floatingFocusMode.value);layers();canvas.draw();};(compactLayerBar?layerOptions:floatingLayers).append(floatingFocusMode);
+        const pinOneLabel=document.createElement('label');
+        pinOneLabel.className='pin-one-toggle';
+        floatingPinOne=document.createElement('input');floatingPinOne.type='checkbox';
+        floatingPinOne.checked=canvas.showPinOneMarkers;
+        floatingPinOne.onchange=()=>setPinOnePreference(floatingPinOne.checked);
+        pinOneLabel.title='Color the copper for pad 1, or ball A1 when there is no pad 1.';
+        const pinOneCaption=document.createElement('span');pinOneCaption.textContent='Pin 1 markers';
+        pinOneLabel.append(floatingPinOne,pinOneCaption);
+        (compactLayerBar?layerOptions:floatingLayers).append(pinOneLabel);
         for(const layer of savedLayers){
           const item=document.createElement('div'),eye=document.createElement('button');
           item.className='compact-layer-item';eye.type='button';eye.className='compact-layer-eye';eye.dataset.layerVisibility=layer;
@@ -199,7 +226,7 @@
           item.append(eye);(compactLayerBar?layerOptions:floatingLayers).append(item);floatingEyes.set(layer,eye);
         }
         add('All','Show all saved board layers',()=>canvas.layerPreset('all'));
-        add('Overview','Show outer copper, silkscreen and board outline',()=>canvas.layerPreset('overview'));
+        add('Overview','Show all copper layers, both silkscreens and the board outline',()=>canvas.layerPreset('overview'));
         add('Filled copper','Toggle saved filled copper zones',()=>canvas.setZoneVisibility({filled:canvas.showFilledCopper===false}));
         add('Zone outlines','Toggle saved zone boundary outlines',()=>canvas.setZoneVisibility({outlines:canvas.showZoneOutlines===false}));
         add('Worksheet','Show or hide the saved KiCad page and title block',()=>{preferences.worksheet=!canvas.paperVisible;canvas.setWorksheetVisible(preferences.worksheet);savePreferences();});
@@ -395,7 +422,7 @@
         probeMasterHost=document.createElement('div');Object.assign(probeMasterHost.style,{position:'fixed',left:'-400px',top:'0',width:'320px',height:'320px',visibility:'hidden'});document.body.append(probeMasterHost);
         const assets=probeAssets=KiCadBrowserData.createModelAssetCache(async path=>{const reply=await send({type:'repo-asset',repository,ref,file:path});if(!reply?.ok)throw Error(reply?.error||'Saved model unavailable.');return reply.result;});
         const inventory=await send({type:'repo-model-index',repository,ref,file:entry.path});if(disposed){assets.clear();probeMasterHost.remove();throw Error('Workspace closed.');}
-        parentScene=probeMaster=engine.mountBoard3D(probeMasterHost,file.content,{dark,boardPath:entry.path,assetPaths:inventory?.ok?inventory.result?.paths||[]:[],loadAsset:assets.load,externalInspector:true,onSelect:(record,gesture)=>workspace?.select3D(record,gesture),onInspect:record=>workspace?.inspect3D(record),onComment:bomCompanion?undefined:record=>workspace?.comment3D(record),onViewChange:()=>workspace?.sceneViewChanged()});probeMasterPath=entry.path;
+        parentScene=probeMaster=engine.mountBoard3D(probeMasterHost,file.content,{dark,showPinOneMarkers:canvas.showPinOneMarkers,onPinOneMarkersChange:setPinOnePreference,boardPath:entry.path,assetPaths:inventory?.ok?inventory.result?.paths||[]:[],loadAsset:assets.load,externalInspector:true,selectionManagedExternally:true,onSelect:(record,gesture)=>workspace?.select3D(record,gesture),onInspect:record=>workspace?.inspect3D(record),onComment:bomCompanion?undefined:record=>workspace?.comment3D(record),onViewChange:()=>workspace?.sceneViewChanged()});probeMasterPath=entry.path;
         }catch(error){if(!probeMaster){probeAssets?.clear();probeMasterHost?.remove();}throw error;}finally{probeMasterLoading=false;}
       }
       if(!parentScene.createProbeViewport)throw Error('Update the 3D renderer to enable interactive probes.');
@@ -446,19 +473,36 @@
       miniHeading.addEventListener('pointermove',event=>{if(!miniMove||event.pointerId!==miniMove.id)return;miniPosition={x:miniMove.left+event.clientX-miniMove.x,y:miniMove.top+event.clientY-miniMove.y};positionMiniature();event.preventDefault();event.stopPropagation();});
       const endMiniMove=()=>{miniMove=null;};miniHeading.addEventListener('pointerup',endMiniMove);miniHeading.addEventListener('pointercancel',endMiniMove);
       miniHeading.addEventListener('keydown',event=>{if(event.target!==miniHeading||!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key)||miniMaximized)return;const area=host.getBoundingClientRect?.(),box=miniature.getBoundingClientRect?.();if(!area||!box)return;const step=event.shiftKey?32:12;miniPosition={x:box.left-area.left+({'ArrowLeft':-step,'ArrowRight':step}[event.key]||0),y:box.top-area.top+({'ArrowUp':-step,'ArrowDown':step}[event.key]||0)};positionMiniature();event.preventDefault();event.stopPropagation();});
-      miniMinimize.className=miniMaximize.className=miniClose.className='icon-only';miniMaximize.id='maximizeSheetTree';miniMaximize.onclick=()=>{miniMaximized=miniBody.hidden||!miniMaximized;miniBody.hidden=false;syncMiniatureSize();};
-      miniMinimize.onclick=()=>{miniBody.hidden=!miniBody.hidden;syncMiniatureSize();};
-      miniClose.onclick=()=>{miniature.hidden=true;};miniShow.id='showSheetTree';miniShow.textContent='Show sheet tree';miniShow.onclick=()=>{miniature.hidden=false;miniBody.hidden=false;syncMiniatureSize();$('viewerSettings').hidden=true;};$('viewerSettings')?.append(miniShow);syncMiniatureSize();
-      const miniMeasure=document.createElement('canvas').getContext?.('2d');if(miniMeasure)miniMeasure.font='500 18px system-ui, sans-serif';
+      let miniKeyTimer=null;
+      function cancelMiniatureShortcut(){clearTimeout(miniKeyTimer);miniKeyTimer=null;}
+      function miniatureShortcut(){
+        if(miniKeyTimer!==null){
+          cancelMiniatureShortcut();
+          miniMaximized=miniature.hidden||miniBody.hidden||!miniMaximized;
+          miniature.hidden=miniBody.hidden=false;
+          syncMiniatureSize();
+          return;
+        }
+        miniKeyTimer=setTimeout(()=>{
+          miniKeyTimer=null;
+          miniature.hidden=!miniature.hidden&&!miniBody.hidden&&!miniMaximized;
+          miniBody.hidden=miniMaximized=false;
+          syncMiniatureSize();
+        },300);
+      }
+      miniMinimize.className=miniMaximize.className=miniClose.className='icon-only';miniMaximize.id='maximizeSheetTree';miniMaximize.onclick=()=>{cancelMiniatureShortcut();miniMaximized=miniBody.hidden||!miniMaximized;miniBody.hidden=false;syncMiniatureSize();};
+      miniMinimize.onclick=()=>{cancelMiniatureShortcut();miniBody.hidden=!miniBody.hidden;syncMiniatureSize();};
+      miniClose.onclick=()=>{cancelMiniatureShortcut();miniature.hidden=true;};miniShow.id='showSheetTree';miniShow.textContent='Show sheet tree';miniShow.title='M toggles the sheet tree. Press M twice quickly to maximize or restore it.';miniShow.onclick=()=>{cancelMiniatureShortcut();miniature.hidden=false;miniBody.hidden=false;syncMiniatureSize();$('viewerSettings').hidden=true;};$('viewerSettings')?.append(miniShow);syncMiniatureSize();
+      const miniMeasure=document.createElement('canvas').getContext?.('2d');if(miniMeasure)miniMeasure.font='750 18px system-ui, sans-serif';
       const miniTextWidth=text=>miniMeasure?.measureText(text).width??Array.from(text).reduce((width,char)=>width+(/[^\u0000-\u00ff]/.test(char)?18:11),0);
       function miniElide(text,width){const chars=Array.from(text);if(miniTextWidth(text)<=width)return text;const candidate=keep=>chars.slice(0,Math.ceil(keep/2)).join('')+'…'+(Math.floor(keep/2)?chars.slice(-Math.floor(keep/2)).join(''):'');let low=0,high=chars.length;while(low<high){const keep=Math.ceil((low+high)/2);if(miniTextWidth(candidate(keep))<=width)low=keep;else high=keep-1;}return candidate(low);}
       function miniLabelLines(page){const text=String(page.label||page.path).replace(/\.(?:kicad_sch|sch)$/i,'').trim(),width=page.w-28;if(miniTextWidth(text)<=width)return [text];const chars=Array.from(text);let end=0;while(end<chars.length&&miniTextWidth(chars.slice(0,end+1).join(''))<=width)end++;end=Math.max(1,end);const prefix=chars.slice(0,end).join(''),breakAt=Math.max(prefix.lastIndexOf(' '),prefix.lastIndexOf('/'),prefix.lastIndexOf('_'),prefix.lastIndexOf('-'));if(breakAt>=end/2)end=breakAt+1;return [chars.slice(0,end).join('').trim(),miniElide(chars.slice(end).join('').trim(),width)];}
       const renderMiniature=()=>{
         const entries=(workspace.overviewSheets?.()||[]).filter(entry=>entry.sheet).map(entry=>({path:entry.sheet.path,label:entry.sheet.label||entry.sheet.path,instanceCount:entry.instanceCount,placements:entry.placements||[],design:{page:{width:192,height:64},primitives:[]},groups:[]}));
         const sourceKey=JSON.stringify(entries.map(entry=>[entry.path,entry.label,entry.design.page.width,entry.design.page.height,entry.placements.map(p=>[p.id,p.parentId,p.sheetPosition?.x,p.sheetPosition?.y])]));
-        if(miniSVG&&miniSourceKey===sourceKey){for(const [path,node]of miniNodes){node.classList.toggle('highlighted',Boolean(workspace.overviewSelection?.(path)?.netIds?.length));node.classList.toggle('current',path===currentFile());}return;}
+        if(miniSVG&&miniSourceKey===sourceKey){for(const [path,node]of miniNodes){node.classList.toggle('highlighted',Boolean(workspace.overviewSelection?.(path)?.netIds?.length));node.classList.toggle('current',path===currentFile());node.setAttribute('aria-current',path===currentFile()?'page':'false');}return;}
         miniSourceKey=sourceKey;miniNodes.clear();
-        const mini=KiCadReviewWorkspace.composeSheetOverview(entries,[],false,{wrapWide:false}),svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+        const mini=KiCadReviewWorkspace.composeSheetOverview(entries,[],false),svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
         // Navigator cards keep saved ancestry/order, without paper aspect ratios or rank wrapping.
         const width=Math.max(297,...mini.pages.map(page=>page.x+page.w)),height=Math.max(104,...mini.pages.map(page=>page.y+page.h));
         const geometry=JSON.stringify(mini.pages.map(page=>[page.path,page.x,page.y,page.w,page.h]));miniFitBox={x:-12,y:-4,w:width+24,h:height+8};if(!miniView||geometry!==miniGeometry){const active=mini.pages.find(page=>page.path===currentFile())||mini.pages[0],w=mini.pages.length<=12?miniFitBox.w:Math.min(miniFitBox.w,720),h=mini.pages.length<=12?miniFitBox.h:Math.min(miniFitBox.h,400);miniView={x:miniClamp((active?.x||0)+(active?.w||297)/2-w/2,miniFitBox.x,miniFitBox.x+miniFitBox.w-w),y:miniClamp((active?.y||0)+(active?.h||104)/2-h/2,miniFitBox.y,miniFitBox.y+miniFitBox.h-h),w,h};}miniGeometry=geometry;miniSVG=svg;miniPan=null;paintMiniView();svg.setAttribute('width','100%');svg.setAttribute('height','160');svg.setAttribute('aria-label','Sheet hierarchy, parents above children; drag to pan, wheel or plus/minus to zoom, Home to fit all sheets');svg.setAttribute('tabindex','0');
@@ -481,7 +525,7 @@
         const labels=mini.pages.map(page=>{const count=entries.find(entry=>entry.path===page.path)?.placements.length||0;return miniLabelLines({...page,label:String(page.label||page.path).replace(/\.(?:kicad_sch|sch)$/i,'')+(count>1?' ×'+count:'')});}),labelCounts=new Map();for(const lines of labels){const key=lines.join('\n');labelCounts.set(key,(labelCounts.get(key)||0)+1);}
         for(const [index,page]of mini.pages.entries()){
           const node=document.createElementNS('http://www.w3.org/2000/svg','g'),rect=document.createElementNS('http://www.w3.org/2000/svg','rect'),label=document.createElementNS('http://www.w3.org/2000/svg','text'),tooltip=document.createElementNS('http://www.w3.org/2000/svg','title'),selection=workspace.overviewSelection?.(page.path);
-          miniNodes.set(page.path,node);node.setAttribute('role','button');node.setAttribute('tabindex','0');const occurrences=entries.find(entry=>entry.path===page.path)?.placements||[];node.setAttribute('aria-label',occurrences.length>1?`${page.label}: ${occurrences.length} occurrences. Choose an occurrence`:`Go to ${page.label}`);node.setAttribute('data-instance-count',String(occurrences.length));node.setAttribute('aria-description',page.path);node.setAttribute('class','sheet-tree-miniature-node'+(selection?.netIds?.length?' highlighted':'')+(page.path===currentFile()?' current':''));rect.setAttribute('x',page.x);rect.setAttribute('y',page.y);rect.setAttribute('width',page.w);rect.setAttribute('height',page.h);rect.setAttribute('rx','7');
+          miniNodes.set(page.path,node);node.setAttribute('role','button');node.setAttribute('tabindex','0');const occurrences=entries.find(entry=>entry.path===page.path)?.placements||[];node.setAttribute('aria-label',occurrences.length>1?`${page.label}: ${occurrences.length} occurrences. Choose an occurrence`:`Go to ${page.label}`);node.setAttribute('data-instance-count',String(occurrences.length));node.setAttribute('aria-description',page.path);node.setAttribute('aria-current',page.path===currentFile()?'page':'false');node.setAttribute('class','sheet-tree-miniature-node'+(selection?.netIds?.length?' highlighted':'')+(page.path===currentFile()?' current':''));rect.setAttribute('x',page.x);rect.setAttribute('y',page.y);rect.setAttribute('width',page.w);rect.setAttribute('height',page.h);rect.setAttribute('rx','7');
           const clip=document.createElementNS('http://www.w3.org/2000/svg','clipPath'),clipRect=document.createElementNS('http://www.w3.org/2000/svg','rect'),clipId='sheetTreeLabel'+index,lines=labels[index];clip.setAttribute('id',clipId);for(const [key,value]of Object.entries({x:page.x+14,y:page.y+8,width:page.w-28,height:page.h-16}))clipRect.setAttribute(key,value);clip.append(clipRect);defs.append(clip);label.setAttribute('clip-path',`url(#${clipId})`);
           if(labelCounts.get(lines.join('\n'))>1){const suffix=' · '+(index+1);lines[lines.length-1]=miniElide(lines.at(-1),page.w-28-miniTextWidth(suffix))+suffix;}
           lines.forEach((text,lineIndex)=>{const span=document.createElementNS('http://www.w3.org/2000/svg','tspan');span.setAttribute('x',page.x+page.w/2);span.setAttribute('y',page.y+page.h/2+(lineIndex-(lines.length-1)/2)*22);span.textContent=text;label.append(span);});tooltip.textContent=(page.label===page.path?page.path:page.label+'\n'+page.path)+(occurrences.length>1?'\n'+occurrences.map(p=>p.label).join('\n'):'');
@@ -493,6 +537,13 @@
         miniBody.replaceChildren();miniBody.append(svg);
       };
       renderMiniature();
+      const overviewOrigin=hit=>{
+        const page=composition?.pages.find(page=>page.path===hit.sourcePath);
+        if(!page||!overviewPointer)return null;
+        const rect=overviewView.canvas.getBoundingClientRect();
+        const at=overviewView.viewport.camera.screen_to_world({x:overviewPointer.x-rect.left,y:overviewPointer.y-rect.top});
+        return at.x>=page.x&&at.x<=page.x+page.w&&at.y>=page.y&&at.y<=page.y+page.h?{x:at.x-page.x,y:at.y-page.y}:null;
+      };
       const rebuild=async()=>{
         const generation=++ticket,allEntries=workspace.overviewSheets(),entries=allEntries.filter(entry=>entry.sheet);
         for(const {sheet} of entries){
@@ -521,7 +572,7 @@
           const linked=linkedPlacements.get(path),connectedInstances=linked?.size?linked:new Set(selection.instanceIds||[]);
           const placements=(entry.placements||[]).filter(p=>!focused||!connectedInstances.size||connectedInstances.has(p.id));
           let front=placements.find(p=>p.id===frontInstances.get(path))||placements[0];const signature=JSON.stringify(selection.instanceIds||[]);if(active&&signature!==frontSelections.get(path)&&selection.instanceIds?.length&&!selection.instanceIds.includes(front?.id))front=placements.find(p=>selection.instanceIds.includes(p.id))||front;frontSelections.set(path,signature);if(front)frontInstances.set(path,front.id);
-          rendered.push({path,label:entry.instanceCount>1?path:(entry.sheet.label||path),instanceCount:placements.length||entry.instanceCount,totalInstanceCount:entry.instanceCount,instances:placements.map(p=>p.label),placements:front?[front,...placements.filter(p=>p!==front)]:placements,instanceId:front?.id,instanceLabel:entry.instanceCount>1?front?.label:null,design,groups:KiCadReviewWorkspace.sheetPageHighlights(nets,workspace.overviewSelection(path,front?.id),design,path)});
+          rendered.push({path,hierarchyDepth:(entry.placements||[]).reduce((deepest,p)=>Math.max(deepest,p.depth||0),0),label:entry.instanceCount>1?path:(entry.sheet.label||path),instanceCount:placements.length||entry.instanceCount,totalInstanceCount:entry.instanceCount,instances:placements.map(p=>p.label),placements:front?[front,...placements.filter(p=>p!==front)]:placements,instanceId:front?.id,instanceLabel:entry.instanceCount>1?front?.label:null,design,groups:KiCadReviewWorkspace.sheetPageHighlights(nets,workspace.overviewSelection(path,front?.id),design,path)});
         }
         if(!opened||generation!==ticket)return;
         const repeated=rendered.filter(entry=>entry.totalInstanceCount>1);stacks.hidden=!repeated.length;
@@ -531,10 +582,10 @@
         const previous=composition;
         if(previous&&(previous.pages.length!==rendered.length||previous.pages.some((page,i)=>page.path!==rendered[i].path)))refitNext=true;
         composition=KiCadReviewWorkspace.refreshSheetOverview(composition,rendered,links,dark);
-        hierarchyGraph=globalThis.KiCadSheetHierarchyLinks?.build(composition.pages,{headingGap:32})||null;
+        if(composition!==previous||!hierarchyGraph)hierarchyGraph=globalThis.KiCadSheetHierarchyLinks?.build(composition.pages,{headingGap:7})||null;
         renderMiniature();
         const missingTargets=allEntries.filter(entry=>entry.unavailable).length;
-        help.textContent+=(hierarchyGraph?' · Faint arrows show saved parent → child sheets.':' · Hierarchy links unavailable.')+' Coloured curves connect saved highlighted-net endpoints; dots mark actual connection points.'+
+        help.textContent+=(hierarchyGraph?' · Arrows show sheet hierarchy.':' · Hierarchy links unavailable.')+' Coloured arrows show highlighted net flow.'+
           (hierarchyGraph&&!hierarchyGraph.links.length&&shown.length>1?' No resolved parent → child link among shown sheets.':'')+
           (missingTargets?` · ${missingTargets} unloaded child target${missingTargets===1?'':'s'} omitted.`:'')+
           (hierarchyGraph?.unresolved?` · ${hierarchyGraph.unresolved} unresolved placement${hierarchyGraph.unresolved===1?'':'s'} omitted.`:'')+
@@ -547,10 +598,15 @@
             if(netLinksToggle.getAttribute('aria-pressed')==='true'){if(globalThis.KiCadSheetHierarchyLinks)KiCadSheetHierarchyLinks.draw(overviewView,{links:composition.airwires},dark,{color:dark?'#edc14b':'#926900',kind:'net',opacity:.9});else for(const wire of composition.airwires)overviewView.paint(wire);}
           };
           overviewView.canvas.addEventListener('pointermove',event=>{overviewPointer={x:event.clientX,y:event.clientY};const rect=overviewView.canvas.getBoundingClientRect(),at=overviewView.viewport.camera.screen_to_world({x:event.clientX-rect.left,y:event.clientY-rect.top}),page=composition?.pages.find(page=>at.x>=page.x&&at.x<=page.x+page.w&&at.y>=page.y-32&&at.y<=page.y+page.h);overviewView.canvas.title=page?`${page.label}\n${page.path}${page.instanceCount>1?'\n'+page.instanceCount+' instances':''}`:'';});
-          overviewView.addEventListener('kicad:select',event=>{const hit=overviewView.selected;if(hit?.sourcePath&&hit.uuid){const netLike=['wire','junction','pin','label','global_label','hierarchical_label','sheet-pin'].includes(hit.kind),objectOnly=event.detail?.individual||['part','pin'].includes($('selectionMode').value);if(!objectOnly&&($('selectionMode').value==='net'||netLike)&&workspace.selectOverviewNet?.(hit.sourcePath,hit.uuid,hit.sourceInstanceId,event.detail?.multi||$('multiHighlight').checked))return;workspace.selectOverviewObject?.(hit.sourcePath,hit.uuid);}});
+          overviewView.canvas.addEventListener('click',event=>{overviewPointer={x:event.clientX,y:event.clientY};},true);
+          overviewView.addEventListener('kicad:select',event=>{const hit=overviewView.selected;if(hit?.sourcePath&&hit.uuid){const netLike=['wire','junction','pin','label','global_label','hierarchical_label','sheet-pin'].includes(hit.kind),objectOnly=event.detail?.individual||['part','pin'].includes($('selectionMode').value);if(!objectOnly&&($('selectionMode').value==='net'||netLike)&&workspace.selectOverviewNet?.(hit.sourcePath,hit.uuid,hit.sourceInstanceId,event.detail?.multi||$('multiHighlight').checked,overviewOrigin(hit)))return;workspace.selectOverviewObject?.(hit.sourcePath,hit.uuid);}});
           overviewView.canvas.addEventListener('dblclick',event=>{
             const rect=overviewView.canvas.getBoundingClientRect(),at=overviewView.viewport.camera.screen_to_world({x:event.clientX-rect.left,y:event.clientY-rect.top});
-            const page=composition.pages.find(p=>at.x>=p.x&&at.x<=p.x+p.w&&at.y>=p.y&&at.y<=p.y+p.h);if(page){close();workspace.followSheet(page.path);}
+            const page=composition.pages.find(p=>at.x>=p.x&&at.x<=p.x+p.w&&at.y>=p.y&&at.y<=p.y+p.h);
+            if(page){
+              const placement=page.placements.find(p=>p.id===page.instanceId);
+              close();workspace.followSheet(page.path,undefined,placement?.nativePath?{instancePath:placement.nativePath}:undefined);
+            }
           });
         }
         overviewView.dark=dark;overviewView.showTerminalNumbers=canvas.showTerminalNumbers;
@@ -564,7 +620,7 @@
       ($('sheetHome')?.parentElement||$('frameControls')).append(toggle);back.onclick=close;fitAll.onclick=fitOverview;
       const resizeOverview=()=>{positionMiniature();placeOverviewPopovers();if(opened&&overviewFitted)requestAnimationFrame(()=>{if(opened&&overviewFitted)fitOverview();});};globalThis.addEventListener?.('resize',resizeOverview);
       const miniResize=typeof ResizeObserver==='function'?new ResizeObserver(()=>positionMiniature()):null;miniResize?.observe(host);
-      sheetOverview={openNetMap(){if(!connectedOnly)refitNext=true;connectedOnly=true;connectedToggle.setAttribute('aria-pressed','true');netLinksToggle.setAttribute('aria-pressed','true');hierarchyToggle.setAttribute('aria-pressed','true');return opened?rebuild():open();},highlightPointerNet(multi=false){if(!overviewView)return false;let hit=overviewView.selected;if(overviewPointer){const rect=overviewView.canvas.getBoundingClientRect(),at=overviewView.viewport.camera.screen_to_world({x:overviewPointer.x-rect.left,y:overviewPointer.y-rect.top});hit=overviewView.query?.(at)?.[0]||hit;}return Boolean(hit?.sourcePath&&hit.uuid&&workspace.selectOverviewNet?.(hit.sourcePath,hit.uuid,hit.sourceInstanceId,multi));},fitHighlights(){if(!overviewView||!composition)return false;const box=globalThis.KiCadOwnedCanvas?.bounds?.(composition.highlighted);if(!box)return false;overviewFitted=false;const margin=Math.max(8,Math.max(box.w,box.h)*.08);overviewView.viewport.camera.bbox={x:box.x-margin,y:box.y-margin,w:Math.max(.01,box.w)+margin*2,h:Math.max(.01,box.h)+margin*2};overviewView.draw();return true;},setTheme(value){if(overviewView){overviewView.dark=Boolean(value);overviewView.draw();}},setTerminalNumbers(visible){if(overviewView){overviewView.showTerminalNumbers=Boolean(visible);overviewView.draw();}},open,close,isOpen:()=>opened,toggle:()=>opened?close():open(),refreshTree:renderMiniature,refresh(){renderMiniature();if(opened)return rebuild();},dispose(){miniResize?.disconnect();document.removeEventListener?.('pointerdown',dismissOverviewPopovers);globalThis.removeEventListener?.('resize',resizeOverview);close();$('unselect').removeEventListener('click',clearOverviewSelection);$('clearHighlights').removeEventListener('click',clearOverviewSelection);gallery.remove();toggle.remove();miniature.remove();miniShow.remove();}};globalThis.KiCadSheetOverview=sheetOverview;
+      sheetOverview={miniatureShortcut,openNetMap(){if(!connectedOnly)refitNext=true;connectedOnly=true;connectedToggle.setAttribute('aria-pressed','true');netLinksToggle.setAttribute('aria-pressed','true');hierarchyToggle.setAttribute('aria-pressed','true');return opened?rebuild():open();},highlightPointerNet(multi=false){if(!overviewView)return false;let hit=overviewView.selected;if(overviewPointer){const rect=overviewView.canvas.getBoundingClientRect(),at=overviewView.viewport.camera.screen_to_world({x:overviewPointer.x-rect.left,y:overviewPointer.y-rect.top});hit=overviewView.query?.(at)?.[0]||hit;}return Boolean(hit?.sourcePath&&hit.uuid&&workspace.selectOverviewNet?.(hit.sourcePath,hit.uuid,hit.sourceInstanceId,multi,overviewOrigin(hit)));},fitHighlights(){if(!overviewView||!composition)return false;const box=globalThis.KiCadOwnedCanvas?.bounds?.(composition.highlighted);if(!box)return false;overviewFitted=false;const margin=Math.max(8,Math.max(box.w,box.h)*.08);overviewView.viewport.camera.bbox={x:box.x-margin,y:box.y-margin,w:Math.max(.01,box.w)+margin*2,h:Math.max(.01,box.h)+margin*2};overviewView.draw();return true;},setTheme(value){if(overviewView){overviewView.dark=Boolean(value);overviewView.draw();}},setTerminalNumbers(visible){if(overviewView){overviewView.showTerminalNumbers=Boolean(visible);overviewView.draw();}},open,close,isOpen:()=>opened,toggle:()=>opened?close():open(),refreshTree:renderMiniature,refresh(){renderMiniature();if(opened)return rebuild();},dispose(){cancelMiniatureShortcut();miniResize?.disconnect();document.removeEventListener?.('pointerdown',dismissOverviewPopovers);globalThis.removeEventListener?.('resize',resizeOverview);close();$('unselect').removeEventListener('click',clearOverviewSelection);$('clearHighlights').removeEventListener('click',clearOverviewSelection);gallery.remove();toggle.remove();miniature.remove();miniShow.remove();}};globalThis.KiCadSheetOverview=sheetOverview;
     addEventListener('keydown',event=>{if(event.key==='Escape'&&opened){event.preventDefault();if(guide.open||stacks.open){guide.open=stacks.open=false;return;}close();}});
     }
 
@@ -586,7 +642,18 @@
     $('netNamesSetting').hidden=!pcb;$('showNetNames').onchange=()=>{preferences.showNetNames=$('showNetNames').checked;applyTheme();savePreferences();};
     let lastThemeNotice=null;
     function publishThemeState(notify=true){const state={uiTheme:preferences.uiTheme,drawingTheme:preferences.drawingTheme},signature=JSON.stringify(state);if(signature===lastThemeNotice)return;lastThemeNotice=signature;if(notify&&parent!==globalThis)parent.postMessage({type:'kicad-review:theme',repository,ref,file:requestedFile,...state},ownOrigin);}
-    const applyTheme=(notify=true)=>{canvas.showTerminalNumbers=preferences.showTerminalNumbers!==false;$('showTerminalNumbers').checked=canvas.showTerminalNumbers;terminalNumberButton.setAttribute('aria-pressed',String(canvas.showTerminalNumbers));canvas.showNetNames=preferences.showNetNames===true;$('showNetNames').checked=canvas.showNetNames;dark=preferences.drawingTheme==='dark';canvas.dark=dark;canvas.acceleration=preferences.acceleration==='off'?'off':'auto';scene?.setTheme(dark);if(probeMaster&&probeMaster!==scene)probeMaster.setTheme?.(dark);sheetOverview?.setTheme?.(dark);scene?.setTerminalLabels?.(canvas.showNetNames);scene?.setTerminalNumbers?.(canvas.showTerminalNumbers);sheetOverview?.setTerminalNumbers?.(canvas.showTerminalNumbers);workspace?.syncTerminalVisibility?.();document.body.dataset.uiTheme=preferences.uiTheme;document.body.dataset.drawingTheme=preferences.drawingTheme;$('uiTheme').value=preferences.uiTheme;$('drawingTheme').value=preferences.drawingTheme;$('rulerUnits').value=preferences.rulerUnits;if($('acceleration'))$('acceleration').value=canvas.acceleration;$('themeButton').setAttribute('aria-pressed',String(dark));if($('displayPreset'))$('displayPreset').value=preferences.uiTheme==='light'&&preferences.drawingTheme===(pcb?'dark':'light')?'kicad':preferences.uiTheme===preferences.drawingTheme?preferences.uiTheme:'custom';if(!scene)canvas.draw();publishThemeState(notify);};
+    function syncPinOnePreference(){
+      canvas.showPinOneMarkers=preferences.showPinOneMarkers!==false;
+      if(floatingPinOne)floatingPinOne.checked=canvas.showPinOneMarkers;
+      scene?.setPinOneMarkers?.(canvas.showPinOneMarkers);
+      if(probeMaster&&probeMaster!==scene)probeMaster.setPinOneMarkers?.(canvas.showPinOneMarkers);
+    }
+    function setPinOnePreference(visible){
+      preferences.showPinOneMarkers=Boolean(visible);
+      syncPinOnePreference();savePreferences();
+      if(!scene)canvas.draw();
+    }
+    const applyTheme=(notify=true)=>{syncPinOnePreference();canvas.showTerminalNumbers=preferences.showTerminalNumbers!==false;$('showTerminalNumbers').checked=canvas.showTerminalNumbers;terminalNumberButton.setAttribute('aria-pressed',String(canvas.showTerminalNumbers));canvas.showNetNames=preferences.showNetNames===true;$('showNetNames').checked=canvas.showNetNames;dark=preferences.drawingTheme==='dark';canvas.dark=dark;canvas.acceleration=preferences.acceleration==='off'?'off':'auto';scene?.setTheme(dark);if(probeMaster&&probeMaster!==scene)probeMaster.setTheme?.(dark);sheetOverview?.setTheme?.(dark);scene?.setTerminalLabels?.(canvas.showNetNames);scene?.setTerminalNumbers?.(canvas.showTerminalNumbers);sheetOverview?.setTerminalNumbers?.(canvas.showTerminalNumbers);workspace?.syncTerminalVisibility?.();document.body.dataset.uiTheme=preferences.uiTheme;document.body.dataset.drawingTheme=preferences.drawingTheme;$('uiTheme').value=preferences.uiTheme;$('drawingTheme').value=preferences.drawingTheme;$('rulerUnits').value=preferences.rulerUnits;if($('acceleration'))$('acceleration').value=canvas.acceleration;$('themeButton').setAttribute('aria-pressed',String(dark));if($('displayPreset'))$('displayPreset').value=preferences.uiTheme==='light'&&preferences.drawingTheme===(pcb?'dark':'light')?'kicad':preferences.uiTheme===preferences.drawingTheme?preferences.uiTheme:'custom';if(!scene)canvas.draw();publishThemeState(notify);};
 
     $('themeButton').onclick=()=>{preferences.uiTheme=preferences.drawingTheme=dark?'light':'dark';applyTheme();savePreferences();windowLink?.publishTheme?.(preferences.drawingTheme);};
 
@@ -631,9 +698,10 @@
 
       const lock=value=>{for(const id of ['gridButton','flipButton','applyPage','resetPage'])$(id).disabled=value;};
 
-      mode.onclick=async()=>{
+      mode.onclick=async(event)=>{
+        const fit=event?.fitSelection!==false;
 
-        if(busy)return;if(scene){probeMaster=scene;probeMasterPath=rootFile;scene=null;pane.hidden=true;canvas.canvas.hidden=false;workspace.setScene(null);$('drawingLegend').hidden=false;lock(false);mode.setAttribute('aria-pressed','false');if($('renderMode'))$('renderMode').textContent='2D';canvas.resize();canvas.draw();return;}
+        if(busy)return;if(scene){probeMaster=scene;probeMasterPath=rootFile;scene=null;pane.hidden=true;canvas.canvas.hidden=false;workspace.setScene(null);$('drawingLegend').hidden=false;lock(false);mode.setAttribute('aria-pressed','false');if($('renderMode'))$('renderMode').textContent='2D';if(!fit||!workspace.fitSelection?.()){canvas.resize();canvas.draw();}return;}
 
         busy=true;mode.disabled=true;
 
@@ -641,9 +709,9 @@
 
           if(probeMasterLoading)throw Error('Wait for the 3D probe to finish loading.');
           if(probeMaster&&probeMasterPath===rootFile){scene=probeMaster;probeMaster=null;if(probeMasterHost){Object.assign(probeMasterHost.style,{position:'absolute',left:'0',top:'0',width:'100%',height:'100%',visibility:'visible'});pane.append(probeMasterHost);}}
-          else scene=engine.mountBoard3D(pane,files.find(file=>file.path===rootFile).content,{dark,showNetNames:canvas.showNetNames,showTerminalNumbers:canvas.showTerminalNumbers,onTerminalNumbersChange:visible=>{preferences.showTerminalNumbers=visible;applyTheme();savePreferences();},onTerminalLabelsChange:visible=>{preferences.showNetNames=visible;applyTheme();savePreferences();},boardPath:rootFile,assetPathsPromise:modelPaths,assetWarnings,loadAsset:modelAssetCache.load,externalInspector:true,onViewChange:()=>workspace?.sceneViewChanged(),onAnchor:({point})=>workspace?.positionSimulation(point),onMeasurementMode:active=>{$("measureButton").setAttribute("aria-pressed",String(active));$("measurementStatus").textContent=active?"3D measurement: select two model surface points.":"";},onSelect:(record,gesture)=>workspace?.select3D(record,gesture),onInspect:record=>workspace?.inspect3D(record),onComment:bomCompanion?undefined:record=>workspace?.comment3D(record)});
+          else scene=engine.mountBoard3D(pane,files.find(file=>file.path===rootFile).content,{dark,showPinOneMarkers:canvas.showPinOneMarkers,onPinOneMarkersChange:setPinOnePreference,showNetNames:canvas.showNetNames,showTerminalNumbers:canvas.showTerminalNumbers,onTerminalNumbersChange:visible=>{preferences.showTerminalNumbers=visible;applyTheme();savePreferences();},onTerminalLabelsChange:visible=>{preferences.showNetNames=visible;applyTheme();savePreferences();},boardPath:rootFile,assetPathsPromise:modelPaths,assetWarnings,loadAsset:modelAssetCache.load,externalInspector:true,selectionManagedExternally:true,onViewChange:()=>workspace?.sceneViewChanged(),onAnchor:({point})=>workspace?.positionSimulation(point),onMeasurementMode:active=>{$("measureButton").setAttribute("aria-pressed",String(active));$("measurementStatus").textContent=active?"3D measurement: select two model surface points.":"";},onSelect:(record,gesture)=>workspace?.select3D(record,gesture),onInspect:record=>workspace?.inspect3D(record),onComment:bomCompanion?undefined:record=>workspace?.comment3D(record)});
 
-          workspace.setScene(scene);syncFloatingLayers();$('drawingLegend').hidden=true;lock(true);mode.setAttribute('aria-pressed','true');if($('renderMode'))$('renderMode').textContent='3D';
+          canvas.releaseTransientGeometry?.();workspace.setScene(scene);syncFloatingLayers();$('drawingLegend').hidden=true;lock(true);mode.setAttribute('aria-pressed','true');if($('renderMode'))$('renderMode').textContent='3D';if(fit)workspace.fitSelection?.();
 
         }catch(error){scene?.dispose();scene=null;pane.hidden=true;canvas.canvas.hidden=false;workspace.setScene(null);syncFloatingLayers();$('engineNotice').textContent=error.message;$('engineNotice').hidden=false;updateDiagnostics();}
 
@@ -653,7 +721,7 @@
 
     }
 
-    const related=selection=>{if(!globalThis.KiCadPairedReview?.validSelection(selection))return;crossApplying=true;try{workspace.highlightRelated?.(selection);}finally{crossApplying=false;}};
+    const related=selection=>{if(!globalThis.KiCadPairedReview?.validSelection(selection))return;crossApplying=true;try{return workspace.highlightRelated?.(selection);}finally{crossApplying=false;}};
     if(globalThis.KiCadWindowLink&&viewSession&&(/^[a-f0-9]{40}$/i.test(ref)||globalThis.KiCadLocalRuntime&&globalThis.KiCadLocalWorkspace?.openDetached))try{windowLink=KiCadWindowLink.mount({session:viewSession,scope:JSON.stringify([provider,providerContext.host||'https://github.com',repository,ref]),onTheme:theme=>{if(preferences.uiTheme===theme&&preferences.drawingTheme===theme)return;preferences.uiTheme=preferences.drawingTheme=theme;applyTheme();savePreferences();},onSelection:selection=>{crossApplying=true;try{workspace.applyWindowSelection?.(selection);}finally{crossApplying=false;}},onEnabled:enabled=>{dispatchEvent(new CustomEvent('kicad-review:detach-state',{detail:{enabled}}));if(parent!==window)parent.postMessage({type:'kicad-review:detach-state',enabled},ownOrigin);}});}catch(error){$('engineNotice').textContent=error.message;$('engineNotice').hidden=false;updateDiagnostics();}
     addEventListener('kicad-review:detach-sync',event=>{if(typeof event.detail?.enabled==='boolean')windowLink?.setEnabled(event.detail.enabled);});
     addEventListener('kicad-review:detach-view',event=>{const mode=event.detail?.mode;if(!['schematic','layout','3d'].includes(mode))return;globalThis.KiCadDetachedView?.chooser({mode,current:currentFile(),unavailable:Boolean(globalThis.KiCadVSCodeContext||globalThis.KiCadLocalRuntime&&!globalThis.KiCadLocalWorkspace?.openDetached||globalThis.KiCadAndroidRuntime),getEntries:async()=>{const reply=await send({type:'project-inventory',repository,ref,file:rootFile});if(!reply?.ok)throw Error(reply?.error||'Project inventory unavailable.');return reply.result.files;},buildURL:file=>KiCadDetachedView.url({base:location.href,mode,file,repository,ref,provider,host:providerContext.host,session:viewSession,allowLocal:Boolean(globalThis.KiCadLocalRuntime&&globalThis.KiCadLocalWorkspace?.openDetached)}),onError:message=>{$('engineNotice').textContent=message;$('engineNotice').hidden=false;updateDiagnostics();}});});
@@ -678,7 +746,17 @@
       if(msg.command==='detach-sync'&&typeof msg.enabled==='boolean'){windowLink?.setEnabled(msg.enabled);return;}
       if(msg.command==='workspace-view'){
         if(!['schematic','layout','3d','draftsman','simulation','bom'].includes(msg.mode))return;
-        if(msg.mode==='3d'){if(pcb&&!scene)$('mode3d').click();return;}
+        if(['schematic','layout','3d'].includes(msg.mode)){
+          const transferred=globalThis.KiCadPairedReview?.validSelection(msg.selection);
+          const switching=(msg.mode==='3d'&&pcb&&!scene)||(msg.mode!=='3d'&&Boolean(scene));
+          const fit=()=>{
+            if(transferred){if(related(msg.selection)&&(msg.selection.kind==='object'||msg.selection.kind==='group'&&msg.selection.items.length))workspace.fitSelection?.();}
+            else if(!switching)workspace.fitSelection?.();
+          };
+          if(switching)void Promise.resolve($('mode3d').onclick?.({fitSelection:!transferred})).then(fit);
+          else fit();
+          return;
+        }
         if(scene)$('mode3d').click();
         if(msg.mode==='draftsman')$('openDraftsman')?.click();
         if(msg.mode==='bom')$('openBomManager')?.click();
@@ -686,6 +764,7 @@
         return;
       }
       if(msg.command==='restore-controls'){workspace.restoreFocusView?.();return;}
+      if(msg.command==='sheet-map-shortcut'){sheetOverview?.miniatureShortcut();return;}
       if(msg.command==='open-sheet'){workspace.followSheet?.(msg.file);return;}
       if(msg.command==='refresh-comments'){workspace.refreshComments?.();return;}
       if(msg.command==='highlight-related'){related(msg.selection);return;}
@@ -702,6 +781,7 @@
     addEventListener('keydown',event=>{
 
       if(event.defaultPrevented||event.repeat||event.isComposing||event.composedPath().some(node=>node?.isContentEditable||/^(INPUT|TEXTAREA|SELECT)$/.test(node?.tagName||''))||event.ctrlKey||event.altKey||event.metaKey)return;
+      if(event.key.toLowerCase()==='m'&&!event.shiftKey&&sheetOverview){event.preventDefault();sheetOverview.miniatureShortcut();return;}
       if(scene){if(event.key.toLowerCase()==='f'||event.key==='Home'){event.preventDefault();scene.fit?.(event.key==='Home');}else if(['+','='].includes(event.key)){event.preventDefault();scene.zoom?.(1.25);}else if(['-','_'].includes(event.key)){event.preventDefault();scene.zoom?.(.8);}return;}
 
       if(event.key==='Escape'&&!$('viewerSettings').hidden){event.preventDefault();closeSettings();return;}

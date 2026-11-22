@@ -29,7 +29,7 @@ test('net guides reach exact endpoints continuously with dots and one label per 
  const moves=[],ends=[],curves=[],dots=[],labels=[],dashes=[],ctx={globalAlpha:1,save(){},restore(){},beginPath(){},moveTo(x,y){moves.push([x,y]);},lineTo(x,y){ends.push([x,y]);},quadraticCurveTo(){},bezierCurveTo(...points){curves.push(points);},setLineDash(value){dashes.push(value);},stroke(){},arc(x,y){dots.push([x,y]);},fill(){},measureText(){return{width:30};},fillRect(){},fillText(text){labels.push(text);}};
  const edge={name:'VCC',points:[{x:3,y:4},{x:-10,y:4},{x:-10,y:80},{x:100,y:80},{x:105,y:100}],exteriorPoints:[{x:-10,y:4},{x:-10,y:80},{x:100,y:80}]};
  require('../sheet-hierarchy-links.js').draw({ctx,viewport:{camera:{world_to_screen:p=>p}}},{links:[edge,edge]},true,{kind:'net'});
- assert.deepEqual(moves[0],[3,4]);assert.deepEqual(curves[0].slice(-2),[105,100]);assert.deepEqual(dots.slice(0,2),[[3,4],[105,100]]);assert.deepEqual(labels,['VCC']);assert.ok(dashes.every(value=>value.length===0));
+ assert.deepEqual(moves[0],[3,4]);assert.deepEqual(curves[0].slice(-2),[105,100]);assert.ok(ends.length>=2,'net paths include a directional arrowhead');assert.deepEqual(dots.slice(0,2),[[3,4],[105,100]]);assert.deepEqual(labels,['VCC']);assert.ok(dashes.every(value=>value.length===0));
 });
 
 test('miniature hierarchy paths use bounded quadratic curves and reject invalid coordinates',()=>{
@@ -128,8 +128,8 @@ test('all-sheet guides stroke shared rails once and draw open heads only when th
  const commands=[],strokes=[],ctx={globalAlpha:1,save(){},restore(){},beginPath(){},setLineDash(){},moveTo(x,y){commands.push(['M',x,y]);},lineTo(x,y){commands.push(['L',x,y]);},stroke(){strokes.push(this.globalAlpha);}};
  const view={ctx,viewport:{camera:{world_to_screen:p=>p}}},from={x:8,y:0},joint={x:8,y:10},links=[{points:[from,joint,{x:8,y:19}]},{points:[from,joint,{x:20,y:10},{x:20,y:12}]}];
  require('../sheet-hierarchy-links.js').drawGuides(view,{links},true,false);
- assert.deepEqual(strokes,[.42]);assert.equal(commands.filter(([op])=>op==='M').length,3);
- assert.deepEqual(commands.slice(3,6),[['M',5.5,14],['L',8,19],['L',10.5,14]]);
+ assert.deepEqual(strokes,[.8]);assert.equal(commands.filter(([op])=>op==='M').length,3);
+ assert.deepEqual(commands.slice(3,6),[['M',5.24,13],['L',8,19],['L',10.76,13]]);
 });
 
 test('overview placement labels hide at far zoom and never cover pages or one another',()=>{

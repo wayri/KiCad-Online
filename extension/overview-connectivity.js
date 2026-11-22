@@ -80,21 +80,85 @@
       if(edges.length>MAX_EDGES)break;
     }
     if(edges.length>MAX_EDGES) {limits.push("Too many connectivity links (200000 maximum).");return empty();}
-    const reached=new Set(), queue=[];
-    const seed=n=> {if(n && !reached.has(n.index)){reached.add(n.index);queue.push(n.index);}};
-    for(const selected of selectedIds||[]) {
-      if(typeof selected==="string") {for(const n of nodesById.get(selected)||[])seed(n);}
-      else if(selected && typeof selected.netId==="string")seed(lookup.get(key(selected.instanceId,selected.netId)));
+    const distances=new Map(),origins=new Map(),queue=[];
+    function seed(node,position){
+      if(!node)return;
+      if(!distances.has(node.index)){distances.set(node.index,0);queue.push(node.index);}
+      if(Number.isFinite(position?.x)&&Number.isFinite(position?.y))origins.set(node.index,position);
     }
-    for(let i=0;i<queue.length;i++)for(const next of adjacency[queue[i]])if(!reached.has(next)){reached.add(next);queue.push(next);}
-    const endpoint=(n,name,kind,sheetId)=> {
-      const members=(n.net.members||[]).filter(m=>Number.isFinite(m.position?.x)&&Number.isFinite(m.position?.y));
-      const member=members.find(m=>m.name===name&&m.kind===kind&&(!sheetId||m.sheetId===sheetId)) || members.find(m=>m.name===name&&(!sheetId||m.sheetId===sheetId)) || members.find(m=>!['global_label','hierarchical_label','sheet_pin','label'].includes(m.kind)) || members.find(m=>!m.name);
-      const p=member?.position;
-      return {path:n.net.path,netId:n.net.id,instanceId:n.instanceId,position:p && Number.isFinite(p.x) && Number.isFinite(p.y)?{x:p.x,y:p.y}:null};
-    };
-    return {matches:nodes.filter(n=>reached.has(n.index)).map(({net,instanceId})=>({net,instanceId})),
-      links:edges.filter(e=>reached.has(e.a.index)&&reached.has(e.b.index)).map(e=>({name:e.name,from:endpoint(e.a,e.name,e.anchors?.aKind,e.anchors?.aSheetId),to:endpoint(e.b,e.name,e.anchors?.bKind,e.anchors?.bSheetId)})),limits};
+    for(const selected of selectedIds||[]) {
+      if(typeof selected==="string"){for(const node of nodesById.get(selected)||[])seed(node);}
+      else if(selected?.instanceId)seed(lookup.get(key(selected.instanceId,selected.netId)),selected.position);
+      else if(selected){for(const node of nodesById.get(selected.netId)||[])seed(node,selected.position);}
+    }
+    for(let i=0;i<queue.length;i++){
+      const index=queue[i];
+      for(const next of adjacency[index])if(!distances.has(next)){distances.set(next,distances.get(index)+1);queue.push(next);}
+    }
+
+    const labelKinds=new Set(['global_label','hierarchical_label','sheet_pin','label']);
+    const finiteMember=member=>Number.isFinite(member.position?.x)&&Number.isFinite(member.position?.y);
+    const port=(node,name,kind,sheetId)=>(node.net.members||[]).find(member=>
+      member.name===name&&member.kind===kind&&(!sheetId||member.sheetId===sheetId));
+    function direction(member){
+      const type=member?.direction;
+      if(type==='input'||type==='power_in')return 'input';
+      if(type==='output'||type==='power_out'||type==='open_collector'||type==='open_emitter')return 'output';
+      return null;
+    }
+    const pinDirections=new Map();
+    function pinDirection(node){
+      if(!pinDirections.has(node.index)){
+        const evidence=new Set((node.net.members||[]).filter(member=>member.kind==='pin').map(direction).filter(Boolean));
+        // Receivers can share a net with its driver on the same sheet.
+        pinDirections.set(node.index,evidence.has('output')?'output':evidence.has('input')?'input':null);
+      }
+      return pinDirections.get(node.index);
+    }
+    function endpoint(node,name,kind,sheetId,selection){
+      const members=node.net.members||[], saved=port(node,name,kind,sheetId);
+      const representative=(saved&&finiteMember(saved)?saved:null)
+        ||members.find(member=>finiteMember(member)&&member.name===name&&(!sheetId||member.sheetId===sheetId))
+        ||members.find(member=>finiteMember(member)&&!labelKinds.has(member.kind));
+      const position=selection||representative?.position;
+      return {path:node.net.path,netId:node.net.id,instanceId:node.instanceId,position:position?{x:position.x,y:position.y}:null};
+    }
+    const reached=node=>distances.has(node.index);
+    const distance=node=>distances.get(node.index);
+    const links=[];
+    for(const {a,b,name,anchors} of edges){
+      if(!reached(a)||!reached(b)||anchors?.aKind==='global_label')continue;
+      // Both sides of a sheet port describe direction relative to the child.
+      const parentPort=direction(port(a,name,anchors?.aKind,anchors?.aSheetId));
+      const childPort=direction(port(b,name,anchors?.bKind));
+      const conflict=parentPort&&childPort&&parentPort!==childPort,portDirection=parentPort||childPort;
+      const aPin=pinDirection(a),bPin=pinDirection(b);
+      const signal=conflict?null:portDirection?(portDirection==='input'?'forward':'reverse')
+        :aPin==='output'&&bPin==='input'?'forward':bPin==='output'&&aPin==='input'?'reverse':null;
+      const reversed=signal?signal==='reverse':distance(b)<distance(a);
+      const from=endpoint(a,name,anchors?.aKind,anchors?.aSheetId,!signal&&!reversed?origins.get(a.index):null);
+      const to=endpoint(b,name,anchors?.bKind,null,!signal&&reversed?origins.get(b.index):null);
+      links.push({name,from:reversed?to:from,to:reversed?from:to});
+    }
+    for(const [name,group] of globals){
+      const candidates=group.filter(reached);
+      if(candidates.length<2)continue;
+      const labels=candidates.map(node=>direction(port(node,name,'global_label')));
+      const labelDrivers=candidates.filter((_,i)=>labels[i]==='output');
+      const pinDrivers=candidates.filter((node,i)=>!labels[i]&&pinDirection(node)==='output');
+      const drivers=[...labelDrivers,...pinDrivers];
+      const known=drivers.length===1?drivers[0]:null;
+      const start=known||candidates.reduce((closest,node)=>distance(node)<distance(closest)?node:closest);
+      const from=endpoint(start,name,'global_label',null,known?null:origins.get(start.index));
+      for(const target of candidates)if(target!==start){
+        links.push({name,from,to:endpoint(target,name,'global_label')});
+        if(links.length>=MAX_EDGES){limits.push('Connectivity links reached the display limit.');break;}
+      }
+      if(links.length>=MAX_EDGES)break;
+    }
+
+    return {matches:nodes.filter(reached).map(({net,instanceId})=>({net,instanceId})),links,limits};
+
   }
   root.KiCadOverviewConnectivity={resolve};
   if(typeof module!=="undefined" && module.exports)module.exports=root.KiCadOverviewConnectivity;

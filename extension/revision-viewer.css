@@ -299,8 +299,14 @@ body[data-workspace="true"] #projectButton,body[data-workspace="true"] #viewOppo
 .sheet-tree-miniature-tools{display:flex;align-items:center;gap:4px;flex:none;padding:3px 6px;border-top:1px solid var(--line,#526675)}.sheet-tree-miniature-tools button{min-width:var(--sheet-mini-control-size);height:var(--sheet-mini-control-size);min-height:var(--sheet-mini-control-size);padding:0 8px;font-size:12px}.sheet-tree-miniature-tools button.icon-only{width:var(--sheet-mini-control-size);flex:0 0 var(--sheet-mini-control-size);padding:0}.sheet-tree-miniature-tools output{margin-left:auto;font-size:10px;font-variant-numeric:tabular-nums;color:var(--muted,#9baeba)}
 .sheet-tree-miniature-node{cursor:pointer;outline:none}.sheet-tree-miniature-node rect{fill:var(--surface,#14212a);stroke:#728c9d;stroke-width:1.5;vector-effect:non-scaling-stroke}
 .sheet-tree-miniature-node text{fill:var(--text,#dde7ed);font:500 18px system-ui,sans-serif;text-anchor:middle;dominant-baseline:middle;pointer-events:none}
-.sheet-tree-miniature-node.current rect{stroke:#63b7f2;stroke-width:2.5}.sheet-tree-miniature-node.highlighted rect{fill:#645320;stroke:#edc14b;stroke-width:2.5}.sheet-tree-miniature-node:focus rect,.sheet-tree-miniature-node:hover rect{stroke:#78dacb;stroke-width:2.5}
-.sheet-tree-miniature-node.highlighted text{fill:#fff3bc}
+.sheet-tree-miniature{--mini-net-fill:#60440d;--mini-net-border:#efc556;--mini-net-text:#fff3c6;--mini-current-fill:#ffdb66;--mini-current-border:#ffe591;--mini-current-text:#2b1b00}
+body[data-ui-theme=light] .sheet-tree-miniature{--mini-net-fill:#ffe9a1;--mini-net-border:#9b6200;--mini-net-text:#3c2600;--mini-current-fill:#ffc940;--mini-current-border:#8a5100}
+.sheet-tree-miniature-node.highlighted rect{fill:var(--mini-net-fill);stroke:var(--mini-net-border);stroke-width:3}
+.sheet-tree-miniature-node.highlighted text{fill:var(--mini-net-text);font-weight:750}
+.sheet-tree-miniature-node.current rect{fill:var(--mini-current-fill);stroke:var(--mini-current-border);stroke-width:4}
+.sheet-tree-miniature-node.current text{fill:var(--mini-current-text);font-weight:750}
+.sheet-tree-miniature-node:not(.current,.highlighted):is(:focus,:hover) rect{stroke:#78dacb;stroke-width:2.5}
+.sheet-tree-miniature-node:focus-visible rect{stroke-dasharray:7 3}
 #sheetOverview>header{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:4px 2px 10px}
 #sheetOverview>header small{font-size:11px;opacity:.65;flex-basis:100%}
 #sheetOverview>header :is(button,summary),.sheet-tree-miniature :is(button,summary){box-sizing:border-box;min-height:var(--ui-control-height,30px);border-radius:var(--ui-radius,5px);font:500 12px/1.3 var(--kiview-font,system-ui);padding:4px 7px}
@@ -453,3 +459,77 @@ body[data-workspace="true"] #projectButton,body[data-workspace="true"] #viewOppo
 .sheet-occurrence-list{max-height:240px;overflow:auto;display:flex;flex-direction:column;gap:2px;border-left:1px solid var(--line);padding:3px 0 5px 7px;min-width:0}
 .sheet-occurrence-list>.sheet-occurrence{flex-shrink:0;display:block;width:100%;min-width:0;min-height:30px;text-align:left;white-space:normal;overflow-wrap:anywhere;font-size:11px;padding:4px 6px;background:transparent;border-color:transparent}
 .sheet-occurrence[aria-current=page]{background:var(--selected);border-color:var(--accent)}
+
+#drawingHost .differential-pair-offer{position:absolute;z-index:5;inset-block-start:12px;inset-inline-start:50%;transform:translateX(-50%);border-color:var(--accent);background:var(--raised);color:var(--text);box-shadow:0 2px 10px #0004}
+#drawingHost .differential-pair-offer[data-view3d="true"]{inset-block-start:52px}
+
+.pin-functions-dialog{width:min(640px,calc(100vw - 24px))}
+.pin-functions-dialog .kicad-field-table{min-width:0}
+.pin-functions-dialog .active-pin-function td:last-child{color:var(--accent);font-weight:650}
+
+.pin-one-toggle{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;min-height:32px;white-space:nowrap}
+
+/* Drawing export is a compact dialog shared by the schematic and layout viewers. */
+dialog.drawing-download-dialog{
+  box-sizing:border-box;position:fixed;inset:0;margin:auto;
+  width:min(27rem,calc(100vw - 24px));height:fit-content;max-width:none;max-height:calc(100dvh - 24px);
+  padding:0;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--text);
+  overflow:auto;overscroll-behavior:contain;box-shadow:0 12px 38px #0005;
+}
+.drawing-download-dialog::backdrop{background:#11182760}
+.drawing-download-dialog>header,.drawing-download-dialog>footer{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:12px 16px}
+.drawing-download-dialog>header{border-bottom:1px solid var(--line)}
+.drawing-download-dialog>footer{border-top:1px solid var(--line)}
+.drawing-download-dialog h2{margin:0;font-size:16px}
+.drawing-download-dialog>section{display:grid;gap:12px;padding:14px 16px}
+.drawing-download-dialog label{display:grid;gap:4px;min-width:0;font-weight:600}
+.drawing-download-dialog select{width:100%;min-width:0;font-weight:400}
+.drawing-download-dialog :is(select,button){min-height:var(--ui-control-height,32px);padding:4px 9px}
+.drawing-download-dialog details,.drawing-download-status{color:var(--muted);font-size:12px;line-height:1.45;overflow-wrap:anywhere}
+.drawing-download-dialog summary{cursor:pointer}
+.drawing-download-dialog details>p{margin:6px 0 0}
+.drawing-download-status{margin:0}
+.drawing-download-status:empty{display:none}
+.drawing-download-dialog>footer>button:last-child{border-color:var(--accent);color:var(--accent)}
+@media(pointer:coarse){.drawing-download-dialog :is(select,button){min-height:44px}}
+
+/* Shared view options groups use the drawing controls and theme tokens. */
+body .review-control-popover{
+  box-sizing:border-box;padding:0 14px 10px;overflow:auto;overscroll-behavior:contain;
+}
+.review-control-popover .object-view-options-heading{
+  top:0;margin:0 -14px;padding:8px 14px;border-bottom:1px solid var(--line);z-index:2;
+}
+.object-view-options-heading h2{margin:0;font-size:14px;font-weight:650}
+.review-control-popover :is(.workspace-display-options,#variantBar,#highlightControls){
+  display:grid;align-items:initial;gap:8px;min-width:0;margin:0;padding:10px 0;
+  border:0;border-bottom:1px solid var(--line);background:transparent;
+}
+.review-control-popover :is(#variantBar,#highlightControls){
+  overflow:visible;min-height:0;max-height:none;
+}
+.review-control-popover #variantBar>label,.review-control-popover #highlightControls>[data-icon]{display:none}
+.review-control-popover :is(h3,.workspace-display-options h3){
+  margin:0;font-size:12px;font-weight:650;color:var(--text);
+}
+.review-option-section-title{display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.review-control-popover :is(#variantSummary,#highlightSummary){color:var(--muted);font-size:11px;white-space:normal;overflow-wrap:anywhere}
+.review-option-fields,.review-option-actions,.review-option-checks{display:flex;align-items:center;flex-wrap:wrap;gap:6px}
+.review-option-fields>label{display:grid;min-width:0;flex:1 1 118px;gap:4px;color:var(--muted);font-size:11px}
+.review-option-fields select{width:100%;min-width:0}
+.review-control-popover .review-option-checks input{accent-color:var(--accent)}
+.review-control-popover .review-option-checks label{display:inline-flex;align-items:center;gap:6px}
+.review-control-popover .review-option-checks input[type=checkbox]{min-height:0;width:15px;height:15px;margin:0}
+.review-control-popover :is(button,select){min-height:var(--ui-control-height,30px);max-width:100%;font-size:12px}
+.review-control-popover button{white-space:normal;overflow-wrap:anywhere}
+.review-control-popover .review-option-connections button{flex:1 1 120px}
+.review-control-popover .object-visibility-filter{margin:0;padding:3px 0;border:0;border-bottom:1px solid var(--line)}
+.review-control-popover .object-visibility-filter>summary{padding:7px 0}
+.review-control-popover .object-visibility-filter>section{max-width:none;padding:3px 0 8px}
+.review-control-popover .diagnostics{margin:0;border:0;padding-top:4px}
+.review-control-popover :is(#variantBar,#highlightControls,.review-option-actions,label)[hidden]{display:none}
+#objectMenu{padding:6px;gap:2px;min-width:min(218px,calc(100vw - 16px))}
+#objectMenu .viewer-context-title{padding:5px 9px;color:var(--muted);font-size:11px;overflow-wrap:anywhere}
+#objectMenu button{min-height:32px;padding:6px 9px;border-radius:6px;font-size:12px}
+#objectMenu button.viewer-context-divider{border-top:1px solid var(--line);margin-top:4px;border-radius:0 0 6px 6px}
+@media(pointer:coarse){.review-control-popover :is(button,select),#objectMenu button{min-height:44px}}

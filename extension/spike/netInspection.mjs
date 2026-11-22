@@ -27,15 +27,23 @@ export function createNetInspection(THREE,{board,plan,zones,pads,world,colorForL
   clear();signature=key;state={active:false,nets,tracks:0,pads:0,vias:0,platedPads:0,fills:0,boundaries:0,omitted:0,sourceLimited,warnings:[...plan.warnings]};
   if(sourceLimited)state.warnings.push('Saved zone indexing omitted contours outside its input limits.');
   const wanted=new Set(nets);let used=0,geometryBatches=0;const shapeBudget=()=>{if(geometryBatches>=512){state.omitted++;return false;}geometryBatches++;return true;};const take=record=>{if(!wanted.has(record.net))return false;if(used++>=budget){state.omitted++;return false;}return true;};
+  const tracksByLayer=new Map();
+  for(const track of board.tracks){
+   if(!wanted.has(track.net))continue;
+   if(!plan.byLayer.has(track.layer)){state.omitted++;continue;}
+   if(!tracksByLayer.has(track.layer))tracksByLayer.set(track.layer,[]);
+   tracksByLayer.get(track.layer).push(track);
+  }
+  const connectedPads=pads.filter(pad=>wanted.has(pad.net)&&pad.nativeType!=='np_thru_hole');
   const outlines=new Map();
   for(const layer of plan.layers){
    const thickness=Math.max(.001,layer.thickness),z=layer.z;
-   const tracks=board.tracks.filter(track=>track.layer===layer.name&&take(track)),stroke=copperStrokeBatches(THREE,tracks,{world,z,thickness});state.tracks+=stroke.tracks.length;state.omitted+=stroke.invalid;
+   const tracks=(tracksByLayer.get(layer.name)||[]).filter(take),stroke=copperStrokeBatches(THREE,tracks,{world,z,thickness});state.tracks+=stroke.tracks.length;state.omitted+=stroke.invalid;
    if(stroke.plan?.limited)state.warnings.push(`${layer.name}: track cap tessellation reached its 128-segment display limit.`);
    for(const batch of stroke.batches)instances(batch.geometry,batch.records,layer.name,batch.place);
    const batches=new Map();
-   for(const pad of pads){
-    if(!wanted.has(pad.net)||pad.nativeType==='np_thru_hole'||!(pad.layer===layer.name||pad.layers?.includes(layer.name)||pad.layers?.includes('*.Cu')||pad.layers?.includes('F&B.Cu')&&['F.Cu','B.Cu'].includes(layer.name)))continue;
+   for(const pad of connectedPads){
+    if(!(pad.layer===layer.name||pad.layers?.includes(layer.name)||pad.layers?.includes('*.Cu')||pad.layers?.includes('F&B.Cu')&&['F.Cu','B.Cu'].includes(layer.name)))continue;
     if(!take(pad))continue;if(!outlines.has(pad))outlines.set(pad,nativePadOutline(pad));const outline=outlines.get(pad);if(!outline){state.omitted++;continue;}
     const key=JSON.stringify(outline);if(!batches.has(key)){if(!shapeBudget())continue;batches.set(key,{outline,pads:[]});}batches.get(key).pads.push(pad);state.pads++;
    }
@@ -52,7 +60,6 @@ export function createNetInspection(THREE,{board,plan,zones,pads,world,colorForL
    object.userData.record=record;object.position.z=depth;group.add(object);
    if(record.filled)state.fills++;else state.boundaries++;
   }
-  state.omitted+=board.tracks.filter(record=>wanted.has(record.net)&&!plan.byLayer.has(record.layer)).length;
   const barrels=new Map(),annuli=new Map();
   function barrel(record,span,pad=false){
    const width=pad?(record.drillWidth||record.drill):record.drill,height=pad?(record.drillHeight||record.drill):record.drill;
@@ -68,7 +75,7 @@ export function createNetInspection(THREE,{board,plan,zones,pads,world,colorForL
     const key=JSON.stringify([name,outline]);if(!annuli.has(key)){if(!shapeBudget())continue;annuli.set(key,{outline,layer,records:[]});}annuli.get(key).records.push(via);
    }
   }
-  for(const pad of pads){if(pad.nativeType!=='thru_hole'||!(pad.drill>0)||!take(pad))continue;const front=plan.byLayer.get('F.Cu'),back=plan.byLayer.get('B.Cu');if(!front||!back)continue;barrel(pad,{zMin:back.z,zMax:front.z,from:'F.Cu',to:'B.Cu'},true);state.platedPads++;}
+  for(const pad of connectedPads){if(pad.nativeType!=='thru_hole'||!(pad.drill>0)||!take(pad))continue;const front=plan.byLayer.get('F.Cu'),back=plan.byLayer.get('B.Cu');if(!front||!back)continue;barrel(pad,{zMin:back.z,zMax:front.z,from:'F.Cu',to:'B.Cu'},true);state.platedPads++;}
   for(const batch of annuli.values())instances(new THREE.ExtrudeGeometry(shapeFor(batch.outline),{depth:batch.layer.thickness,bevelEnabled:false,curveSegments:8}),batch.records,batch.layer.name,(object,record)=>{const[x,y]=world(record.at);object.position.set(x,y,batch.layer.z-batch.layer.thickness/2);},'via');
   for(const batch of barrels.values()){const mesh=instances(drillWallGeometry(THREE,batch.outline,batch.span.zMax-batch.span.zMin),batch.records,batch.span.from,(object,record)=>{const[x,y]=world(record.at);object.rotation.z=(record.rotation||0)*Math.PI/180;const[dx,dy]=record.drillOffset||[0,0],c=Math.cos(object.rotation.z),s=Math.sin(object.rotation.z);object.position.set(x+dx*c+dy*s,y+dx*s-dy*c,batch.span.zMin);},'via');if(mesh)mesh.userData.explodeSpan=batch.span;}
   state.active=state.tracks+state.pads+state.vias+state.platedPads+state.fills+state.boundaries>0;group.visible=state.active;

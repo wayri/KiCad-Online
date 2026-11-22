@@ -1,8 +1,8 @@
 /** Reversible selection display. Geometry, visibility and source materials are retained. */
 export function createSelectionAppearance(THREE, objects) {
-  const saved=new Map(),sharedDim=new Map(),sharedState={owned:[]};let displayMode='';
+  const saved=new Map(),sharedDim=new Map(),sharedGhost=new Map(),sharedState={owned:[]};let displayMode='';
   const list=value=>Array.isArray(value)?value:[value];
-  function restore(){for(const [object,state]of saved){object.material=state.material;if(object.isInstancedMesh){if(object.instanceColor!==state.instanceColor)object.dispose?.();object.instanceColor=state.instanceColor;}for(const material of state.owned)material.dispose();}for(const material of sharedState.owned)material.dispose();sharedState.owned.length=0;sharedDim.clear();saved.clear();}
+  function restore(){for(const [object,state]of saved){object.material=state.material;if(object.isInstancedMesh){if(object.instanceColor!==state.instanceColor)object.dispose?.();object.instanceColor=state.instanceColor;}for(const material of state.owned)material.dispose();}for(const material of sharedState.owned)material.dispose();sharedState.owned.length=0;sharedDim.clear();sharedGhost.clear();saved.clear();}
   function capture(object){
     if(saved.has(object))return saved.get(object);
     const state={material:object.material,instanceColor:object.instanceColor,owned:[]};saved.set(object,state);return state;
@@ -14,11 +14,11 @@ export function createSelectionAppearance(THREE, objects) {
     material.customProgramCacheKey=()=>source.customProgramCacheKey();
     state.owned.push(material);return material;
   }
-  function dimMaterial(source,state,share=false){
-    if(share&&sharedDim.has(source))return sharedDim.get(source);
-    const material=cloneMaterial(source,share?sharedState:state);material.transparent=true;
-    material.userData.selectionOpacityCap=.24;
-    material.opacity=Math.min(Number.isFinite(source.opacity)?source.opacity:1,.24);
+  function dimMaterial(source,state,shared=null,cap=.24){
+    if(shared?.has(source))return shared.get(source);
+    const material=cloneMaterial(source,shared?sharedState:state);material.transparent=true;
+    material.userData.selectionOpacityCap=cap;
+    material.opacity=Math.min(Number.isFinite(source.opacity)?source.opacity:1,cap);
     material.depthWrite=false;
     // Desaturate the final shaded output, including maps and instance colors.
     // Keep saved materials untouched so clearing selection restores them exactly.
@@ -29,14 +29,14 @@ export function createSelectionAppearance(THREE, objects) {
         'outgoingLight = vec3(dot(outgoingLight, vec3(0.2126, 0.7152, 0.0722)));\n#include <opaque_fragment>');
     };
     material.customProgramCacheKey=()=>source.customProgramCacheKey()+'|kicad-gray-context-v1';
-    if(share)sharedDim.set(source,material);
+    shared?.set(source,material);
     return material;
   }
-  function ghostMaterials(state){
-    if(!state.ghost)state.ghost=list(state.material).map(source=>{const material=dimMaterial(source,state);material.userData.selectionOpacityCap=.14;material.opacity=Math.min(material.opacity,.14);return material;});
+  function ghostMaterials(state,share){
+    if(!state.ghost)state.ghost=list(state.material).map(source=>dimMaterial(source,state,share?sharedGhost:null,.14));
     return Array.isArray(state.material)?state.ghost:state.ghost[0];
   }
-  function netInstanceMaterial(source,state){
+  function contextInstanceMaterial(source,state){
     const material=cloneMaterial(source,state);
     material.transparent=true;material.depthWrite=false;
     material.onBeforeCompile=function(shader,renderer){
@@ -71,10 +71,12 @@ export function createSelectionAppearance(THREE, objects) {
     for(const object of objects()){
       if(!object.material)continue;
       const state=capture(object),records=object.userData.records;
-      if(translucent){object.material=ghostMaterials(state);if(object.isInstancedMesh&&object.instanceColor!==state.instanceColor){object.dispose?.();object.instanceColor=state.instanceColor;}continue;}
+      if(translucent){object.material=ghostMaterials(state,!object.isInstancedMesh);if(object.isInstancedMesh&&object.instanceColor!==state.instanceColor){object.dispose?.();object.instanceColor=state.instanceColor;}continue;}
       if(object.isInstancedMesh&&records){
-        if(netContext){
-          if(!state.instances){state.instances=list(state.material).map(source=>netInstanceMaterial(source,state));object.instanceColor=state.instanceColor?.clone()||null;}
+        if(netContext||object.userData.footprintStandIns){
+          // Instanced stand-ins need an opacity flag per component so the
+          // selected stand-in stays solid while its neighbors match linked models.
+          if(!state.instances){state.instances=list(state.material).map(source=>contextInstanceMaterial(source,state));object.instanceColor=state.instanceColor?.clone()||null;}
           object.material=Array.isArray(state.material)?state.instances:state.instances[0];
           const color=new THREE.Color();
           for(let index=0;index<object.count;index++){
@@ -97,7 +99,7 @@ export function createSelectionAppearance(THREE, objects) {
         }
         if(object.instanceColor)object.instanceColor.needsUpdate=true;
       }else if(displayMatches(object.userData.record))object.material=state.material;
-      else {if(!state.dim)state.dim=list(state.material).map(source=>dimMaterial(source,state,!object.isInstancedMesh));object.material=Array.isArray(state.material)?state.dim:state.dim[0];}
+      else {if(!state.dim)state.dim=list(state.material).map(source=>dimMaterial(source,state,object.isInstancedMesh?null:sharedDim));object.material=Array.isArray(state.material)?state.dim:state.dim[0];}
     }
   }
   return {update,restore,dispose:restore,stats:()=>({capturedObjects:saved.size,sharedDimMaterials:sharedDim.size})};

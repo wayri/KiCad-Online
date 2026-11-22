@@ -36,3 +36,20 @@ test('zone index diagnostics reject invalid saved contours and bound descriptor 
  const ast=['kicad_pcb',['zone',['layer',{quoted:'F.Cu'}],['polygon',['pts',['xy',0,0],['xy',1,0],['xy',NaN,1]]]]];assert.equal(createSourceZoneIndex(ast).stats().invalid,1);
  const valid=parse('(kicad_pcb (zone (layers "F.Cu" "B.Cu") (polygon '+form([[0,0],[2,0],[0,2]])+')))');assert.equal(createSourceZoneIndex(valid,{maxContours:1}).stats().omitted,1);
 });
+test('compact saved copper preserves layer, net, contour points and triangulation',()=>{
+ const points=[[0,0],[4,0],[4,4],[0,4],[0,0],[1,1],[1,3],[3,3],[3,1],[1,1],[0,0]];
+ const source='(kicad_pcb (net 1 "GND") (zone (uuid "fill") (net 1) (layer "In2.Cu") (filled_polygon (layer "In2.Cu") '+form(points)+')))';
+ const ordinary=parse(source),packed=parse(source,{compactCopper:true});
+ const describe=ast=>createSourceZoneIndex(ast).forLayer('In2.Cu')[0];
+ const uncompressed=describe(ordinary),compressed=describe(packed);
+ assert.ok(compressed.sourcePoints[1] instanceof Float64Array);
+ assert.equal(compressed.size,points.length);
+ assert.deepEqual(sourceZoneGeometry(packed),sourceZoneGeometry(ordinary));
+ const ordinaryMesh=build(uncompressed),compactMesh=build(compressed);
+ try{
+  assert.equal(compactMesh.bytes,ordinaryMesh.bytes);
+  assert.deepEqual(compactMesh.geometry.attributes.position.array,ordinaryMesh.geometry.attributes.position.array);
+  assert.deepEqual(compactMesh.geometry.index.array,ordinaryMesh.geometry.index.array);
+  assert.equal(area(compactMesh.geometry),12);
+ }finally{ordinaryMesh.geometry.dispose();compactMesh.geometry.dispose();}
+});

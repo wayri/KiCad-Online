@@ -106,15 +106,18 @@
         const entries=directory===undefined?all:all.slice((page-1)*100,page*100),hasMore=directory!==undefined&&page*100<all.length;
         return {repository,ref,sha,snapshotRef:sha,directory:directory||'',entries,truncated:incomplete,hasMore,nextPage:hasMore?page+1:null,warnings};
       }
-      const sources=[],settings=[];let bytes=0;
-      for(const item of files.filter(item=>data.validPath(item.path)).sort((a,b)=>(b.path===file?1:0)-(a.path===file?1:0)).slice(0,32)){
-        try{const content=await get(item.path);if(content===null){warnings.push(`${item.path}: source unavailable.`);continue;}const size=new TextEncoder().encode(content).byteLength;
-          if(bytes+size>data.PROJECT_MAX_BYTES){warnings.push('Project search reached its source byte budget.');break;}bytes+=size;sources.push({path:item.path,content});
+      const sources=[],settings=[],limit=64*1024*1024,budget=96*1024*1024;let bytes=0;
+      const drawings=files.filter(item=>data.validPath(item.path)).sort((a,b)=>(b.path===file?1:0)-(a.path===file?1:0));
+      for(const item of drawings.slice(0,32)){
+        if(item.size>limit){warnings.push(`${item.path}: exceeds the 64 MiB search size limit.`);continue;}
+        if(bytes>=budget){warnings.push('Project search reached its source byte budget.');break;}
+        try{const content=await get(item.path,Math.min(limit,budget-bytes));if(content===null){warnings.push(`${item.path}: source unavailable.`);continue;}const size=new TextEncoder().encode(content).byteLength;
+          if(bytes+size>budget){warnings.push('Project search reached its source byte budget.');break;}bytes+=size;sources.push({path:item.path,content});
         }catch(error){if(signal?.aborted)throw error;warnings.push(`${item.path}: ${error.message}`);}
       }
       for(const item of files.filter(item=>/\.kicad_pro$/i.test(item.path)).slice(0,8)){try{const content=await get(item.path,1024*1024);if(content!==null)settings.push({path:item.path,content});}catch(error){if(signal?.aborted)throw error;warnings.push(`${item.path}: ${error.message}`);}}
-      if(files.length>32)warnings.push('Search loads at most 32 drawing files.');
-      return {files:sources,settings,snapshotRef:sha,totalDrawings:files.filter(item=>data.validPath(item.path)).length,warnings};
+      if(drawings.length>32)warnings.push('Search loads at most 32 drawing files.');
+      return {files:sources,settings,inventory:files,snapshotRef:sha,totalDrawings:drawings.length,warnings};
     }
     return {read};
   }

@@ -91,12 +91,16 @@
           .filter((point, i, all) => !i || point.x !== all[i-1].x || point.y !== all[i-1].y);
         return {...link, from:start, to:end, points, tree:true};
       });
-      const intersects = routes.some(link => link.points.slice(1).some((to, index) => {
-        const from = link.points[index];
-        return pages.some(page => page !== parent && page.path !== link.childPath &&
-          (from.x === to.x ? from.x > page.x-4 && from.x < page.x+page.w+4 && Math.max(from.y,to.y)>page.y-headingGap && Math.min(from.y,to.y)<page.y+page.h+4 : from.y>page.y-headingGap && from.y<page.y+page.h+4 && Math.max(from.x,to.x)>page.x-4 && Math.min(from.x,to.x)<page.x+page.w+4));
-      }));
-      if (intersects) fallback.push(...children); else routedLinks.push(...routes);
+      for(const route of routes){
+        const intersects=route.points.slice(1).some((to,index)=>{
+          const from=route.points[index];
+          return pages.some(page=>page!==parent&&page.path!==route.childPath&&
+            (from.x===to.x
+              ? from.x>page.x-4&&from.x<page.x+page.w+4&&Math.max(from.y,to.y)>page.y-headingGap&&Math.min(from.y,to.y)<page.y+page.h+4
+              : from.y>page.y-headingGap&&from.y<page.y+page.h+4&&Math.max(from.x,to.x)>page.x-4&&Math.min(from.x,to.x)<page.x+page.w+4));
+        });
+        if(intersects)fallback.push(children.find(link=>link.childPath===route.childPath));else routedLinks.push(route);
+      }
     }
     const router = root.KiCadOverviewRouting;
     if (fallback.length && router) {const routed=router.route(pages,fallback);routedLinks.push(...routed.links);result.omitted+=routed.omitted;result.routing=routed;}
@@ -141,29 +145,51 @@
     return {a:from,b:{x:from.x+dx/3+nx*lift,y:from.y+dy/3+ny*lift},c:{x:from.x+2*dx/3+nx*lift,y:from.y+2*dy/3+ny*lift},d:to};
   }
   function netColor(name,dark=true){const palette=dark?['#65d9ff','#ffbf69','#c4a3ff','#6fe0ad','#ff91b8','#a6d875']:['#006aa6','#945400','#7444b3','#08794b','#ae3060','#517719'];let hash=0;for(const char of String(name||''))hash=(Math.imul(hash,31)+char.codePointAt(0))>>>0;return palette[hash%palette.length];}
-  function drawGuides(view, graph, dark, hasNetLinks) {
+  function traceRounded(ctx,path){
+    for(let i=1;i<path.length-1;i++){
+      const prev=path[i-1],p=path[i],next=path[i+1];
+      const before=Math.hypot(p.x-prev.x,p.y-prev.y),after=Math.hypot(next.x-p.x,next.y-p.y);
+      if(!before||!after)continue;
+      const radius=Math.min(9,before/3,after/3);
+      if(!ctx.quadraticCurveTo){ctx.lineTo(p.x,p.y);continue;}
+      ctx.lineTo(p.x-(p.x-prev.x)/before*radius,p.y-(p.y-prev.y)/before*radius);
+      ctx.quadraticCurveTo(p.x,p.y,p.x+(next.x-p.x)/after*radius,p.y+(next.y-p.y)/after*radius);
+    }
+  }
+  function arrowhead(ctx,tip,dx,dy,length){
+    const tangent=Math.hypot(dx,dy);
+    if(!tangent)return;
+    const x=dx/tangent*length,y=dy/tangent*length;
+    ctx.moveTo(tip.x-x-y*.46,tip.y-y+x*.46);
+    ctx.lineTo(tip.x,tip.y);
+    ctx.lineTo(tip.x-x+y*.46,tip.y-y-x*.46);
+  }
+  function curveAt({a,b,c,d},t){
+    const u=1-t;
+    const coordinate=k=>u*u*u*a[k]+3*u*u*t*b[k]+3*u*t*t*c[k]+t*t*t*d[k];
+    return {x:coordinate('x'),y:coordinate('y')};
+  }
+  function drawGuides(view,graph,dark,hasNetLinks){
     const ctx=view?.ctx,camera=view?.viewport?.camera;
     if(!ctx||!camera||!graph?.links?.length)return;
     ctx.save();
-    ctx.globalAlpha*=hasNetLinks ? .2 : .42;
-    ctx.strokeStyle=dark?'#92a9b7':'#536f81';
-    ctx.lineWidth=1.25;
+    ctx.globalAlpha*=hasNetLinks ? .36 : .8;
+    ctx.strokeStyle=dark?'#6cb2ba':'#467983';
+    ctx.lineWidth=1.35;
     ctx.lineJoin=ctx.lineCap='round';
     ctx.setLineDash([]);
     ctx.beginPath();
     for(const link of graph.links){
-      const points=(link.exteriorPoints||link.points||[link.from,link.to]).map(point=>camera.world_to_screen(point));
+      const points=(link.points||[link.from,link.to]).map(point=>camera.world_to_screen(point));
       if(points.length<2||points.some(point=>!Number.isFinite(point.x)||!Number.isFinite(point.y)))continue;
+      const tip=points.at(-1),tail=points.at(-2),dx=tip.x-tail.x,dy=tip.y-tail.y;
       ctx.moveTo(points[0].x,points[0].y);
-      for(const point of points.slice(1))ctx.lineTo(point.x,point.y);
-      const tip=points.at(-1),tail=points.at(-2),dx=tip.x-tail.x,dy=tip.y-tail.y,length=Math.hypot(dx,dy);
-      if(length<6)continue;
-      const ux=dx/length,uy=dy/length,head=Math.min(5,length*.6),wing=head*.5;
-      ctx.moveTo(tip.x-ux*head-uy*wing,tip.y-uy*head+ux*wing);
+      traceRounded(ctx,points);
       ctx.lineTo(tip.x,tip.y);
-      ctx.lineTo(tip.x-ux*head+uy*wing,tip.y-uy*head-ux*wing);
+      const length=Math.hypot(dx,dy);
+      if(length>=3)arrowhead(ctx,tip,dx,dy,Math.min(6,length*.8));
     }
-    // Paint the shared rails once, including overlaps in the same path.
+    // Stroke the shared trunks together to prevent repeated links from darkening them.
     ctx.stroke();
     ctx.restore();
   }
@@ -175,6 +201,7 @@
     for (const link of graph.links) {
       const net=style.kind==='net',path=(net?(link.points||[link.from,link.to]):(link.exteriorPoints||link.points||[link.from,link.to])).map(p=>camera.world_to_screen(p)),a=path[0],b=path.at(-1),tail=path.at(-2)||a;
       if(!net&&style.dashed&&link.anchorStubs?.length){ctx.save();ctx.globalAlpha=.32;ctx.strokeStyle=style.color||(dark?'#d4b565':'#9e7b29');ctx.lineWidth=1;ctx.setLineDash([2,5]);for(const stub of link.anchorStubs){const local=stub.map(p=>camera.world_to_screen(p));ctx.beginPath();ctx.moveTo(local[0].x,local[0].y);for(const p of local.slice(1))ctx.lineTo(p.x,p.y);ctx.stroke();}ctx.restore();}
+      if(path.length<2||path.some(p=>!Number.isFinite(p.x)||!Number.isFinite(p.y)))continue;
       const length = Math.hypot(b.x - tail.x, b.y - tail.y);
       if (length < .1) continue;
       const ux = (b.x - tail.x) / length, uy = (b.y - tail.y) / length;
@@ -182,11 +209,15 @@
       const tip = net?b:{x: b.x - ux * inset, y: b.y - uy * inset},curve=net?netCurve(a,b):null,color=net?netColor(link.name||link.label,dark):style.color||(style.familyColors?netColor(link.parentPath,dark):(dark ? '#69c4ba' : '#398d84'));
       ctx.beginPath(); ctx.moveTo(a.x, a.y);
       if(net&&ctx.bezierCurveTo)ctx.bezierCurveTo(curve.b.x,curve.b.y,curve.c.x,curve.c.y,b.x,b.y);
-      else {for(let i=1;i<path.length-1;i++){const prev=path[i-1],p=path[i],next=path[i+1],before=Math.hypot(p.x-prev.x,p.y-prev.y),after=Math.hypot(next.x-p.x,next.y-p.y),radius=Math.min(12,before/3,after/3);if(!before||!after)continue;ctx.lineTo(p.x-(p.x-prev.x)/before*radius,p.y-(p.y-prev.y)/before*radius);if(ctx.quadraticCurveTo)ctx.quadraticCurveTo(p.x,p.y,p.x+(next.x-p.x)/after*radius,p.y+(next.y-p.y)/after*radius);else ctx.lineTo(p.x,p.y);}ctx.lineTo(tip.x, tip.y);}
+      else {traceRounded(ctx,path);ctx.lineTo(tip.x,tip.y);}
       // A narrow paper-colored casing makes crossings unambiguous: a hierarchy
       // branch passes over a net guide instead of looking electrically joined.
       if(!style.dashed){ctx.setLineDash([]);ctx.strokeStyle=dark?'#192a34':'#ffffff';ctx.lineWidth=4;ctx.lineJoin='round';ctx.stroke();}
       ctx.setLineDash(style.dashed?[4,4]:[]); ctx.strokeStyle = color; ctx.lineWidth = net?1.8:1.5; ctx.lineJoin='round'; ctx.stroke();
+      if(net&&Math.hypot(b.x-a.x,b.y-a.y)>=22){
+        const tip=curveAt(curve,.81),tail=curveAt(curve,.79);
+        ctx.beginPath();arrowhead(ctx,tip,tip.x-tail.x,tip.y-tail.y,6);ctx.lineCap='round';ctx.stroke();
+      }
       if(net){for(const endpoint of [a,b]){ctx.beginPath();ctx.arc(endpoint.x,endpoint.y,3,0,Math.PI*2);ctx.fillStyle=color;ctx.fill();ctx.strokeStyle=dark?'#17191f':'#fff';ctx.lineWidth=1;ctx.stroke();}}
       else {ctx.beginPath(); ctx.moveTo(tip.x, tip.y);
       ctx.lineTo(tip.x - ux * head - uy * wing, tip.y - uy * head + ux * wing);

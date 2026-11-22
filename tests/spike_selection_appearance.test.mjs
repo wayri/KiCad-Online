@@ -45,3 +45,53 @@ test('part → full-net → part mode transitions never mutate saved source inst
  const appearance=createSelectionAppearance(THREE,()=>[mesh]);appearance.update(r=>r?.id==='a',true);appearance.update(()=>false,true,{translucent:true});appearance.update(r=>r?.id==='b',true);appearance.restore();
  assert.equal(mesh.instanceColor,colors);assert.deepEqual([...colors.array],bytes);assert.equal(mesh.material,material);
 });
+
+test('dense net inspection shares ordinary translucent materials and disposes each variant once',{skip:!THREE},()=>{
+ const source=new THREE.MeshStandardMaterial({color:0x126933});
+ const geometry=new THREE.BoxGeometry(2,2,1);
+ const objects=Array.from({length:1000},()=>new THREE.Mesh(geometry,source));
+ const appearance=createSelectionAppearance(THREE,()=>objects);
+ appearance.update(()=>false,true,{translucent:true});
+ const ghost=objects[0].material;
+ assert.equal(ghost.opacity,.14);
+ assert.equal(objects.every(object=>object.material===ghost),true);
+ let disposed=0;
+ ghost.addEventListener('dispose',()=>disposed++);
+ appearance.update(()=>false,true,{translucent:true});
+ assert.equal(objects.every(object=>object.material===ghost),true);
+ appearance.restore();
+ assert.equal(objects.every(object=>object.material===source),true);
+ assert.equal(disposed,1);
+ geometry.dispose();source.dispose();
+});
+
+test('unselected footprint stand-ins fade like linked models while selected instances retain their color',{skip:!THREE},()=>{
+ const material=new THREE.MeshStandardMaterial({color:0x556678});
+ const geometry=new THREE.BoxGeometry();
+ const standIns=new THREE.InstancedMesh(geometry,material,2);
+ standIns.userData.footprintStandIns=true;
+ standIns.userData.records=[{type:'Component',ref:'U1'},{type:'Component',ref:'U2'}];
+ standIns.setColorAt(0,new THREE.Color(0xff8855));
+ standIns.setColorAt(1,new THREE.Color(0x88aaff));
+ const sourceColors=standIns.instanceColor,matrices=standIns.instanceMatrix;
+ const linked=new THREE.Mesh(geometry,material);linked.userData.record={type:'Component',ref:'U3'};
+ const appearance=createSelectionAppearance(THREE,()=>[standIns,linked]);
+ appearance.update(selectionMatcher({references:['U1']}),true);
+ assert.equal(linked.material.opacity,.24);
+ assert.equal(standIns.material.transparent,true);
+ assert.equal(standIns.material.depthWrite,false);
+ assert.deepEqual(standIns.instanceColor.array.slice(0,3),sourceColors.array.slice(0,3));
+ assert.ok(standIns.instanceColor.array[3]<0);
+ const shader={vertexShader:'#include <common>\n#include <color_vertex>',fragmentShader:'#include <common>\n#include <opaque_fragment>'};
+ standIns.material.onBeforeCompile(shader);
+ assert.match(shader.fragmentShader,/if \(vNetContext > 0\.5\)[\s\S]*diffuseColor\.a \*= 0\.24/);
+ appearance.update(selectionMatcher({references:['U2']}),true);
+ assert.ok(standIns.instanceColor.array[0]<0);
+ assert.deepEqual(standIns.instanceColor.array.slice(3),sourceColors.array.slice(3));
+ appearance.restore();
+ assert.equal(standIns.instanceColor,sourceColors);
+ assert.equal(standIns.instanceMatrix,matrices);
+ assert.equal(standIns.material,material);
+ assert.equal(linked.material,material);
+ geometry.dispose();material.dispose();standIns.dispose();
+});

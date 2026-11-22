@@ -25,8 +25,6 @@ body :is(.navigator-tabs,.inspector-tabs,.comment-subtabs,.comment-category-tabs
 body .comment-tools,body .inspector-actions{gap:4px}body .comment-tools button{font-size:11px}
 body[data-workspace-chrome] #frameControls{min-height:var(--ui-header-height);padding:3px 6px;gap:5px}
 body[data-workspace-chrome] #frameControls :is(button,select,input){min-height:var(--ui-control-height);font-size:11px}
-body[data-workspace-chrome] #reviewHeader{min-height:var(--ui-header-height);padding:2px 6px;gap:5px}
-body[data-workspace-chrome] #workspaceTabs button{padding:3px 7px;min-height:28px;font-size:11px}
 body[data-workspace-chrome] .workspace-tools-menu button{min-height:var(--ui-control-height);padding:4px 7px;gap:7px}
 body[data-workspace-chrome] .workspace-tools-menu .button-label{font-size:11px}
 body[data-workspace-chrome] .workspace-tools-menu .workspace-quick-tools button{min-height:44px;padding:4px 2px;gap:3px}
@@ -73,15 +71,11 @@ body:has(#signinAvailability){font-size:14px;max-width:48rem;margin:16px auto;pa
 
 /* Desktop drawing navigation is one slim row, never a stack of wrapped bands. */
 @media(min-width:840px) and (pointer:fine){
- body[data-workspace-chrome] #reviewHeader{min-height:32px;padding:2px 6px;gap:6px;flex-wrap:nowrap}
  body[data-workspace-chrome] #workspaceTabs{min-width:0;flex-wrap:nowrap;scrollbar-width:none}
- body[data-workspace-chrome] #workspaceTabs button{min-height:26px;padding:3px 6px;border-radius:4px}
- body[data-workspace-chrome] #projectTools{gap:3px;padding-left:6px;flex-wrap:nowrap}
- body[data-workspace-chrome] #projectTools>button{min-height:26px;padding:3px 5px}
  body[data-workspace-chrome] #frameControls{min-height:32px;padding:2px 5px;gap:4px}
  body[data-workspace-chrome] #frameControls :is(#focusView,.workspace-view-options),
- body[data-workspace-chrome] #frameControls .tool-group button:has(.ui-icon){width:28px;min-width:28px;height:28px;min-height:28px;padding:5px}
- body[data-workspace-chrome] #frameControls :is(#universalSearch,#selectionMode,#sheetSelect){height:28px;min-height:28px}
+ body[data-workspace-chrome] #frameControls .tool-group button:has(.ui-icon){width:30px;min-width:30px;height:30px;min-height:30px;padding:6px}
+ body[data-workspace-chrome] #frameControls :is(#universalSearch,#selectionMode,#sheetSelect){height:30px;min-height:30px}
 }
 
 .quick-variant{display:inline-flex;align-items:center;gap:5px;font-size:11px;white-space:nowrap}.quick-variant select{width:145px;min-height:28px;padding:3px 6px}.commit-history-list{list-style:none;margin:8px 0;padding:0;max-height:320px;overflow:auto}.commit-history-list li{display:flex;flex-direction:column;gap:4px;padding:8px 2px;border-bottom:1px solid var(--line,#42515c)}.commit-history-list small{color:var(--muted,#91a6b6);overflow-wrap:anywhere}.commit-history-list li>div{display:flex;gap:5px}.revision-picker-panel{max-height:85vh;overflow:auto}

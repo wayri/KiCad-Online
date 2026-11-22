@@ -10,10 +10,21 @@ function intersects(a,b,c,d){const x=cross(a,b,c),y=cross(a,b,d),z=cross(c,d,a),
 function contains(point,loop){let result=false;for(let i=0,j=loop.length-1;i<loop.length;j=i++){const a=loop[i],b=loop[j];if(on(a,b,point))return false;if((a[1]>point[1])!==(b[1]>point[1])&&point[0]<(b[0]-a[0])*(point[1]-a[1])/(b[1]-a[1])+a[0])result=!result;}return result;}
 export function drillLoopInsideBoard(loop,outer,holes=[]){
  if(!Array.isArray(loop)||loop.length<3||!Array.isArray(outer)||outer.length<3)return false;
- if(loop.some(point=>!point.every(Number.isFinite)||!contains(point,outer)||holes.some(hole=>contains(point,hole))))return false;
+ if(loop.some(point=>!point.every(Number.isFinite)||!contains(point,outer)||holes.some(hole=>contains(point,hole)))||holes.some(hole=>hole.length>=3&&contains(hole[0],loop)))return false;
  for(const boundary of [outer,...holes])for(let i=0;i<loop.length;i++)for(let j=0;j<boundary.length;j++)if(intersects(loop[i],loop[(i+1)%loop.length],boundary[j],boundary[(j+1)%boundary.length]))return false;
  return true;
 }
+// The cap is triangulated, but only saved contours describe physical rims.
+export function boardRimGeometry(THREE,shape,depth){
+ const {shape:outer,holes}=shape.extractPoints(8),positions=[];
+ for(const loop of [outer,...holes])for(let i=0;i<loop.length;i++){
+  const a=loop[i],b=loop[(i+1)%loop.length];
+  if(a.x===b.x&&a.y===b.y)continue;
+  positions.push(a.x,a.y,0,b.x,b.y,0,a.x,a.y,depth,b.x,b.y,depth);
+ }
+ return new THREE.BufferGeometry().setAttribute('position',new THREE.Float32BufferAttribute(positions,3));
+}
+
 export function sourceZoneGeometry(ast,maxPolygons=1000,maxPoints=500000){
  const nets=new Map(children(ast,'net').map(node=>[value(node[1]),String(value(node[2])||'')]));
  const zones=children(ast,'zone'), smallest=new Map(), counts=new Map();
@@ -29,7 +40,7 @@ export function sourceZoneGeometry(ast,maxPolygons=1000,maxPoints=500000){
    const net=String(value(child(zone,'net_name')?.[1])||nets.get(netCode)||(typeof netCode==='string'?netCode:''));
    for(const polygon of filled?fills:children(zone,'polygon')){
     const pts=child(polygon,'pts')||[];
-    let size=0;
+    let size=pts[1] instanceof Float64Array ? pts[1].length/2 : 0;
     for(const item of pts)if(kind(item)==='xy'&&Number.isFinite(Number(value(item[1])))&&Number.isFinite(Number(value(item[2]))))size++;
     if(size<3)continue;
     const ownLayer=value(child(polygon,'layer')?.[1]);
@@ -59,7 +70,10 @@ export function sourceZoneGeometry(ast,maxPolygons=1000,maxPoints=500000){
    if(remainingPolygons<=0||size>remainingPoints)continue;
    remainingPolygons--;remainingPoints-=size;
   }
-  const points=children(pts,'xy').map(node=>[Number(value(node[1])),Number(value(node[2]))]).filter(point=>point.every(Number.isFinite));
+  const packed=pts[1];
+  const points=packed instanceof Float64Array
+   ? Array.from({length:packed.length/2},(_,i)=>[packed[i*2],packed[i*2+1]])
+   : children(pts,'xy').map(node=>[Number(value(node[1])),Number(value(node[2]))]).filter(point=>point.every(Number.isFinite));
   records.push({points,layer,filled,id:String(id||'saved-zone-'+ordinal),net});
   counts.set(layer,counts.get(layer)-1);
  }
@@ -84,9 +98,9 @@ export function createSourceZoneIndex(ast,{maxContours=100000}={}){
   const id=value(child(zone,'uuid')?.[1])||value(child(zone,'tstamp')?.[1]);
   const netCode=value(child(zone,'net')?.[1]),net=String(value(child(zone,'net_name')?.[1])||nets.get(netCode)||(typeof netCode==='string'?netCode:''));
   for(const polygon of filled?fills:children(zone,'polygon')){
-   const pts=child(polygon,'pts')||[];let size=0,bad=false;
+   const pts=child(polygon,'pts')||[];let size=pts[1] instanceof Float64Array ? pts[1].length/2 : 0,bad=false;
    for(const node of pts)if(kind(node)==='xy'){if(!Number.isFinite(Number(value(node[1])))||!Number.isFinite(Number(value(node[2]))))bad=true;size++;}
-   if(bad||size<3){invalid++;continue;}
+   if(bad||!Number.isInteger(size)||size<3){invalid++;continue;}
    const ownLayer=value(child(polygon,'layer')?.[1]);
    for(const layer of ownLayer?[ownLayer]:declared){
     if(typeof layer!=='string')continue;if(contours>=maxContours){omitted++;continue;}

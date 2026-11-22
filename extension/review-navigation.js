@@ -16,7 +16,7 @@
     const button=(text,fn)=>{const n=make('button',text);n.type='button';n.onclick=fn;return n;};
     const searchHelp=$('projectSearch')?.parentElement?.querySelector?.('.search-help');
     if(searchHelp){const hint=make('p','Patterns: ref:glob:R* or ref:regex:^R[0-9]+$ . Glob * matches any sequence, ? one character, over the whole field. Regex supports literals, character classes, . , ^ $ and single-atom * + ?; use query OR for alternatives. Matching ignores case. Pattern limits produce an explicit error.');hint.className='hint';searchHelp.append(hint);}
-    let noteDismissed=false;let indexNotes=[],index=null,searchObjects=[],searchNets=[],queryResults=[],reports=[],selectedFinding=null,selectedItem=0,searchBusy=false,disposed=false,epoch=0,reportEpoch=0,identityObjects=null,identitySearch=null,classSettings=null,identities=new Map();
+    let noteDismissed=false;let index=null,indexObjects=null,indexNets=null,queryResults=[],reports=[],selectedFinding=null,selectedItem=0,disposed=false,reportEpoch=0,identityObjects=null,classSettings=null,identities=new Map();
     const status=(text)=>{$('projectSearchStatus').textContent=text;};
     const currentObjects=()=>options.getObjects();
     function buildIndex(objects,nets,classes=null,sheets=[]){
@@ -26,19 +26,9 @@
       if(classes){const groups=new Map();for(const net of nets)for(const name of KiCadProjectSearch.netClasses(net.name,classes)){const key=JSON.stringify([net.path,name]);if(!groups.has(key))groups.set(key,{path:net.path,name,nets:[]});groups.get(key).nets.push(net);}for(const group of groups.values()){const id=`${group.path}/class:${group.name}`;classObjects.push({id,path:group.path,kind:'netclass',label:group.name,className:group.name,properties:{Class:group.name,Net:group.nets.map(n=>n.name).join(' ')}});for(const net of indexNets)if(group.nets.some(n=>n.id===net.id))net.objectIds.push(id);}}
       return KiCadProjectSearch.createIndex([...objects,...networkObjects,...classObjects],{nets:indexNets,netClasses:classes,sheets});
     }
-    function indexFiles(files,settings=[]){
-      const model=KiCadDesignModel.buildProject(files),designs=new Map(),warnings=[...(model.warnings||[])];
-      for(const file of files){try{const ast=KiCadDesignDiff.parse(file.content),engine=/\.kicad_pcb$/i.test(file.path)?KiCadPCBRenderer:KiCadSchematicRenderer;designs.set(file.path,engine.build(ast,file.path));}catch(error){warnings.push(`${file.path}: ${error.message}`);}}
-      const netModel=KiCadNetModel.build(files,designs);warnings.push(...netModel.warnings);
-      searchObjects=model.objects;searchNets=netModel.nets;
-      let classConfig=null;
-      if(settings.length===1&&root.KiCadProjectSearch.parseNetClasses){try{classConfig=KiCadProjectSearch.parseNetClasses(settings[0].content);options.setNetClasses?.(classConfig);}catch(error){warnings.push(error.message);}}
-      else if(settings.length>1)warnings.push('Multiple project settings found. Import the desired .kicad_pro file to select its net classes.');
-      classSettings=classConfig;index=buildIndex(searchObjects,searchNets,classConfig,model.sheets);
-      return warnings;
-    }
     function renderSearch(){
-      if(!index)index=buildIndex(currentObjects(),options.getNets(),classSettings);
+      const objects=currentObjects(),nets=options.getNets();
+      if(!index||indexObjects!==objects||indexNets!==nets){index=buildIndex(objects,nets,classSettings);indexObjects=objects;indexNets=nets;}
       const result=KiCadProjectSearch.search(index,$('projectSearch').value,{limit:200});queryResults=result.results;
       $('projectResults').replaceChildren();$('projectSearchCount').textContent=result.error?result.error:`${result.total} matches${result.truncated?' (first 200 shown)':''}`;
       for(const match of queryResults){const object=match.object,row=button('',event=>options.selectSearchObject(object,Boolean($('multiHighlight').checked),event));row.className='object-row search-result';
@@ -46,18 +36,10 @@
         row.append(make('strong',object.label||object.reference||object.kind),make('small',`${object.kind} · ${object.path}`),make('small',(match.snippets||[]).map(s=>typeof s==='string'?s:`${s.field}: ${s.text}`).join(' · ').slice(0,240)));
         $('projectResults').append(row);
       }
-      $('projectIndexWarnings').textContent=[...indexNotes,...(result.warnings||[])].join(' ');
+      $('projectIndexWarnings').textContent=(result.warnings||[]).join(' ');
       options.onSearchResults?.(result,$('projectSearch').value);return result;
     }
-    async function loadProject(){
-      if(searchBusy)return;searchBusy=true;const ticket=++epoch;$('loadProjectSearch').disabled=true;status('Loading repository/workspace drawings at one source revision…');
-      try{const result=await options.request('project-search-files',{repository:options.repository,ref:options.ref,file:options.rootFile});if(disposed||ticket!==epoch)return;
-        options.addSearchFiles(result.files);const warnings=indexFiles(result.files,result.settings||[]);
-        status(`Indexed ${result.files.length} of ${result.totalDrawings??result.files.length} drawings · ${result.snapshotRef||options.ref}`);
-        indexNotes=[...(result.warnings||[]),...warnings.slice(0,30)];renderSearch();updateAssociations();
-      }catch(error){status(`Project search could not load: ${error.message}`);}finally{searchBusy=false;$('loadProjectSearch').disabled=false;}
-    }
-    function identityIndex(){const current=currentObjects();if(identityObjects===current&&identitySearch===searchObjects)return identities;identityObjects=current;identitySearch=searchObjects;identities=new Map();for(const object of [...current,...searchObjects]){if(!object.uuid)continue;let entries=identities.get(object.uuid);if(!entries){entries=new Map();identities.set(object.uuid,entries);}const key=JSON.stringify([object.path,object.id]);if(!entries.has(key))entries.set(key,object);}return identities;}
+    function identityIndex(){const current=currentObjects();if(identityObjects===current)return identities;identityObjects=current;identities=new Map();for(const object of current){if(!object.uuid)continue;let entries=identities.get(object.uuid);if(!entries){entries=new Map();identities.set(object.uuid,entries);}const key=JSON.stringify([object.path,object.id]);if(!entries.has(key))entries.set(key,object);}return identities;}
     function resolveItem(finding,item){
       // Report UUIDs are file scoped; repeated matches never select a guessed sheet.
       if(item.uuid){const entries=identityIndex().get(item.uuid);if(entries?.size>1)return {file:null,position:item.position};if(entries?.size===1){const object=entries.values().next().value;return {file:object.path,position:item.position||object.position,object};}}
@@ -67,8 +49,8 @@
     function visibleFindings(){const query=$('ruleSearch').value.toLowerCase(),severity=$('ruleSeverity').value;return reports.flatMap(r=>r.findings).filter(f=>showSeverity[f.severity]!==false&&(severity==='all'||f.severity===severity)&&($('showExcludedRules').checked||!f.excluded)&&`${f.description} ${f.type} ${f.sheetPath||''}`.toLowerCase().includes(query));}
     function locateFinding(finding,itemIndex=0){
       selectedFinding=finding;selectedItem=itemIndex;noteDismissed=false;const item=finding.items[itemIndex],target=item&&resolveItem(finding,item);
-      if(!target?.file||!target.position){$('ruleStatus').textContent='This item has no resolved drawing location. Associate the report sheet or load project drawings to resolve its saved UUID.';options.redraw();renderRules();return;}
-      if(options.locateRule(target)===false){$('ruleStatus').textContent='Cannot jump: open the matching loaded drawing in 2D. Index the project if its sheet is missing.';options.redraw();renderRules();return;}$('ruleStatus').textContent=`${finding.type} · ${target.file} · ${target.position.x.toFixed(3)}, ${target.position.y.toFixed(3)} mm`;renderRules();options.redraw();
+      if(!target?.file||!target.position){$('ruleStatus').textContent='This item has no resolved drawing location. Associate the report sheet with an open drawing to resolve its saved UUID.';options.redraw();renderRules();return;}
+      if(options.locateRule(target)===false){$('ruleStatus').textContent='Cannot jump: open the matching loaded drawing in 2D.';options.redraw();renderRules();return;}$('ruleStatus').textContent=`${finding.type} · ${target.file} · ${target.position.x.toFixed(3)}, ${target.position.y.toFixed(3)} mm`;renderRules();options.redraw();
     }
     function renderRules(){
       const list=$('ruleResults');list.replaceChildren();const findings=visibleFindings();$('ruleCount').textContent=`${findings.length} saved findings${findings.length>200?' · first 200 listed':''}`;
@@ -85,11 +67,11 @@
       }
     }
     function updateAssociations(){const value=$('ruleDrawing').value;$('ruleDrawing').replaceChildren();for(const file of options.getFiles()){const n=make('option',file.path);n.value=file.path;$('ruleDrawing').append(n);}if(options.getFiles().some(f=>f.path===value))$('ruleDrawing').value=value;else $('ruleDrawing').value=options.currentFile();renderSheetMappings();}
-    $('projectSearch').oninput=renderSearch;$('loadProjectSearch').onclick=loadProject;
+    $('projectSearch').oninput=renderSearch;
     $('highlightSearchResults').onclick=()=>{options.highlightSearchObjects(queryResults.map(r=>r.object),$('multiHighlight').checked);renderSearch();};
     $('multiHighlight').onchange=()=>options.setMultiHighlight?.($('multiHighlight').checked);
     $('importNetClasses').onclick=()=>$('netClassFile').click();
-    $('netClassFile').onchange=async()=>{const file=$('netClassFile').files?.[0];if(!file)return;try{if(file.size>1024*1024)throw new Error('Project settings exceed 1 MiB.');const classes=KiCadProjectSearch.parseNetClasses(await file.text());classSettings=classes;index=buildIndex(searchObjects.length?searchObjects:currentObjects(),searchNets.length?searchNets:options.getNets(),classes);options.setNetClasses?.(classes);status(`Imported net classes from ${file.name}`);renderSearch();}catch(error){status(error.message);}finally{$('netClassFile').value='';}};
+    $('netClassFile').onchange=async()=>{const file=$('netClassFile').files?.[0];if(!file)return;try{if(file.size>1024*1024)throw new Error('Project settings exceed 1 MiB.');const classes=KiCadProjectSearch.parseNetClasses(await file.text());classSettings=classes;index=null;options.setNetClasses?.(classes);status(`Imported net classes from ${file.name}`);renderSearch();}catch(error){status(error.message);}finally{$('netClassFile').value='';}};
     $('importRuleReport').onclick=()=>$('ruleReportFile').click();
     function addReport(text,name,{file,automatic=false,revision=options.ref}={}){
       if(reports.length>=4)throw new Error('At most four reports per review session; clear reports first.');
@@ -156,7 +138,7 @@
     }
     function routingReports(path){return reports.filter(r=>r.kind==='drc'&&r.metadata.associatedFile===path).map(r=>({metadata:{...r.metadata},unconnectedFindings:r.findings.filter(f=>f.category==='unconnected_items'&&!f.excluded).length,excludedUnconnectedFindings:r.findings.filter(f=>f.category==='unconnected_items'&&f.excluded).length,warnings:[...r.warnings]}));}
     updateAssociations();renderRules();
-    return {discoverReports,routingReports,setClasses(classes){classSettings=classes;index=buildIndex(searchObjects.length?searchObjects:currentObjects(),searchNets.length?searchNets:options.getNets(),classes);options.setNetClasses?.(classes);},query(value){$('projectSearch').value=value;return renderSearch();},loadProject,renderSearch,renderRules,updateAssociations,draw,dispose(){disposed=true;epoch++;reportEpoch++;}};
+    return {discoverReports,routingReports,setClasses(classes){classSettings=classes;index=null;options.setNetClasses?.(classes);},query(value){$('projectSearch').value=value;return renderSearch();},renderSearch,renderRules,updateAssociations,draw,dispose(){disposed=true;reportEpoch++;}};
   }
   root.KiCadReviewNavigation={mount,arrowGeometry,notePlacement};
   if(typeof module==='object'&&module.exports)module.exports=root.KiCadReviewNavigation;

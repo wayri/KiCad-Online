@@ -37,6 +37,22 @@
   const spaceCode=code=>code===32||(code>=9&&code<=13)||(code>127&&/\s/.test(String.fromCharCode(code)));
   const METADATA_FIELDS=new Set(["version","generator","generator_version","uuid","paper","title_block","property","sheet","symbol","footprint","module","sheet_instances","legacy_source","legacy_diagnostic"]);
   const METADATA_OBJECT_FIELDS=new Set(["property","uuid","path","instances"]);
+  // Packed points are private to prepared viewer trees. Comparison keeps the saved AST shape.
+  function packSavedFill(form) {
+    if (form.length < 4) return;
+    for (let i = 1; i < form.length; i++) {
+      const point = form[i];
+      if (!Array.isArray(point) || point.length !== 3 || point[0] !== 'xy' ||
+          !Number.isFinite(point[1]) || !Number.isFinite(point[2])) return;
+    }
+    const coordinates = new Float64Array((form.length - 1) * 2);
+    for (let i = 1; i < form.length; i++) {
+      coordinates[(i - 1) * 2] = form[i][1];
+      coordinates[(i - 1) * 2 + 1] = form[i][2];
+    }
+    form.length = 1;
+    form.push(coordinates);
+  }
   function parse(source, options = {}) {
     if (typeof source !== "string") throw new TypeError("KiCad source must be a string.");
     if (/^\s*PCBNEW-BOARD/.test(source))throw Error('Legacy .brd boards are detected but this drawing format is not yet rendered. Open and save a separate .kicad_pcb copy in KiCad.');
@@ -53,6 +69,8 @@
     if(source.length>byteLimit||source.length>byteLimit/3&&sourceByteLength(source)>byteLimit)throw new Error("KiCad file exceeds browser parser size limits.");
     const nodeLimit = modern ? 12000000 : MAX_NODES;
     const stack = [], roots = [];
+    // Saved copper vertices can bypass temporary growable parser frames.
+    const coordinate = /\(xy[ \t]+([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)[ \t]+([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)[ \t]*\)/y;
     let i = 0, nodes = 0, skippedDepth=0;
     const append = (item) => {
       if (++nodes > nodeLimit) throw new Error("KiCad file has too many S-expression nodes.");
@@ -65,6 +83,18 @@
       if (ch === ";") { while (i < source.length && source[i] !== "\n") i++; continue; }
       if (ch === "(") {
         if (stack.length >= MAX_DEPTH) throw new Error("KiCad S-expression is too deep.");
+        if (!options.metadataOnly && stack.length && source.startsWith('(xy', i)) {
+          coordinate.lastIndex = i;
+          const match = coordinate.exec(source);
+          if (match) {
+            const x = Number(match[1]), y = Number(match[2]);
+            if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error("Invalid numeric KiCad value.");
+            nodes += 3; // Form name and both coordinates; append counts the form itself.
+            append(['xy', x, y]);
+            i = coordinate.lastIndex;
+            continue;
+          }
+        }
         if(options.metadataOnly&&!skippedDepth){let allowed=null;
           if(stack.length===1)allowed=METADATA_FIELDS;
           else if(stack.length===2&&['symbol','footprint','module'].includes(stack.at(-1)?.[0]))allowed=METADATA_OBJECT_FIELDS;
@@ -77,6 +107,8 @@
       if (ch === ")") {
         if (!stack.length) throw new Error("Unexpected closing parenthesis in KiCad file.");
         const node=stack.pop();
+        if(!options.metadataOnly&&options.compactCopper&&node[0]==='pts'&&stack.length===3&&
+          stack[0][0]==='kicad_pcb'&&stack[1][0]==='zone'&&stack[2][0]==='filled_polygon')packSavedFill(node);
         // Fixed-size small forms avoid retaining the spare capacity of millions
         // of growable coordinate/attribute arrays. The public tree shape stays
         // identical; replace only a completed child, never a live stack frame.
@@ -135,7 +167,7 @@
   const value = (item) => item && typeof item === "object" && !Array.isArray(item) ? item.quoted : item;
   const kindOf = (form) => Array.isArray(form) ? (value(form[0]) === "module" ? "footprint" : String(value(form[0]))) : "";
   const children = (form, kind) => form.filter((item) => Array.isArray(item) && kindOf(item) === kind);
-  const child = (form, kind) => children(form, kind)[0];
+  const child = (form, kind) => form.find(item => Array.isArray(item) && kindOf(item) === kind);
   const second = (form, kind) => value(child(form, kind)?.[1]);
   function point(form) {
     for (const name of ["at", "start", "center", "end", "xy"]) {
@@ -267,10 +299,10 @@
   }
   // Job-scoped snapshots reuse validated source without retaining projects globally.
   const preparedProjects = new WeakMap();
-  function prepareProject(files, {forConnectivity = false} = {}) {
-    const parsed = new Map(), records = projectObjects(files, (file, ast) => parsed.set(file.path, ast), null, {forConnectivity, parseOnly: forConnectivity});
+  function prepareProject(files, {forConnectivity = false, compactCopper = false} = {}) {
+    const parsed = new Map(), records = projectObjects(files, (file, ast) => parsed.set(file.path, ast), null, {forConnectivity, parseOnly: forConnectivity, compactCopper: forConnectivity&&compactCopper});
     const snapshot = Object.freeze({});
-    preparedProjects.set(snapshot, {files: files.map(file => ({path: file.path, content: file.content, libraries:JSON.stringify(file.legacyLibraries||[])})), parsed, records: forConnectivity ? null : records});
+    preparedProjects.set(snapshot, {files: files.map(file => ({path: file.path, content: file.content, libraries:JSON.stringify(file.legacyLibraries||[])})), parsed, records: forConnectivity ? null : records, compactCopper: forConnectivity&&compactCopper});
     return snapshot;
   }
   function preparedFile(snapshot, path) {
@@ -278,13 +310,14 @@
     if (!state || !state.parsed.has(path)) throw new Error('Prepared KiCad file is unavailable.');
     return state.parsed.get(path);
   }
-  function projectObjects(files, onParsed = null, snapshot = null, {forConnectivity = false, parseOnly = false} = {}) {
+  function projectObjects(files, onParsed = null, snapshot = null, {forConnectivity = false, parseOnly = false, compactCopper = false} = {}) {
     if (snapshot) {
       const state = preparedProjects.get(snapshot);
       if (!state || !Array.isArray(files) || files.length !== state.files.length ||
           files.some((file, index) => file?.path !== state.files[index].path || file?.content !== state.files[index].content || JSON.stringify(file.legacyLibraries||[]) !== state.files[index].libraries)) {
         throw new Error('Prepared KiCad project differs from source.');
       }
+      if(state.compactCopper&&!forConnectivity)return projectObjects(files,onParsed,null,{parseOnly});
       if (forConnectivity || !state.records) {
         const records = [];
         for (const file of files) {
@@ -309,7 +342,7 @@
       const size = sourceByteLength(file.content);
       total += size;
       if (size > sourceByteLimit(file.path) || total > MAX_PROJECT) throw new Error("KiCad project exceeds browser comparison size limits.");
-      for (const object of collect(file.path, file.content, ast => onParsed?.(file, ast), {libraries:file.legacyLibraries, forConnectivity, parseOnly})) objects.push(object);
+      for (const object of collect(file.path, file.content, ast => onParsed?.(file, ast), {libraries:file.legacyLibraries, forConnectivity, parseOnly, compactCopper: forConnectivity&&compactCopper})) objects.push(object);
     }
     return objects;
   }

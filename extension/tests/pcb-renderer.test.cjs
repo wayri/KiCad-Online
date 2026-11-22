@@ -220,3 +220,50 @@ test('net-free board graphics preparation has a linear root-record access budget
  const graphics=result.primitives.filter(p=>!p.frame);assert.equal(graphics.length,count);assert.ok(graphics.every(p=>p.kind==='gr_line'&&p.netId===undefined));
  assert.ok(rootReads<ast.length*100,`whole-board scans must not multiply with each graphic (${rootReads} root reads for ${count} graphics)`);
 });
+
+test('pin 1 marks only saved copper, with A1 as a per-footprint fallback',async()=>{
+ const ast=parse(`(kicad_pcb (version 20241229)
+  (layers (0 "F.Cu" signal) (31 "B.Cu" signal) (34 "B.Paste" user))
+  (footprint "Both" (layer "F.Cu") (at 20 20) (uuid "fp-a")
+    (pad "A1" smd rect (at 1 0) (size 1 1) (layers "F.Cu") (uuid "a1-other"))
+    (pad "1" thru_hole rect (at 2 0) (size 2 2) (drill 1) (layers "*.Cu") (uuid "numeric"))
+    (pad "1" smd rect (at 3 0) (size 1 1) (layers "F.Cu") (uuid "numeric-extra")))
+  (footprint "Ball" (layer "B.Cu") (at 30 20) (uuid "fp-b")
+    (pad "1" np_thru_hole circle (at 0 0) (size 1 1) (drill 1) (layers "*.Cu") (uuid "npth"))
+    (pad "A1" smd circle (at 1 0) (size 1 1) (layers "B.Cu" "B.Paste") (uuid "ball"))
+    (pad "A2" smd circle (at 2 0) (size 1 1) (layers "B.Cu") (uuid "other-ball"))))`);
+ const {firstCopperPadNumber}=require('../pcb-renderer.js');
+ const layout=build(ast,'pin1.kicad_pcb').primitives;
+ assert.deepEqual(layout.filter(p=>p.pinOne).map(p=>[p.uuid,p.layer]).sort(),[
+  ['ball','B.Cu'],['numeric','B.Cu'],['numeric','F.Cu'],['numeric-extra','F.Cu'],
+ ]);
+ assert.equal(layout.some(p=>p.hole&&p.pinOne),false);
+ const {sourceSelectionRecords}=await import('../spike/sourceSelection.mjs');
+ const ids=['numeric','numeric-extra','npth','ball','other-ball','a1-other'];
+ const {pads}=sourceSelectionRecords(ast,{pads:ids.map(id=>({id}))},firstCopperPadNumber);
+ assert.deepEqual(pads.filter(p=>p.pinOne).map(p=>p.id).sort(),['ball','numeric','numeric-extra']);
+});
+
+test('compact saved fills survive worker cloning without changing copper or comparison identity',()=>{
+ const parser=require('../design-diff.js'),renderer=require('../pcb-renderer.js'),nets=require('../net-model.js');
+ const path='ring.kicad_pcb',content=`(kicad_pcb (net 1 "GND") (zone (net 1) (layer "F.Cu") (uuid "zone")
+   (polygon (pts (xy 0 0) (xy 30 0) (xy 30 30)))
+   (filled_polygon (layer "F.Cu") (pts (xy 0 0) (xy 30 0) (xy 30 30) (xy 0 0) (xy 4 4) (xy 5 4) (xy 5 5) (xy 4 4) (xy 0 0)))
+   (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 1 0) (xy 1 1 extra)))))`;
+ const files=[{path,content}],plain=parser.parse(content),snapshot=parser.prepareProject(files,{forConnectivity:true,compactCopper:true}),packed=parser.preparedFile(snapshot,path);
+ const zone=packed.find(form=>form[0]==='zone'),filled=zone.filter(form=>Array.isArray(form)&&form[0]==='filled_polygon');
+ assert.ok(filled[0][2][1] instanceof Float64Array);
+ assert.deepEqual(filled[1][2][3],['xy',1,1,'extra']);
+ assert.deepEqual(zone.find(form=>form[0]==='polygon')[1][1],['xy',0,0]);
+ assert.deepEqual(parser.projectObjects(files,null,snapshot),parser.projectObjects(files));
+ const design=renderer.build(packed,path,{packedZones:true});
+ const model=nets.build(files,new Map([[path,design]]),snapshot);
+ const payload=structuredClone({design,model},{transfer:design.primitives.filter(p=>p.zoneCoordinates).map(p=>p.zoneCoordinates.buffer)});
+ const rendered=renderer.hydrateZonePoints(payload.design),front=rendered.primitives.find(p=>p.kind==='zone'&&p.layer==='F.Cu');
+ assert.ok(payload.model.nets[0].primitives.includes(front));
+ assert.deepEqual(front.points,renderer.build(plain,path).primitives.find(p=>p.kind==='zone'&&p.layer==='F.Cu').points);
+ assert.equal(front.points,front.points);
+ const first=front.points;rendered.releaseZonePoints();
+ assert.notEqual(front.points,first);assert.deepEqual(front.points,first);
+ assert.deepEqual(require('../owned-canvas.js').bounds([front]),{x:0,y:0,w:30,h:30});
+});

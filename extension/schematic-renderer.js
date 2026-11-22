@@ -352,6 +352,19 @@
       }
     }
     const library = form(rootAST, "lib_symbols"), definitions = new Map();
+    const pinFunctions=Object.create(null),libraryPinFunctions=new WeakMap();
+    function pinFunctionDefinition(pin){
+      if(libraryPinFunctions.has(pin))return libraryPinFunctions.get(pin);
+      const number=String(scalar(pin,'number')??''),defaultName=String(scalar(pin,'name')??'');
+      const alternates=new Map();
+      for(const alternate of forms(pin,'alternate')){
+        const name=value(alternate[1]),electricalType=value(alternate[2]);
+        if(typeof name==='string'&&name&&name!==defaultName)alternates.set(name,{name,electricalType});
+      }
+      const result={number,defaultName,defaultType:value(pin[1]),alternates:[...alternates.values()]};
+      libraryPinFunctions.set(pin,result);
+      return result;
+    }
     for (const definition of forms(library, "symbol")) {
       const name = value(definition[1]);
       if (typeof name === "string") definitions.set(name, definition);
@@ -444,7 +457,7 @@
       if (!at) { warn("Placed symbol without position was skipped."); return; }
       const id = scalar(node, "lib_name") ?? scalar(node, "lib_id") ?? value(node[1]);
       if (typeof id !== "string") { warn("Placed symbol without library ID was skipped."); return; }
-      const unit = scalar(node, "unit") ?? 1, style = scalar(node, "convert") ?? 1;
+      const unit = scalar(node, "unit") ?? 1, style = scalar(node, "body_style") ?? scalar(node, "convert") ?? 1;
       const angle = value(form(node, "at")?.[3]) ?? 0;
       if (![0, 90, 180, 270].includes(((angle % 360) + 360) % 360)) warn(`Symbol ${id} has non-orthogonal rotation ${angle}.`);
       const mirror = value(form(node, "mirror")?.[1]) || "";
@@ -459,11 +472,20 @@
       const units = libraryUnits(id, finite(unit) ? unit : 1, finite(style) ? style : 1);
       if (!units.length) warn(`No drawable unit ${unit} style ${style} for ${id}.`);
       const graphicStart = primitives.length;
-      const pinLabels = new Map();
+      const pinLabels = new Map(),alternatePins=new Map();
+      const savedFunctions=new Map();
+      for(const pin of forms(node,'pin')){
+        const alternate=scalar(pin,'alternate');
+        if(typeof alternate==='string'&&alternate)savedFunctions.set(String(value(pin[1])??''),alternate);
+      }
       for (const body of units) for (const item of body) {
         if (!Array.isArray(item)) continue;
         const kind = typeOf(item);
         if (kind === "pin") {
+          const definition=pinFunctionDefinition(item),savedFunction=savedFunctions.get(definition.number);
+          if(definition.number&&(definition.alternates.length||savedFunction)){
+            alternatePins.set(definition.number,{...definition,active:savedFunction||definition.defaultName});
+          }
           const start = primitives.length;
           renderPin(item, map, owner, mainDefinition || body);
           // Coincident visible pins remain separate electrical primitives. Only
@@ -488,6 +510,7 @@
         else if (["polyline", "rectangle", "circle", "arc", "bezier", "text", "text_box"].includes(kind)) drawGraphic(item, map, owner);
         else if (kind === "image") warn(`Symbol graphic ${kind} is not rendered.`);
       }
+      if(typeof uuid==='string'&&alternatePins.size)pinFunctions[uuid]=[...alternatePins.values()];
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       const include = (p) => {
         if (!p || !finite(p.x) || !finite(p.y)) return;
@@ -638,7 +661,7 @@
         warn(`Schematic construct ${kind} is not rendered.`);
       }
     }
-    return { primitives, page, warnings, compatibility };
+    return { primitives, page, warnings, compatibility, pinFunctions };
   }
   root.KiCadSchematicRenderer = { build, pageSettings };
   if (typeof module === "object" && module.exports) module.exports = root.KiCadSchematicRenderer;

@@ -2,7 +2,7 @@
 
 Built from the owner's SPIKE-Main source tree. The owner-authored subset supplied in this KiCad Online bundle is covered by KiCad Online Source-Available License 1.0 (see the LICENSE.txt supplied with KiCad Online). Copyright owner/licensor: Yawar B (wayri), to the extent of the owner's rights. This is not an open-source grant and does not relicense the rest of SPIKE. Third-party code and any valid earlier grants retain their own terms. Corresponding source/build-subset publication is a separate release-preparation task.
 
-Source: SPIKE-Main/app/src. The board parser used in this build is the Online adaptation in extension/spike-source/boardParser.ts, derived from the archived input below and WebView commit 8f9b97955bf0bb8fa3ea6467140cf36b1ae996e0. Legacy saved identity handling follows WebView commit ee46cc2602a8b916ac988370913fe9ff9bcf3638. SHA-256 of Online parser: e9ea5ba8b66ffce41b9960349070d37754c2b87eb814817e493229b44b20ec82.
+Source: SPIKE-Main/app/src. The board parser used in this build is the Online adaptation in extension/spike-source/boardParser.ts, derived from the archived input below and WebView commit 8f9b97955bf0bb8fa3ea6467140cf36b1ae996e0. Legacy saved identity handling follows WebView commit ee46cc2602a8b916ac988370913fe9ff9bcf3638. SHA-256 of Online parser: e2d6b5051cb94db27348cb0027d703589f632a48cba7c3b757ab127dbfe90384.
 
 boardParser.ts: 8285ae9725aeb615f7243f2573f29d68512aa8b59586b68ec4880b3e0c17d2d5
 numericRange.ts: f0220dae11ef29b7d2093ed9e0655e5cbbb16c606d2c5b02a13836db9a323ead

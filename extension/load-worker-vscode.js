@@ -150,6 +150,22 @@
   const spaceCode=code=>code===32||(code>=9&&code<=13)||(code>127&&/\s/.test(String.fromCharCode(code)));
   const METADATA_FIELDS=new Set(["version","generator","generator_version","uuid","paper","title_block","property","sheet","symbol","footprint","module","sheet_instances","legacy_source","legacy_diagnostic"]);
   const METADATA_OBJECT_FIELDS=new Set(["property","uuid","path","instances"]);
+  // Packed points are private to prepared viewer trees. Comparison keeps the saved AST shape.
+  function packSavedFill(form) {
+    if (form.length < 4) return;
+    for (let i = 1; i < form.length; i++) {
+      const point = form[i];
+      if (!Array.isArray(point) || point.length !== 3 || point[0] !== 'xy' ||
+          !Number.isFinite(point[1]) || !Number.isFinite(point[2])) return;
+    }
+    const coordinates = new Float64Array((form.length - 1) * 2);
+    for (let i = 1; i < form.length; i++) {
+      coordinates[(i - 1) * 2] = form[i][1];
+      coordinates[(i - 1) * 2 + 1] = form[i][2];
+    }
+    form.length = 1;
+    form.push(coordinates);
+  }
   function parse(source, options = {}) {
     if (typeof source !== "string") throw new TypeError("KiCad source must be a string.");
     if (/^\s*PCBNEW-BOARD/.test(source))throw Error('Legacy .brd boards are detected but this drawing format is not yet rendered. Open and save a separate .kicad_pcb copy in KiCad.');
@@ -166,6 +182,8 @@
     if(source.length>byteLimit||source.length>byteLimit/3&&sourceByteLength(source)>byteLimit)throw new Error("KiCad file exceeds browser parser size limits.");
     const nodeLimit = modern ? 12000000 : MAX_NODES;
     const stack = [], roots = [];
+    // Saved copper vertices can bypass temporary growable parser frames.
+    const coordinate = /\(xy[ \t]+([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)[ \t]+([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)[ \t]*\)/y;
     let i = 0, nodes = 0, skippedDepth=0;
     const append = (item) => {
       if (++nodes > nodeLimit) throw new Error("KiCad file has too many S-expression nodes.");
@@ -178,6 +196,18 @@
       if (ch === ";") { while (i < source.length && source[i] !== "\n") i++; continue; }
       if (ch === "(") {
         if (stack.length >= MAX_DEPTH) throw new Error("KiCad S-expression is too deep.");
+        if (!options.metadataOnly && stack.length && source.startsWith('(xy', i)) {
+          coordinate.lastIndex = i;
+          const match = coordinate.exec(source);
+          if (match) {
+            const x = Number(match[1]), y = Number(match[2]);
+            if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error("Invalid numeric KiCad value.");
+            nodes += 3; // Form name and both coordinates; append counts the form itself.
+            append(['xy', x, y]);
+            i = coordinate.lastIndex;
+            continue;
+          }
+        }
         if(options.metadataOnly&&!skippedDepth){let allowed=null;
           if(stack.length===1)allowed=METADATA_FIELDS;
           else if(stack.length===2&&['symbol','footprint','module'].includes(stack.at(-1)?.[0]))allowed=METADATA_OBJECT_FIELDS;
@@ -190,6 +220,8 @@
       if (ch === ")") {
         if (!stack.length) throw new Error("Unexpected closing parenthesis in KiCad file.");
         const node=stack.pop();
+        if(!options.metadataOnly&&options.compactCopper&&node[0]==='pts'&&stack.length===3&&
+          stack[0][0]==='kicad_pcb'&&stack[1][0]==='zone'&&stack[2][0]==='filled_polygon')packSavedFill(node);
         // Fixed-size small forms avoid retaining the spare capacity of millions
         // of growable coordinate/attribute arrays. The public tree shape stays
         // identical; replace only a completed child, never a live stack frame.
@@ -248,7 +280,7 @@
   const value = (item) => item && typeof item === "object" && !Array.isArray(item) ? item.quoted : item;
   const kindOf = (form) => Array.isArray(form) ? (value(form[0]) === "module" ? "footprint" : String(value(form[0]))) : "";
   const children = (form, kind) => form.filter((item) => Array.isArray(item) && kindOf(item) === kind);
-  const child = (form, kind) => children(form, kind)[0];
+  const child = (form, kind) => form.find(item => Array.isArray(item) && kindOf(item) === kind);
   const second = (form, kind) => value(child(form, kind)?.[1]);
   function point(form) {
     for (const name of ["at", "start", "center", "end", "xy"]) {
@@ -380,10 +412,10 @@
   }
   // Job-scoped snapshots reuse validated source without retaining projects globally.
   const preparedProjects = new WeakMap();
-  function prepareProject(files, {forConnectivity = false} = {}) {
-    const parsed = new Map(), records = projectObjects(files, (file, ast) => parsed.set(file.path, ast), null, {forConnectivity, parseOnly: forConnectivity});
+  function prepareProject(files, {forConnectivity = false, compactCopper = false} = {}) {
+    const parsed = new Map(), records = projectObjects(files, (file, ast) => parsed.set(file.path, ast), null, {forConnectivity, parseOnly: forConnectivity, compactCopper: forConnectivity&&compactCopper});
     const snapshot = Object.freeze({});
-    preparedProjects.set(snapshot, {files: files.map(file => ({path: file.path, content: file.content, libraries:JSON.stringify(file.legacyLibraries||[])})), parsed, records: forConnectivity ? null : records});
+    preparedProjects.set(snapshot, {files: files.map(file => ({path: file.path, content: file.content, libraries:JSON.stringify(file.legacyLibraries||[])})), parsed, records: forConnectivity ? null : records, compactCopper: forConnectivity&&compactCopper});
     return snapshot;
   }
   function preparedFile(snapshot, path) {
@@ -391,13 +423,14 @@
     if (!state || !state.parsed.has(path)) throw new Error('Prepared KiCad file is unavailable.');
     return state.parsed.get(path);
   }
-  function projectObjects(files, onParsed = null, snapshot = null, {forConnectivity = false, parseOnly = false} = {}) {
+  function projectObjects(files, onParsed = null, snapshot = null, {forConnectivity = false, parseOnly = false, compactCopper = false} = {}) {
     if (snapshot) {
       const state = preparedProjects.get(snapshot);
       if (!state || !Array.isArray(files) || files.length !== state.files.length ||
           files.some((file, index) => file?.path !== state.files[index].path || file?.content !== state.files[index].content || JSON.stringify(file.legacyLibraries||[]) !== state.files[index].libraries)) {
         throw new Error('Prepared KiCad project differs from source.');
       }
+      if(state.compactCopper&&!forConnectivity)return projectObjects(files,onParsed,null,{parseOnly});
       if (forConnectivity || !state.records) {
         const records = [];
         for (const file of files) {
@@ -422,7 +455,7 @@
       const size = sourceByteLength(file.content);
       total += size;
       if (size > sourceByteLimit(file.path) || total > MAX_PROJECT) throw new Error("KiCad project exceeds browser comparison size limits.");
-      for (const object of collect(file.path, file.content, ast => onParsed?.(file, ast), {libraries:file.legacyLibraries, forConnectivity, parseOnly})) objects.push(object);
+      for (const object of collect(file.path, file.content, ast => onParsed?.(file, ast), {libraries:file.legacyLibraries, forConnectivity, parseOnly, compactCopper: forConnectivity&&compactCopper})) objects.push(object);
     }
     return objects;
   }
@@ -1552,6 +1585,19 @@
       }
     }
     const library = form(rootAST, "lib_symbols"), definitions = new Map();
+    const pinFunctions=Object.create(null),libraryPinFunctions=new WeakMap();
+    function pinFunctionDefinition(pin){
+      if(libraryPinFunctions.has(pin))return libraryPinFunctions.get(pin);
+      const number=String(scalar(pin,'number')??''),defaultName=String(scalar(pin,'name')??'');
+      const alternates=new Map();
+      for(const alternate of forms(pin,'alternate')){
+        const name=value(alternate[1]),electricalType=value(alternate[2]);
+        if(typeof name==='string'&&name&&name!==defaultName)alternates.set(name,{name,electricalType});
+      }
+      const result={number,defaultName,defaultType:value(pin[1]),alternates:[...alternates.values()]};
+      libraryPinFunctions.set(pin,result);
+      return result;
+    }
     for (const definition of forms(library, "symbol")) {
       const name = value(definition[1]);
       if (typeof name === "string") definitions.set(name, definition);
@@ -1644,7 +1690,7 @@
       if (!at) { warn("Placed symbol without position was skipped."); return; }
       const id = scalar(node, "lib_name") ?? scalar(node, "lib_id") ?? value(node[1]);
       if (typeof id !== "string") { warn("Placed symbol without library ID was skipped."); return; }
-      const unit = scalar(node, "unit") ?? 1, style = scalar(node, "convert") ?? 1;
+      const unit = scalar(node, "unit") ?? 1, style = scalar(node, "body_style") ?? scalar(node, "convert") ?? 1;
       const angle = value(form(node, "at")?.[3]) ?? 0;
       if (![0, 90, 180, 270].includes(((angle % 360) + 360) % 360)) warn(`Symbol ${id} has non-orthogonal rotation ${angle}.`);
       const mirror = value(form(node, "mirror")?.[1]) || "";
@@ -1659,11 +1705,20 @@
       const units = libraryUnits(id, finite(unit) ? unit : 1, finite(style) ? style : 1);
       if (!units.length) warn(`No drawable unit ${unit} style ${style} for ${id}.`);
       const graphicStart = primitives.length;
-      const pinLabels = new Map();
+      const pinLabels = new Map(),alternatePins=new Map();
+      const savedFunctions=new Map();
+      for(const pin of forms(node,'pin')){
+        const alternate=scalar(pin,'alternate');
+        if(typeof alternate==='string'&&alternate)savedFunctions.set(String(value(pin[1])??''),alternate);
+      }
       for (const body of units) for (const item of body) {
         if (!Array.isArray(item)) continue;
         const kind = typeOf(item);
         if (kind === "pin") {
+          const definition=pinFunctionDefinition(item),savedFunction=savedFunctions.get(definition.number);
+          if(definition.number&&(definition.alternates.length||savedFunction)){
+            alternatePins.set(definition.number,{...definition,active:savedFunction||definition.defaultName});
+          }
           const start = primitives.length;
           renderPin(item, map, owner, mainDefinition || body);
           // Coincident visible pins remain separate electrical primitives. Only
@@ -1688,6 +1743,7 @@
         else if (["polyline", "rectangle", "circle", "arc", "bezier", "text", "text_box"].includes(kind)) drawGraphic(item, map, owner);
         else if (kind === "image") warn(`Symbol graphic ${kind} is not rendered.`);
       }
+      if(typeof uuid==='string'&&alternatePins.size)pinFunctions[uuid]=[...alternatePins.values()];
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       const include = (p) => {
         if (!p || !finite(p.x) || !finite(p.y)) return;
@@ -1838,7 +1894,7 @@
         warn(`Schematic construct ${kind} is not rendered.`);
       }
     }
-    return { primitives, page, warnings, compatibility };
+    return { primitives, page, warnings, compatibility, pinFunctions };
   }
   root.KiCadSchematicRenderer = { build, pageSettings };
   if (typeof module === "object" && module.exports) module.exports = root.KiCadSchematicRenderer;
@@ -1892,7 +1948,7 @@
   const value = (item) => item && typeof item === "object" && !Array.isArray(item) ? item.quoted : item;
   const kind = (node) => Array.isArray(node) ? String(value(node[0])) : "";
   const children = (node, name) => Array.isArray(node) ? node.filter((part) => Array.isArray(part) && kind(part) === name) : [];
-  const child = (node, name) => children(node, name)[0];
+  const child = (node, name) => Array.isArray(node) ? node.find(part => Array.isArray(part) && kind(part) === name) : undefined;
   const field = (node, name) => value(child(node, name)?.[1]);
   const num = (item, fallback = 0) => { const result = Number(value(item)); return Number.isFinite(result) ? result : fallback; };
   const point = (node, name) => {
@@ -1900,7 +1956,34 @@
     if (!entry || !Number.isFinite(Number(value(entry[1]))) || !Number.isFinite(Number(value(entry[2])))) return null;
     return { x: num(entry[1]), y: num(entry[2]) };
   };
-  const points = (node) => children(child(node, "pts"), "xy").map((xy) => ({ x: num(xy[1]), y: num(xy[2]) }));
+  function packedZone(coordinates) {
+    let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+    for(let i=0;i<coordinates.length;i+=2){
+      const x=coordinates[i],y=coordinates[i+1];
+      minX=Math.min(minX,x);minY=Math.min(minY,y);maxX=Math.max(maxX,x);maxY=Math.max(maxY,y);
+    }
+    return {zoneCoordinates:coordinates,zoneBounds:{x:minX,y:minY,w:maxX-minX,h:maxY-minY}};
+  }
+  function unpackZone(coordinates) {
+    const points=new Array(coordinates.length/2);
+    for(let i=0;i<points.length;i++)points[i]={x:coordinates[i*2],y:coordinates[i*2+1]};
+    return points;
+  }
+  function hydrateZonePoints(design) {
+    if(!design?.packedZones||design.releaseZonePoints)return design;
+    let cache=new WeakMap();
+    for(const primitive of design.primitives)if(primitive.zoneCoordinates){
+      Object.defineProperty(primitive,'points',{enumerable:true,get(){
+        const coordinates=primitive.zoneCoordinates;
+        let points=cache.get(coordinates);
+        if(!points){points=unpackZone(coordinates);cache.set(coordinates,points);}
+        return points;
+      }});
+    }
+    Object.defineProperty(design,'releaseZonePoints',{value:()=>{cache=new WeakMap();}});
+    return design;
+  }
+  const points = node => children(child(node, "pts"), "xy").map(xy => ({x:num(xy[1]),y:num(xy[2])}));
   const uuid = (node) => String(field(node, "uuid") || field(node, "tstamp") || "");
   const hasAtom = (node, atom) => Array.isArray(node) && node.some((part) => !Array.isArray(part) && value(part) === atom);
   const hasFlag = (node, name) => Array.isArray(node) && node.some((part) => {
@@ -1965,6 +2048,18 @@
     }
     return oval(height, width).map((p) => ({x:p.y,y:p.x}));
   }
+  const pinOneColor='#c477ff';
+  function firstCopperPadNumber(footprint){
+    let ball=null;
+    for(const pad of children(footprint,'pad')){
+      if(value(pad[2])==='np_thru_hole'||!child(pad,'layers')?.slice(1).some(layer=>/^(?:F|B|F&B|In[0-9]+|\*)\.Cu$/.test(value(layer))))continue;
+      const number=String(value(pad[1])??'');
+      if(number==='1')return number;
+      if(number==='A1')ball=number;
+    }
+    return ball;
+  }
+
   function build(ast, path = "", options = {}) {
     const warnings = [], primitives = [];
     if (kind(ast) !== "kicad_pcb") throw new Error("Expected a KiCad PCB AST.");
@@ -1998,7 +2093,7 @@
         ownerUuid: owner.ownerUuid || owner.uuid || undefined,
         reference: owner.reference || undefined, kind: owner.kind || kind(node),...netMeta(node),
         ...(owner.kind==='pad'?{name:owner.name,pinNumber:owner.pinNumber,pinName:owner.pinName,netName:owner.netName,netId:owner.netId,netCode:owner.netCode,
-          padCenter:owner.padCenter,padWidth:owner.padWidth,padHeight:owner.padHeight,padAngle:owner.padAngle,padShape:owner.padShape}:{}) };
+          padCenter:owner.padCenter,padWidth:owner.padWidth,padHeight:owner.padHeight,padAngle:owner.padAngle,padShape:owner.padShape,...(owner.pinOne?{pinOne:true}:{})}:{}) };
     }
     function isFilled(node) {
       const fill = child(node,"fill");
@@ -2062,7 +2157,7 @@
       if (width <= 0 || height <= 0) { warn("Pad with invalid size",node); return; }
       const rawLayers = (child(node,"layers") || []).slice(1).map((part) => String(value(part)));
       const selected = [...new Set(rawLayers.flatMap((item) => item.startsWith("*.")
-        ? layerNames.filter((layer) => layer.endsWith(item.slice(1))) : [item]))];
+        ? layerNames.filter((layer) => layer.endsWith(item.slice(1))) : item==='F&B.Cu'?['F.Cu','B.Cu']:[item]))];
       if (!selected.length) { warn("Pad without renderable layers",node); return; }
       // KiCad serializes the pad angle in board coordinates, even though its
       // position is footprint-local. An omitted angle is therefore zero.
@@ -2082,6 +2177,7 @@
           kind:"pad", name:String(value(node[1]) || ""), pinNumber:String(value(node[1]) || ""),
           padCenter:{...center}, padWidth:width, padHeight:height, padAngle:-localAngle,padShape:shape,
           pinName:String(field(node,"pinfunction") || ""), ...netMeta(node), padType:String(value(node[2])||""), fill:true };
+        if(meta.pinNumber===footprint.pinOneNumber&&meta.padType!=='np_thru_hole'&&layer.endsWith('.Cu'))meta.pinOne=true;
         if (shape === "circle") push({ type:"pad", x:center.x, y:center.y, r:width/2, ...meta });
         else if (shape === "custom") {
           const options = child(node,"options"), anchor = String(field(options,"anchor") || "");
@@ -2161,7 +2257,7 @@
         if(local.Reference!==undefined)local.REFERENCE=local.Reference;if(local.Value!==undefined)local.VALUE=local.Value;
         if(uuid(node))variableFields.set(uuid(node),local);
         const reference = local.Reference||"";
-        const owner = { uuid:uuid(node), reference };
+        const owner = { uuid:uuid(node), reference, pinOneNumber:options.silkscreenOnly?null:firstCopperPadNumber(node) };
         const firstPrimitive = primitives.length;
         for (const sub of node.slice(1)) {
           if (!Array.isArray(sub)) continue;
@@ -2186,8 +2282,10 @@
         const filled = children(node,"filled_polygon");
         if (filled.length) {
           for (const region of filled) {
-            const regionLayer = String(field(region,"layer") || layer), pts = points(region);
-            if (pts.length >= 3) push({ type:"polygon", points:pts, layer:regionLayer, color:colorFor(regionLayer),
+            const regionLayer = String(field(region,"layer") || layer), coordinates=child(region,"pts")?.[1];
+            const geometry=coordinates instanceof Float64Array
+              ? options.packedZones?packedZone(coordinates):{points:unpackZone(coordinates)} : {points:points(region)};
+            if (geometry.zoneCoordinates||geometry.points.length >= 3) push({ type:"polygon", ...geometry, layer:regionLayer, color:colorFor(regionLayer),
               // Filled contours may bridge cut-outs with doubled-back segments.
               // Those segments close the fill; they are not copper outlines.
               fill:true, stroke:false, opacity:.22, uuid:uuid(node) || undefined, kind:"zone",...netMeta(node) });
@@ -2207,9 +2305,10 @@
       item.kind === "track" ? 0 : item.kind === "via" ? 1 : item.kind === "pad" ? 2 :
       item.kind === "drill" ? 3 : 0;
     primitives.sort((a,b) => priority(a)-priority(b));
-    return { primitives, page, warnings, compatibility, layers:layerNames.length ? layerNames : [...new Set(primitives.map((item) => item.layer))], path };
+    return { primitives, page, warnings, compatibility, layers:layerNames.length ? layerNames : [...new Set(primitives.map((item) => item.layer))], path,
+      ...(options.packedZones&&primitives.some(primitive=>primitive.zoneCoordinates)?{packedZones:true}:{}) };
   }
-  root.KiCadPCBRenderer = { build, colorFor };
+  root.KiCadPCBRenderer = { build, colorFor, firstCopperPadNumber, pinOneColor, hydrateZonePoints };
   if (typeof module === "object" && module.exports) module.exports = root.KiCadPCBRenderer;
 })(typeof globalThis === "object" ? globalThis : this);
 
@@ -2255,6 +2354,15 @@
     const sweep=through <= end+1e-12 ? end : turn-end;
     return Math.hypot(ox,oy)*sweep;
   }
+  function pcbPrimitiveMatches(kind, primitive) {
+    switch (kind) {
+      case 'pad': return primitive === 'pad' || primitive === 'drill';
+      case 'zone': return primitive === 'zone' || primitive === 'zone-outline';
+      case 'segment': return primitive === 'track';
+      case 'arc': return primitive === 'arc' || primitive === 'track';
+      default: return primitive === 'via' || primitive === 'drill';
+    }
+  }
   function pcb(path, ast, records, primitives, warn) {
     const nets=new Map(), names=new Map();
     const modernNamedNets=Number(field(ast,'version'))>=20260206;
@@ -2278,8 +2386,10 @@
     names.forEach((_,code)=>ensure(code));
     const byUuid=new Map(), padPrimitives=new Map(), footprints=new Map(records.filter((r)=>r.kind === "footprint").map((r)=>[r.key,r]));
     for (const p of primitives) if (p.uuid) {
-      if (!byUuid.has(p.uuid)) byUuid.set(p.uuid,[]);
-      byUuid.get(p.uuid).push(p);
+      const existing = byUuid.get(p.uuid);
+      if (!existing) byUuid.set(p.uuid, p);
+      else if (Array.isArray(existing)) existing.push(p);
+      else byUuid.set(p.uuid, [existing, p]);
       if (p.kind === "pad" && p.ownerUuid && p.name != null) {
         const key=JSON.stringify([p.ownerUuid,String(p.name)]);
         if (!padPrimitives.has(key)) padPrimitives.set(key,[]);
@@ -2300,12 +2410,11 @@
       // Pad primitives may have the footprint UUID only in older files. Never
       // highlight the entire footprint or a different pad sharing that owner.
       const parent=record.kind === "pad" ? footprints.get(record.key.slice(0,record.key.lastIndexOf("/pad:"))) : null;
-      const candidates=uuid ? byUuid.get(uuid) || [] : parent ? padPrimitives.get(JSON.stringify([
-        parent.metadata.uuid,String(value(record.form[1]))])) || [] : [];
-      net.primitives.push(...candidates.filter((p)=> record.kind === "pad" ? p.kind === "pad" || p.kind === "drill" :
-        record.kind === "zone" ? ["zone","zone-outline"].includes(p.kind) :
-          record.kind === "segment" ? p.kind === "track" : record.kind === "arc" ? p.kind === "arc" || p.kind === "track" :
-            p.kind === "via" || p.kind === "drill"));
+      const candidates = uuid ? byUuid.get(uuid) : parent ? padPrimitives.get(JSON.stringify([
+        parent.metadata.uuid, String(value(record.form[1]))])) : undefined;
+      if (Array.isArray(candidates)) {
+        for (const p of candidates) if (pcbPrimitiveMatches(record.kind, p.kind)) net.primitives.push(p);
+      } else if (candidates && pcbPrimitiveMatches(record.kind, candidates.kind)) net.primitives.push(candidates);
       net.members.push({uuid, reference:parent?.metadata.properties.Reference || "", pad:record.kind === "pad" ? String(value(record.form[1])) : "",
         kind:record.kind, position:record.metadata.position});
       const stat=({pad:"pads",segment:"tracks",arc:"tracks",via:"vias",zone:"zones"})[record.kind];
@@ -2487,6 +2596,7 @@
       if(!recordsByPath.has(record.path))recordsByPath.set(record.path,[]);
       recordsByPath.get(record.path).push(record);
       const count=(counts.get(record.key)||0)+1;counts.set(record.key,count);record.id=count===1 ? record.key : `${record.key}#${count}`;}
+    counts.clear();
     const nets=[], warnings=[], seenWarnings=new Set();
     const warn=(message)=> {if(warnings.length<1000 && !seenWarnings.has(message)){seenWarnings.add(message);warnings.push(message);}};
     for (const file of files) {
@@ -2817,26 +2927,901 @@
 })(typeof globalThis==='object'?globalThis:this);
 
 ;
+/* Bounded, file-scoped search. Patterns use a finite-state matcher, never JS RegExp.
+ * compile(query): AND terms, OR/| alternatives, -/NOT exclusions, field:value,
+ * quoted phrases and quoted property names ("Manufacturer Part":"ABC 123").
+ * createIndex(objects,{nets,sheets}): saved design-model records and net-model nets.
+ * search(index,query,{limit}): results with object, file-scoped identity and snippets.
+ * Limits and incompleteness are returned as warnings; malformed queries return error.
+ */
+((root) => {
+  "use strict";
+  const LIMITS = Object.freeze({query:2048, terms:64, groups:16, objects:50000,
+    fields:128, fieldChars:4096, indexChars:16*1024*1024, results:1000,
+    patternChars:128, patternAtoms:64, patternSteps:5000000});
+  const fold = (text) => String(text ?? "").normalize("NFKC").toLowerCase();
+  const order = (a,b) => a < b ? -1 : a > b ? 1 : 0;
+  // Saved schema: KiCad common/project/net_settings.cpp (schema 3/4/5).
+  // Search class membership, not native effective rule values. Explicit labels and
+  // matching patterns compose; priority orders constituents rather than replacing them.
+  function savedColor(value) {
+    if(typeof value!=='string'||value.length>80)return null;
+    const rgba=value.trim().match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*(0(?:\.\d+)?|1(?:\.0+)?|\.\d+))?\s*\)$/i);
+    if(rgba){const rgb=rgba.slice(1,4).map(Number),a=rgba[4]===undefined?1:Number(rgba[4]);return rgb.every(n=>n<=255)&&a>0&&a<=1?`rgba(${rgb.join(',')},${a})`:null;}
+    const hex=value.trim().match(/^#([0-9a-f]{6})([0-9a-f]{2})?$/i);if(hex){const a=hex[2]?parseInt(hex[2],16)/255:1;return a>0?`rgba(${[0,2,4].map(i=>parseInt(hex[1].slice(i,i+2),16)).join(',')},${a})`:null;}return null;
+  }
+  function netClassColor(name,config,pcb=false) {
+    const names=netClasses(name,config);if(!names.length)return null;
+    const field=pcb?'pcbColor':'schematicColor';
+    for(const className of [...names,'Default']){const color=config.classes.find(c=>c.name===className)?.[field];if(color)return color;}return null;
+  }
+  function parseNetClasses(text) {
+    if(typeof text!=="string" || text.length>1024*1024)throw new Error("Project settings must be text under 1 MiB.");
+    let project;try{project=JSON.parse(text);}catch{throw new Error("Project settings JSON is malformed.");}
+    const settings=project?.net_settings;
+    if(!settings || typeof settings!=="object" || Array.isArray(settings))throw new Error("Project has no saved net_settings object.");
+    const warnings=new Set(["Net classes use saved assignments and case-sensitive whole-name wildcards only; native regex matching, bus expansion, rule areas and derived assignments are not evaluated."]),classes=[],assignments=new Map(),patterns=[];
+    let incomplete=false;
+    const safe=(value)=>typeof value==="string"&&value.length>0&&value.length<=500&&!/[\x00-\x1f\x7f]/.test(value);
+    if(!Array.isArray(settings.classes))throw new Error("Saved net_settings.classes must be an array.");
+    if(settings.classes.length>256)throw new Error("Project exceeds 256 net classes.");
+    for(const [index,item] of settings.classes.entries()) {
+      if(!safe(item?.name)){warnings.add("An invalid net class definition was omitted.");incomplete=true;continue;}
+      if(classes.some(c=>c.name===item.name))throw new Error("Project has duplicate net class names.");
+      classes.push({name:item.name,pcbColor:savedColor(item.pcb_color),schematicColor:savedColor(item.schematic_color),priority:item.name==="Default"?Number.MAX_SAFE_INTEGER:Number.isFinite(item.priority)?item.priority:index});
+      if(item.nets!==undefined){warnings.add("Legacy per-class nets are not interpreted; resave the project in current KiCad.");incomplete=true;}
+    }
+    if(!classes.some(c=>c.name==="Default"))classes.push({name:"Default",priority:Number.MAX_SAFE_INTEGER});
+    const addImplicit=(name)=>{if(!classes.some(c=>c.name===name)){if(classes.length>=512)throw new Error("Project exceeds 512 defined and implicit net class names.");classes.push({name,priority:Number.MAX_SAFE_INTEGER-1});warnings.add("Assignments to undefined classes are retained as implicit names; no rule values are inferred.");}};
+    const raw=settings.netclass_assignments??{};
+    if(!raw || typeof raw!=="object" || Array.isArray(raw))throw new Error("Saved netclass_assignments must be an object.");
+    if(Object.keys(raw).length>10000)throw new Error("Project exceeds 10000 net class assignments.");
+    for(const [name,value] of Object.entries(raw)) {
+      const names=typeof value==="string"?(value?[value]:[]):value;
+      if(!safe(name)||!Array.isArray(names)||names.length>256||names.some(n=>!safe(n))){warnings.add("An invalid explicit net class assignment was omitted.");incomplete=true;continue;}
+      assignments.set(name,[...new Set(names)]);for(const n of names)addImplicit(n);
+    }
+    const rawPatterns=settings.netclass_patterns??[];
+    if(!Array.isArray(rawPatterns)||rawPatterns.length>1024)throw new Error("Saved netclass_patterns must be an array of at most 1024 entries.");
+    for(const item of rawPatterns) {
+      if(!safe(item?.pattern)||!safe(item?.netclass)){warnings.add("An invalid net class pattern was omitted.");incomplete=true;continue;}
+      // These can have regex/bus meaning in KiCad; avoid inventing memberships.
+      if(/[\[\]{}()|^$\\+]/.test(item.pattern)) {warnings.add("Regex or bus net class patterns were omitted; unmatched nets cannot safely be assumed Default.");incomplete=true;continue;}
+      patterns.push({pattern:item.pattern,netclass:item.netclass});addImplicit(item.netclass);
+    }
+    if(settings.netclass_chain_assignments!==undefined){warnings.add("Chain-derived net class assignments are not evaluated.");incomplete=true;}
+    return {classes,assignments,patterns,warnings:[...warnings],incomplete};
+  }
+  function wildcard(pattern,name) {
+    // Greedy glob matching with bounded lengths, no constructed regular expression.
+    let p=0,n=0,star=-1,afterStar=0;
+    while(n<name.length) {
+      if(pattern[p]==="?" || pattern[p]===name[n]){p++;n++;}
+      else if(pattern[p]==="*"){star=p++;afterStar=n;}
+      else if(star>=0){p=star+1;n=++afterStar;}
+      else return false;
+    }
+    while(pattern[p]==="*")p++;
+    return p===pattern.length;
+  }
+  function netClasses(name,config) {
+    if(!config || !(config.assignments instanceof Map) || typeof name!=="string" || name.length>500)return [];
+    if(!name)return ["Default"];
+    const found=new Set(config.assignments.get(name)||[]);
+    for(const entry of config.patterns)if(wildcard(entry.pattern,name))found.add(entry.netclass);
+    if(!found.size&&!config.incomplete)found.add("Default");
+    const priorities=new Map(config.classes.map(c=>[c.name,c.priority]));
+    return [...found].sort((a,b)=>(priorities.get(a)??Number.MAX_SAFE_INTEGER)-(priorities.get(b)??Number.MAX_SAFE_INTEGER)||order(a,b));
+  }
+  function patternCompile(source,mode) {
+    if(!source || source.length>LIMITS.patternChars)throw new Error(`Patterns must contain 1–${LIMITS.patternChars} characters.`);
+    const atoms=[];let start=mode==='glob',end=mode==='glob',i=0;
+    const literal=c=>{const value=fold(c);if(value.length!==1)throw new Error('Pattern characters must normalize to one character; use literal search for expanded Unicode.');return {kind:'literal',value};};
+    if(mode==='regex'&&source[0]==='^'){start=true;i++;}
+    const escaped=()=>{if(i>=source.length)throw new Error('Pattern ends with an escape.');const c=source[i++];if(mode==='regex'&&'dDsSwW'.includes(c))return {kind:'category',value:c};if(/[a-z0-9]/i.test(c))throw new Error('Only \\d, \\s, \\w (and uppercase inverses) or escaped punctuation are supported.');return literal(c);};
+    while(i<source.length) {
+      const c=source[i++];let atom;
+      if(mode==='glob') {
+        atom=c==='*'?{kind:'any',repeat:'*'}:c==='?'?{kind:'any'}:c==='\\'?escaped():literal(c);
+      } else {
+        if(c==='$'&&i===source.length){end=true;break;}
+        if('()|{}^$*+?'.includes(c))throw new Error('Regex supports literals, . , character classes, anchors and single-atom * + ?; groups, alternation, counted repeats and lookarounds are unsupported. Use query OR for alternatives.');
+        if(c==='\\')atom=escaped();
+        else if(c==='.')atom={kind:'any'};
+        else if(c==='[') {
+          const negate=source[i]==='^';if(negate)i++;
+          const values=[];
+          while(i<source.length&&source[i]!==']'){let part=source[i++],escapedPart=false;if(part==='\\'){const item=escaped();if(item.kind!=='literal')throw new Error('Character-class escapes must be literal punctuation.');part=item.value;escapedPart=true;}values.push({value:part,escaped:escapedPart});}
+          if(source[i++]!==']'||!values.length)throw new Error('Regex character class is empty or unclosed.');
+          const ranges=[];for(let n=0;n<values.length;n++){const a=fold(values[n].value);if(a.length!==1)throw new Error('Character classes require single-character entries.');if(values[n+1]?.value==='-'&&!values[n+1].escaped&&n+2<values.length){const b=fold(values[n+2].value);if(b.length!==1||a>b)throw new Error('Regex character range is reversed or invalid.');ranges.push([a,b]);n+=2;}else ranges.push([a,a]);}
+          atom={kind:'class',negate,ranges};
+        } else atom=literal(c);
+        if('*+?'.includes(source[i]||'\0'))atom.repeat=source[i++];
+      }
+      atoms.push(atom);if(atoms.length>LIMITS.patternAtoms)throw new Error(`Patterns exceed ${LIMITS.patternAtoms} atoms.`);
+    }
+    if(!atoms.length)throw new Error('Pattern must contain a matching atom.');
+    // Expand + into one required atom and a repeat state. No backtracking stack.
+    return {start,end,atoms:atoms.flatMap(a=>a.repeat==='+'?[{...a,repeat:null},{...a,repeat:'*'}]:[a])};
+  }
+  function patternMatch(pattern,text,budget) {
+    const atoms=pattern.atoms,states=new Set([0]);
+    const charge=()=>{if(--budget.steps<0)throw new Error('Pattern search reached its work budget. Narrow the query with literal type:, sheet: or ref: terms.');};
+    const closure=set=>{for(let j=0;j<atoms.length;j++){charge();if(set.has(j)&&['*','?'].includes(atoms[j].repeat))set.add(j+1);}};
+    const accepts=(atom,c)=>{
+      if(atom.kind==='any')return true;
+      if(atom.kind==='literal')return c===atom.value;
+      if(atom.kind==='class'){const yes=atom.ranges.some(([a,b])=>c>=a&&c<=b);return atom.negate?!yes:yes;}
+      const kind=atom.value.toLowerCase(),yes=kind==='d'?c>='0'&&c<='9':kind==='w'?((c>='a'&&c<='z')||(c>='0'&&c<='9')||c==='_'):/\s/.test(c);
+      return atom.value===kind?yes:!yes;
+    };
+    closure(states);if(!pattern.end&&states.has(atoms.length))return true;
+    let current=states;
+    for(let i=0;i<text.length;i++) {
+      if(!pattern.start)current.add(0);closure(current);const next=new Set();
+      for(const j of current){charge();if(j<atoms.length&&accepts(atoms[j],text[i]))next.add(atoms[j].repeat==='*'?j:j+1);}
+      closure(next);current=next;if(!pattern.end&&current.has(atoms.length))return true;
+      if(pattern.start&&!current.size)return false;
+    }
+    if(!pattern.start)current.add(0);closure(current);return current.has(atoms.length);
+  }
+  function compile(query) {
+    if (typeof query !== "string") return {groups:[],error:"Search must be text."};
+    if (query.length > LIMITS.query) return {groups:[],error:`Search exceeds ${LIMITS.query} characters.`};
+    if (/[\x00-\x1f\x7f]/.test(query)) return {groups:[],error:"Search contains control characters."};
+    const tokens = []; let i=0;
+    while (i < query.length) {
+      if (/\s/.test(query[i])) {i++;continue;}
+      if (query[i] === "|") {tokens.push({operator:"OR"});i++;continue;}
+      let value="",colon=-1,quoted=false,inQuote=false,start=i;
+      while (i < query.length && (inQuote || (!/\s/.test(query[i]) && query[i]!=="|"))) {
+        const c=query[i++];
+        if(c==='"') {inQuote=!inQuote;quoted=true;continue;}
+        if(c==="\\" && inQuote && (query[i]==='"' || query[i]==="\\")) {value+=query[i++];continue;}
+        if(c===':' && !inQuote && colon<0) colon=value.length;
+        if((c==='(' || c===')') && !inQuote) return {groups:[],error:"Parentheses are unsupported; separate AND groups with OR."};
+        value+=c;
+      }
+      if(inQuote) return {groups:[],error:`Unclosed quote at character ${start+1}.`};
+      if(!quoted && ["AND","OR","NOT"].includes(value)) tokens.push({operator:value});
+      else tokens.push({value,colon,leadingMinus:query[start]==="-"});
+      if(tokens.length > LIMITS.terms*2) return {groups:[],error:"Too many search terms."};
+    }
+    const groups=[[]];let pending=false,negate=false,total=0;
+    for(const token of tokens) {
+      const group=groups.at(-1);
+      if(token.operator === "OR") {
+        if(!group.length || pending || negate) return {groups:[],error:"OR needs a search term on both sides."};
+        if(groups.length >= LIMITS.groups) return {groups:[],error:"Too many OR groups."};
+        groups.push([]);pending=true;continue;
+      }
+      if(token.operator === "AND") {
+        if(!group.length || pending || negate) return {groups:[],error:"AND needs a search term on both sides."};
+        pending=true;continue;
+      }
+      if(token.operator === "NOT") {
+        if(negate) return {groups:[],error:"NOT must precede a search term."};
+        negate=true;continue;
+      }
+      let text=token.value,colon=token.colon,excluded=negate;
+      if(token.leadingMinus) {excluded=!excluded;text=text.slice(1);if(colon>=0)colon--;}
+      let field=colon>=0?fold(text.slice(0,colon)):null;
+      let raw=colon>=0?text.slice(colon+1):text,mode='literal',pattern=null;
+      if(field==='regex'||field==='glob'){raw=`${field}:${raw}`;field=null;}
+      if(/^(regex|glob):/i.test(raw)){mode=raw.slice(0,raw.indexOf(':')).toLowerCase();raw=raw.slice(raw.indexOf(':')+1);try{pattern=patternCompile(raw,mode);}catch(error){return {groups:[],error:error.message};}}
+      const term=fold(raw);
+      if(!term || field==="") return {groups:[],error:"Each search term and field must have a value."};
+      if(++total > LIMITS.terms) return {groups:[],error:`Search exceeds ${LIMITS.terms} terms.`};
+      group.push({field,term,excluded,mode,pattern});pending=negate=false;
+    }
+    if(pending || negate) return {groups:[],error:"Search ends with an incomplete operator."};
+    return {groups:tokens.length?groups:[],error:null};
+  }
+  function createIndex(objects, options={}) {
+    if(!Array.isArray(objects)) throw new TypeError("Search requires design objects.");
+    const warnings=new Set(),entries=[],netNames=new Map(),sheetNames=new Map(),classMembership=new Map();let chars=0,links=0;
+    for(const warning of options.netClasses?.warnings||[])warnings.add(warning);
+    if((options.nets||[]).length>LIMITS.objects)warnings.add(`Only ${LIMITS.objects} networks are indexed.`);
+    if((options.sheets||[]).length>LIMITS.objects)warnings.add(`Only ${LIMITS.objects} sheet names are indexed.`);
+    const addNet=(key,name)=>{if(!netNames.has(key))netNames.set(key,new Set());netNames.get(key).add(name);};
+    netLoop: for(const net of (options.nets||[]).slice(0,LIMITS.objects)) {
+      if(typeof net?.path!=="string" || typeof net.name!=="string") continue;
+      for(const id of (net.objectIds||[]).slice(0,LIMITS.objects)) {if(++links>250000){warnings.add("Net search membership reached its 250000-link budget.");break netLoop;}addNet(`id:${net.path}:${id}`,net.name.slice(0,LIMITS.fieldChars));}
+      for(const member of (net.members||[]).slice(0,LIMITS.objects))if(typeof member.uuid==="string") {if(++links>250000){warnings.add("Net search membership reached its 250000-link budget.");break netLoop;}addNet(`uuid:${net.path}:${member.uuid}`,net.name.slice(0,LIMITS.fieldChars));}
+    }
+    for(const sheet of (options.sheets||[]).slice(0,LIMITS.objects))if(typeof sheet?.path==="string")sheetNames.set(sheet.path,sheet.label||"");
+    const objectNets=new Map();
+    for(const object of objects.slice(0,LIMITS.objects)) {
+      const names=new Set([...(netNames.get(`id:${object.path}:${object.id}`)||[]),...(netNames.get(`uuid:${object.path}:${object.uuid}`)||[])]);
+      if(object.parentId)for(const name of names)addNet(`id:${object.path}:${object.parentId}`,name);
+      objectNets.set(object,names);
+    }
+    if(objects.length > LIMITS.objects)warnings.add(`Search indexes the first ${LIMITS.objects} objects only.`);
+    for(const object of objects.slice(0,LIMITS.objects)) {
+      if(!object || typeof object.path!=="string" || typeof object.id!=="string")continue;
+      const names=new Set([...objectNets.get(object),...(netNames.get(`id:${object.path}:${object.id}`)||[])]);
+      const fields=new Map();
+      const put=(key,value)=> {
+        if(value===undefined || value===null || typeof value==="object")return;
+        key=fold(key);const text=String(value);
+        if(text.length > LIMITS.fieldChars)warnings.add(`Long field values are limited to ${LIMITS.fieldChars} characters.`);
+        const bounded=text.slice(0,LIMITS.fieldChars),previous=fields.get(key);
+        const display=previous&&previous.display!==bounded?`${previous.display} ${bounded}`.slice(0,LIMITS.fieldChars):bounded;
+        fields.set(key,{display,folded:fold(display)});
+      };
+      for(const [key,value] of Object.entries(object.properties||{}).slice(0,LIMITS.fields))put(key,value);
+      if(Object.keys(object.properties||{}).length>LIMITS.fields)warnings.add(`Only ${LIMITS.fields} saved properties per object are indexed.`);
+      // Canonical aliases never disappear behind a custom property with the same name.
+      put("ref",object.reference||object.properties?.Reference||"");put("value",object.properties?.Value||"");
+      put("type",object.kind);put("sheet",`${object.path} ${sheetNames.get(object.path)||""}`);
+      put("uuid",object.uuid);put("footprint",object.properties?.Footprint||object.properties?.["Library ID"]||"");
+      put("net",[...names].join(" "));put("label",object.label);
+      if(options.netClasses) {
+        const classes=[...new Set([...names].flatMap(name=>{if(!classMembership.has(name))classMembership.set(name,netClasses(name,options.netClasses));return classMembership.get(name);} ))].join(" ");
+        put("netclass",classes);put("class",classes);
+      }
+      const size=[...fields.values()].reduce((sum,f)=>sum+f.display.length+f.folded.length,0);
+      if(chars+size>LIMITS.indexChars){warnings.add("Search index reached its text budget; remaining objects were not indexed.");break;}
+      chars+=size;entries.push({object,fields});
+    }
+    return {entries,warnings:[...warnings],count:entries.length};
+  }
+  function search(index,query, options={}) {
+    const parsed=compile(query),warnings=[...(index?.warnings||[])];
+    if(parsed.error)return {results:[],total:0,truncated:false,error:parsed.error,warnings};
+    const limit=Number.isSafeInteger(options.limit)?Math.max(1,Math.min(LIMITS.results,options.limit)):200;
+    const ranked=[],budget={steps:LIMITS.patternSteps},preferredPath=options.preferredPath;
+    const compare=(a,b)=>b.score-a.score||
+      (preferredPath?Number(b.object.path===preferredPath)-Number(a.object.path===preferredPath):0)||
+      order(a.object.path,b.object.path)||order(a.object.id,b.object.id);
+    let total=0,cutoff=null;
+    const groups=(parsed.groups.length?parsed.groups:[[]]).map(group=>group.slice().sort((a,b)=>Number(Boolean(a.pattern))-Number(Boolean(b.pattern))));
+    try {
+      for(const entry of index?.entries||[]) {
+        let best=null;
+        for(const group of groups) {
+          const matches=[];let score=0,valid=true;
+          for(const token of group) {
+            const fields=token.field?[[token.field,entry.fields.get(token.field)]]:entry.fields;
+            let found=false;
+            for(const [name,field] of fields) {
+              if(!field||!(token.pattern?patternMatch(token.pattern,field.folded,budget):field.folded.includes(token.term)))continue;
+              found=true;
+              if(token.excluded)break;
+              const strength=field.folded===token.term?10:field.folded.startsWith(token.term)?5:1;
+              score+=strength+(name==='ref'?3:0);
+              matches.push({field:name,text:field.display,folded:field.folded,term:token.term});
+            }
+            if(found===token.excluded){valid=false;break;}
+          }
+          if(valid&&(!best||score>best.score))best={score,matches};
+        }
+        if(!best)continue;
+        total++;
+        const candidate={object:entry.object,score:best.score,matches:best.matches};
+        if(cutoff&&compare(candidate,cutoff)>=0)continue;
+        ranked.push(candidate);
+        if(ranked.length===2*limit){
+          ranked.sort(compare);
+          ranked.length=limit;
+          cutoff=ranked[limit-1];
+        }
+      }
+    }catch(error){return {results:[],total:0,truncated:false,error:error.message,warnings};}
+    ranked.sort(compare);
+    const results=ranked.slice(0,limit).map(({object,score,matches})=>{
+      const seen=new Set(),snippets=[];
+      for(const match of matches){
+        if(seen.has(match.field))continue;
+        seen.add(match.field);
+        const at=match.folded.indexOf(match.term),start=Math.max(0,at-36),end=Math.min(match.text.length,start+140);
+        snippets.push({field:match.field,text:`${start?'...':''}${match.text.slice(start,end)}${end<match.text.length?'...':''}`});
+        if(snippets.length===6)break;
+      }
+      return {object,id:object.id,path:object.path,uuid:object.uuid||null,score,matchedFields:[...seen],snippets};
+    });
+    return {results,total,truncated:total>limit,error:null,warnings};
+  }
+
+  const api={LIMITS,compile,createIndex,search,parseNetClasses,netClasses,savedColor,netClassColor};root.KiCadProjectSearch=api;
+  if(typeof module==="object" && module.exports)module.exports=api;
+})(typeof globalThis==="object"?globalThis:this);
+
+;
+/* Revision-bound drawing-sheet data and safe SVG composition. No CAD edits or network. */
+((root)=>{'use strict';
+ const SCHEMA='pocket-kivi-draftsman/v1',MAX_BYTES=4*1024*1024,MAX_SVG=32*1024*1024;
+ const papers=Object.freeze({A4:[210,297],A3:[297,420],Letter:[215.9,279.4]});
+ const fail=message=>{throw Error('Draftsman: '+message);};
+ const bytes=value=>new TextEncoder().encode(value).length;
+ const fields=(value,keys)=>{if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).some(k=>!keys.includes(k)))fail('Unsupported or unexpected document field.');};
+ const text=(value,max=200,empty=true)=>{if(typeof value!=='string'||value.length>max||(!empty&&!value.trim())||/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(value))fail('Invalid text field.');return value;};
+ const number=(value,min,max)=>{if(typeof value!=='number'||!Number.isFinite(value)||value<min||value>max)fail('Invalid measurement or page coordinate.');return value;};
+ const id=value=>{if(typeof value!=='string'||!/^[A-Za-z][A-Za-z0-9_-]{0,79}$/.test(value))fail('Invalid item identifier.');return value;};
+ const file=value=>{text(value,500,false);if(value.startsWith('/')||/[\\\x00-\x1f\x7f?#%:]/.test(value)||value.split('/').some(v=>!v||v==='.'||v==='..')||! /\.kicad_(pcb|sch)$/i.test(value))fail('Invalid source drawing path.');return value;};
+ const point=value=>{fields(value,['x','y']);return{x:number(value.x,-1e6,1e6),y:number(value.y,-1e6,1e6)};};
+ function source(value){
+  fields(value,['provider','host','repository','ref','hashes']);
+  if(!['github','gitlab','local'].includes(value.provider))fail('Invalid source provider.');
+  const repository=text(value.repository,300,false),ref=text(value.ref,200,false);if(/[\s\\?#%]/.test(repository)||repository.split('/').some(v=>!v||v==='.'||v==='..')||/[\x00-\x20\\?#%]/.test(ref)||ref.includes('..'))fail('Invalid source repository or revision.');
+  const result={provider:value.provider,repository,ref};
+  if(value.host!==undefined){let host;try{host=new URL(value.host);}catch{fail('Invalid source host.');}if(host.protocol!=='https:'||host.username||host.password||host.search||host.hash||host.pathname!=='/'||host.origin!==value.host)fail('Invalid source host.');result.host=host.origin;}
+  if(value.hashes!==undefined){fields(value.hashes,Object.keys(value.hashes));const keys=Object.keys(value.hashes);if(keys.length>128)fail('Too many source fingerprints.');result.hashes={};for(const name of keys){file(name);if(!/^[a-f0-9]{64}$/.test(value.hashes[name]))fail('Invalid source fingerprint.');Object.defineProperty(result.hashes,name,{value:value.hashes[name],enumerable:true,writable:true,configurable:true});}}
+  return result;
+ }
+ function pageSize(doc){if(!papers[doc.paper]||!['landscape','portrait'].includes(doc.orientation))fail('Invalid paper size or orientation.');const [short,long]=papers[doc.paper];return doc.orientation==='landscape'?{width:long,height:short}:{width:short,height:long};}
+ function sameSource(a,b){const left=source(a),right=source(b);for(const key of ['provider','host','repository','ref'])if((left[key]||'')!==(right[key]||''))fail('Document belongs to a different source revision.');if(right.hashes){const names=new Set([...Object.keys(left.hashes||{}),...Object.keys(right.hashes)]);for(const name of names)if(left.hashes?.[name]!==right.hashes[name])fail('Source drawing fingerprint changed: '+name);}}
+ function validate(input,expectedSource){
+  let raw;try{raw=typeof input==='string'?input:JSON.stringify(input);}catch{fail('Document is not JSON.');}if(typeof raw!=='string'||bytes(raw)>MAX_BYTES)fail('Document exceeds 4 MiB.');let doc;try{doc=JSON.parse(raw);}catch{fail('Invalid document JSON.');}
+  fields(doc,['schema','source','template','title','revision','company','units','precision','paper','orientation','accent','fontSize','lineWidth','pages']);if(doc.schema!==SCHEMA)fail('Unsupported document version.');if(doc.template===undefined)doc.template='modern';if(!['modern','kicad'].includes(doc.template))fail('Unsupported worksheet template.');doc.source=source(doc.source);if(expectedSource)sameSource(doc.source,expectedSource);
+  text(doc.title,200);text(doc.revision,80);text(doc.company,200);if(!['mm','in'].includes(doc.units)||!Number.isInteger(doc.precision)||doc.precision<0||doc.precision>4)fail('Invalid units or precision.');if(!/^#[0-9a-fA-F]{6}$/.test(doc.accent))fail('Invalid drawing accent.');number(doc.fontSize,2,5);number(doc.lineWidth,.1,1);const size=pageSize(doc);
+  if(!Array.isArray(doc.pages)||!doc.pages.length||doc.pages.length>20)fail('Document must have 1–20 sheets.');const pageIds=new Set(),viewIds=new Set();let mechanicalViews=0;
+  for(const page of doc.pages){fields(page,['id','title','items']);id(page.id);if(pageIds.has(page.id))fail('Duplicate sheet identifier.');pageIds.add(page.id);text(page.title,160);if(!Array.isArray(page.items)||page.items.length>200)fail('A sheet supports at most 200 drawing items.');const itemIds=new Set(),views=new Map();
+   for(const item of page.items){id(item?.id);if(itemIds.has(item.id))fail('Duplicate drawing item identifier.');itemIds.add(item.id);
+    if(item.type==='view'){if(viewIds.has(item.id))fail('Drawing view identifiers must be unique across sheets.');viewIds.add(item.id);fields(item,['id','type','file','side','layers','x','y','width','height','rotation','scale','caption','renderMode','projection']);file(item.file);if(item.renderMode!==undefined&&item.renderMode!=='mechanical3d')fail('Unsupported drawing rendering mode.');if(item.projection!==undefined&&(!['top','bottom','front','back','left','right','iso'].includes(item.projection)||item.renderMode!=='mechanical3d'))fail('Invalid mechanical projection.');if(item.renderMode==='mechanical3d'&&(!/\.kicad_pcb$/i.test(item.file)||item.side!=='top'||!Array.isArray(item.layers)||item.layers.length||!item.projection))fail('Mechanical views require a PCB, a projection and no copper layers.');if(item.renderMode==='mechanical3d'&&++mechanicalViews>16)fail('At most 16 mechanical views per document.');if(!['top','bottom'].includes(item.side)||![0,90,180,270].includes(item.rotation)||item.scale!=='fit'&&!(typeof item.scale==='number'&&Number.isFinite(item.scale)&&item.scale>=.01&&item.scale<=100))fail('Invalid drawing view.');if(!Array.isArray(item.layers)||item.layers.length>128||new Set(item.layers).size!==item.layers.length)fail('Invalid view layer selection.');for(const layer of item.layers)text(layer,80,false);text(item.caption,200);number(item.x,8,size.width-8);number(item.y,12,size.height-36);number(item.width,5,size.width-16);number(item.height,5,size.height-48);if(item.x+item.width>size.width-8||item.y+item.height>size.height-36)fail('Drawing view is outside the sheet drawing area.');views.set(item.id,item);}
+    else if(item.type==='dimension'){fields(item,['id','type','viewId','kind','a','b','offset']);id(item.viewId);if(!['horizontal','vertical','aligned'].includes(item.kind))fail('Unsupported dimension kind.');point(item.a);point(item.b);number(item.offset,-100,100);const span=item.kind==='horizontal'?Math.abs(item.b.x-item.a.x):item.kind==='vertical'?Math.abs(item.b.y-item.a.y):Math.hypot(item.b.x-item.a.x,item.b.y-item.a.y);if(span<1e-8)fail('A dimension requires two distinct measurement points.');}
+    else if(item.type==='note'){fields(item,['id','type','x','y','width','text']);number(item.x,8,size.width-8);number(item.y,12,size.height-36);number(item.width,10,size.width-16);text(item.text,4000);if(item.x+item.width>size.width-8)fail('Note is outside the sheet.');}
+    else if(item.type==='bom'){fields(item,['id','type','x','y','width','rows']);number(item.x,8,size.width-8);number(item.y,12,size.height-36);number(item.width,40,size.width-16);if(item.x+item.width>size.width-8)fail('BoM is outside the sheet.');if(!Array.isArray(item.rows)||item.rows.length>1000)fail('BoM supports at most 1,000 rows.');for(const row of item.rows){fields(row,['reference','value','footprint','quantity']);text(row.reference,1000);text(row.value,500);text(row.footprint,500);if(!Number.isSafeInteger(row.quantity)||row.quantity<1||row.quantity>1000000)fail('Invalid BoM quantity.');}}
+    else fail('Unsupported drawing item type.');
+   }
+   for(const item of page.items)if(item.type==='dimension'){if(!views.has(item.viewId))fail('Dimension refers to a missing view.');const view=views.get(item.viewId);if(view.renderMode==='mechanical3d'&&view.projection!=='top')fail('Source-coordinate dimensions require a top mechanical view.');}
+  }
+  return doc;
+ }
+ function create(scope,title='Draftsman drawing'){return validate({schema:SCHEMA,source:source(scope),template:'modern',title,revision:'',company:'',units:'mm',precision:2,paper:'A4',orientation:'landscape',accent:'#245b78',fontSize:2.5,lineWidth:.25,pages:[{id:'sheet-1',title:'Drawing sheet',items:[]}]});}
+ function serialize(doc){return JSON.stringify(validate(doc),null,2)+'\n';}
+ function viewTransform(view,bounds){
+  fields(bounds,['x','y','width','height']);number(bounds.x,-1e6,1e6);number(bounds.y,-1e6,1e6);number(bounds.width,1e-8,2e6);number(bounds.height,1e-8,2e6);
+  if(![0,90,180,270].includes(view.rotation)||!['top','bottom'].includes(view.side))fail('Invalid view transform.');number(view.x,-2000,2000);number(view.y,-2000,2000);number(view.width,.001,2000);number(view.height,.001,2000);
+  const rotated=view.rotation===90||view.rotation===270,scale=view.scale==='fit'?Math.min(view.width/(rotated?bounds.height:bounds.width),view.height/(rotated?bounds.width:bounds.height)):number(view.scale,.01,100),angle=view.rotation*Math.PI/180,c=Math.round(Math.cos(angle)),s=Math.round(Math.sin(angle)),mirror=view.side==='bottom'?-1:1,cx=bounds.x+bounds.width/2,cy=bounds.y+bounds.height/2,px=view.x+view.width/2,py=view.y+view.height/2;
+  const a=scale*c*mirror,b=scale*s*mirror,cc=-scale*s,d=scale*c,e=px-a*cx-cc*cy,f=py-b*cx-d*cy,det=a*d-b*cc;
+  const toPage=p=>({x:a*p.x+cc*p.y+e,y:b*p.x+d*p.y+f});const toWorld=p=>({x:(d*(p.x-e)-cc*(p.y-f))/det,y:(-b*(p.x-e)+a*(p.y-f))/det});
+  return{toPage,toWorld,scale,matrix:[a,b,cc,d,e,f]};
+ }
+ function autoDimensions(view,bounds,options={}){const {x,y,width,height}=bounds;viewTransform(view,bounds);const offset=(options.offset===undefined?8:number(options.offset,-100,100))*(view.side==='bottom'?-1:1);return[{id:view.id+'-auto-width',type:'dimension',viewId:view.id,kind:'horizontal',a:{x,y:y+height},b:{x:x+width,y:y+height},offset},{id:view.id+'-auto-height',type:'dimension',viewId:view.id,kind:'vertical',a:{x:x+width,y},b:{x:x+width,y:y+height},offset:-offset}];}
+ const escape=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
+ const n=value=>Number(value.toFixed(5));
+ function svg(input,pageIndex=0,assets={}){
+  const doc=validate(input),size=pageSize(doc);if(!Number.isInteger(pageIndex)||pageIndex<0||pageIndex>=doc.pages.length)fail('Invalid sheet number.');const page=doc.pages[pageIndex],views=new Map(page.items.filter(v=>v.type==='view').map(v=>[v.id,v])),warnings=[],chunks=[];let totalImage=0;
+  const textNode=(x,y,value,extra='')=>`<text x="${n(x)}" y="${n(y)}" ${extra}>${escape(value)}</text>`;
+  const lines=(value,width)=>{const limit=Math.max(4,Math.floor(width/(doc.fontSize*.53))),result=[];for(const paragraph of String(value).split('\n')){if(!paragraph){result.push('');continue;}let line='';for(const word of paragraph.split(/\s+/)){if(line&&line.length+word.length+1>limit){result.push(line);line='';}if(word.length>limit){if(line){result.push(line);line='';}for(let i=0;i<word.length;i+=limit)result.push(word.slice(i,i+limit));}else line+=(line?' ':'')+word;}if(line)result.push(line);}return result;};
+  const checkPage=p=>{if(p.x<6||p.y<6||p.x>size.width-6||p.y>size.height-30)fail('A dimension or note extends outside the sheet drawing area.');};
+  const path=(a,b,extra='')=>`<path d="M ${n(a.x)} ${n(a.y)} L ${n(b.x)} ${n(b.y)}" ${extra}/>`;
+  for(const item of page.items){
+   if(item.type==='view'){
+    const asset=assets[item.id],bounds=asset?.bounds;let drawing='';
+    if(asset?.image!==undefined){if(typeof asset.image!=='string'||asset.image.length>12*1024*1024||!/^data:image\/png;base64,iVBORw0KGgo[A-Za-z0-9+/]*={0,2}$/.test(asset.image))fail('View images must be bounded PNG data, never remote URLs.');totalImage+=asset.image.length;if(totalImage>24*1024*1024)fail('Sheet images exceed 24 MiB.');if(!bounds)fail('View image is missing its source bounds.');const transform=viewTransform(item,bounds);drawing=`<image x="${n(bounds.x)}" y="${n(bounds.y)}" width="${n(bounds.width)}" height="${n(bounds.height)}" preserveAspectRatio="none" transform="matrix(${transform.matrix.map(n).join(' ')})" href="${asset.image}"/>`;}
+    else{drawing=`<rect x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" fill="#f5f7f9" stroke="#c0c8d0" stroke-dasharray="2 2"/>`+textNode(item.x+3,item.y+7,'Source preview unavailable');warnings.push('Missing source preview: '+item.file);}
+    if(asset?.warnings!==undefined){if(!Array.isArray(asset.warnings)||asset.warnings.length>100)fail('Invalid source rendering notes.');for(const warning of asset.warnings){text(warning,1000);warnings.push(warning);}}
+    chunks.push(`<g data-item="${item.id}"><defs><clipPath id="clip-${page.id}-${item.id}"><rect x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}"/></clipPath></defs><g clip-path="url(#clip-${page.id}-${item.id})">${drawing}</g>`+textNode(item.x+item.width/2,item.y+item.height+4,item.caption||`${item.file} · ${item.side}`,`text-anchor="middle"`)+`</g>`);
+   }else if(item.type==='dimension'){
+    const view=views.get(item.viewId),bounds=assets[item.viewId]?.bounds;if(!bounds)fail('Cannot dimension without verified source bounds.');const t=viewTransform(view,bounds),start=t.toPage(item.a),end=t.toPage(item.b),kind=item.kind;
+    let a=start,b=end,value=Math.hypot(item.b.x-item.a.x,item.b.y-item.a.y);
+    if(kind==='horizontal'){b=t.toPage({x:item.b.x,y:item.a.y});value=Math.abs(item.b.x-item.a.x);}else if(kind==='vertical'){b=t.toPage({x:item.a.x,y:item.b.y});value=Math.abs(item.b.y-item.a.y);}
+    const length=Math.hypot(b.x-a.x,b.y-a.y),ux=(b.x-a.x)/length,uy=(b.y-a.y)/length,nx=-uy,ny=ux,da={x:a.x+nx*item.offset,y:a.y+ny*item.offset},db={x:b.x+nx*item.offset,y:b.y+ny*item.offset},middle={x:(da.x+db.x)/2,y:(da.y+db.y)/2};checkPage(da);checkPage(db);checkPage(middle);
+    const arrow=(tip,direction)=>`<path d="M ${n(tip.x+ux*direction*2+nx*.7)} ${n(tip.y+uy*direction*2+ny*.7)} L ${n(tip.x)} ${n(tip.y)} L ${n(tip.x+ux*direction*2-nx*.7)} ${n(tip.y+uy*direction*2-ny*.7)}"/>`,label=`${(value/(doc.units==='in'?25.4:1)).toFixed(doc.precision)} ${doc.units}`,labelWidth=Math.max(10,label.length*doc.fontSize*.58),labelHeight=doc.fontSize*1.65;
+    chunks.push(`<g data-item="${item.id}" fill="none" stroke="${doc.accent}" stroke-width="${doc.lineWidth}">`+path(start,{x:da.x+nx*2,y:da.y+ny*2})+path(end,{x:db.x+nx*2,y:db.y+ny*2})+path(da,db)+arrow(da,1)+arrow(db,-1)+`<rect x="${n(middle.x-labelWidth/2)}" y="${n(middle.y-labelHeight/2)}" width="${n(labelWidth)}" height="${n(labelHeight)}" fill="white" stroke="none"/>`+textNode(middle.x,middle.y+doc.fontSize*.35,label,`text-anchor="middle" fill="${doc.accent}" stroke="none"`)+`</g>`);
+   }else if(item.type==='note'){
+    const wrapped=lines(item.text,item.width);for(let i=0;i<wrapped.length;i++){const at={x:item.x,y:item.y+i*doc.fontSize*1.45};checkPage(at);chunks.push(textNode(at.x,at.y,wrapped[i],`data-item="${item.id}"`));}
+   }else if(item.type==='bom'){
+    const rowHeight=doc.fontSize*2.25,max=Math.max(0,Math.floor((size.height-37-item.y)/rowHeight)-1),rows=item.rows.slice(0,max),widths=[.25,.28,.37,.1].map(v=>item.width*v),labels=['Reference','Value','Footprint','Qty'];let x=item.x;
+    chunks.push(`<g data-item="${item.id}"><rect x="${item.x}" y="${item.y}" width="${item.width}" height="${n(rowHeight*(rows.length+1))}" fill="white" stroke="${doc.accent}" stroke-width="${doc.lineWidth}"/>`);
+    for(let i=0;i<labels.length;i++){chunks.push(textNode(x+1,item.y+rowHeight*.7,labels[i],`font-weight="bold"`));x+=widths[i];}
+    rows.forEach((row,index)=>{const y=item.y+rowHeight*(index+1);chunks.push(path({x:item.x,y},{x:item.x+item.width,y},`stroke="#b6c1ca" stroke-width=".15"`));let left=item.x;for(const [i,key]of ['reference','value','footprint','quantity'].entries()){const value=String(row[key]),cap=Math.max(2,Math.floor((widths[i]-2)/(doc.fontSize*.53))),label=value.length>cap?value.slice(0,cap-1)+'…':value;chunks.push(textNode(left+1,y+rowHeight*.7,label));left+=widths[i];}});chunks.push('</g>');if(rows.length<item.rows.length){const message=`${item.rows.length-rows.length} BoM rows not shown; add another BoM sheet.`;warnings.push(message);chunks.push(textNode(item.x,item.y+rowHeight*(rows.length+1)+3,message,`fill="#965b00" font-size="${doc.fontSize*.8}"`));}
+   }
+  }
+  const sourceLabel=`${doc.source.provider} · ${doc.source.repository} @ ${doc.source.ref}`,hashes=Object.values(doc.source.hashes||{}),metadata=escape(JSON.stringify(doc.template==='kicad'?{schema:doc.schema,template:doc.template,source:doc.source,title:doc.title,company:doc.company,revision:doc.revision,sheet:page.title,files:page.items.filter(item=>item.type==='view').map(item=>item.file)}:{schema:doc.schema,source:doc.source}));
+  function kicadWorksheet(){
+   // Engineering-sheet styling only: source coordinates and the existing 8 mm drawing margin stay unchanged.
+   const ink='#000000',right=size.width-8,bottom=size.height-8,left=right-150,top=size.height-28,small=Math.min(doc.fontSize,2.2),body=Math.min(doc.fontSize,2.4),titleSize=Math.min(doc.fontSize*1.15,2.7),zoneFont=Math.max(1.1,Math.min(1.6,doc.fontSize*.52));
+   const fit=(value,width,font)=>{const normalized=String(value).replace(/\s+/g,' ').trim(),limit=Math.max(2,Math.floor(width/(font*.58)));return normalized.length>limit?normalized.slice(0,limit-1)+'…':normalized;};
+   const label=(x,y,value,width,font=body,extra='')=>textNode(x,y,fit(value,width,font),`font-size="${n(font)}" ${extra}`);
+   const stroke=`stroke="${ink}" stroke-width="${doc.lineWidth}"`,frame=[`<g data-worksheet="kicad" fill="none" ${stroke}><rect x="6" y="6" width="${size.width-12}" height="${size.height-12}"/><rect x="8" y="8" width="${size.width-16}" height="${size.height-16}"/>`],zones=[];
+   const columns=Math.ceil((size.width-16)/50),rows=Math.ceil((size.height-16)/50),dx=(size.width-16)/columns,dy=(size.height-16)/rows;
+   for(let i=1;i<columns;i++){const x=8+i*dx;frame.push(path({x,y:6},{x,y:8}),path({x,y:size.height-8},{x,y:size.height-6}));}
+   for(let i=1;i<rows;i++){const y=8+i*dy;frame.push(path({x:6,y},{x:8,y}),path({x:size.width-8,y},{x:size.width-6,y}));}
+   for(let i=0;i<columns;i++){const x=8+(i+.5)*dx;zones.push(textNode(x,7+zoneFont*.35,i+1,'text-anchor="middle"'),textNode(x,size.height-7+zoneFont*.35,i+1,'text-anchor="middle"'));}
+   for(let i=0;i<rows;i++){const y=8+(i+.5)*dy+zoneFont*.35;zones.push(textNode(7,y,String.fromCharCode(65+i),'text-anchor="middle"'),textNode(size.width-7,y,String.fromCharCode(65+i),'text-anchor="middle"'));}
+   frame.push('</g>',`<g data-worksheet-zones="true" fill="${ink}" font-size="${n(zoneFont)}">${zones.join('')}</g>`);
+   const block=[`<g data-title-block="kicad"><rect x="${left}" y="${top}" width="150" height="20" fill="white" ${stroke}/>`];
+   for(const y of [top+5,top+11,top+16])block.push(path({x:left,y},{x:right,y},stroke));
+   block.push(path({x:left+84,y:top},{x:left+84,y:top+5},stroke),path({x:left+95,y:top+11},{x:left+95,y:top+16},stroke));
+   for(const x of [left+25,left+50,left+110])block.push(path({x,y:top+16},{x,y:bottom},stroke));
+   const files=page.items.filter(item=>item.type==='view').map(item=>item.file),fileName=files.length?(files[0].split('/').at(-1)+(files.length>1?` (+${files.length-1})`:'')):'—';
+   block.push(`<g fill="${ink}" stroke="none">`,label(left+2,top+3.5,'Company: '+(doc.company||'—'),80,small),label(left+86,top+3.5,'File: '+fileName,62,small),label(left+2,top+9,'Title: '+(doc.title||'—'),146,titleSize,'font-weight="bold"'),label(left+2,top+14.5,'Sheet: '+(page.title||'—'),91,small),label(left+97,top+14.5,'Ref: '+doc.source.ref,51,small),label(left+2,top+18.8,'Size: '+doc.paper,21,small),label(left+27,top+18.8,'Units: '+doc.units,21,small),label(left+52,top+18.8,'Rev: '+(doc.revision||'—'),56,small),label(left+112,top+18.8,`Sheet ${pageIndex+1}/${doc.pages.length}`,36,small),'</g></g>');
+   const traceWidth=left-12,traceFont=Math.min(doc.fontSize*.8,1.8),trace=`<g data-source-trace="kicad" fill="${ink}">${label(10,top+3,'KiCad Online · KiCad-style worksheet',traceWidth,traceFont)}${label(10,top+8,doc.source.provider+' · '+doc.source.repository,traceWidth,traceFont)}${label(10,top+13,'Source ref: '+doc.source.ref,traceWidth,traceFont)}${label(10,top+18,hashes.length?`${hashes.length} SHA-256 fingerprints · Raster views / vector dimensions`:'Source fingerprints unavailable · Raster views / vector dimensions',traceWidth,traceFont)}</g>`;
+   return{frame:frame.join(''),footer:block.join('')+trace};
+  }
+
+  const footer=`<g fill="#263b49" stroke="none">${textNode(10,size.height-22,doc.title,`font-size="${doc.fontSize*1.35}" font-weight="bold"`)}${textNode(10,size.height-16,`${doc.company}${doc.company?' · ':''}${page.title}`)}${textNode(10,size.height-10,sourceLabel,`font-size="${doc.fontSize*.8}"`)}${textNode(size.width-10,size.height-22,`Rev ${doc.revision||'—'} · ${pageIndex+1}/${doc.pages.length}`,`text-anchor="end"`)}${textNode(size.width-10,size.height-16,`${doc.paper} · ${doc.units} · Raster views / vector dimensions`, `text-anchor="end" font-size="${doc.fontSize*.8}"`)}${textNode(size.width-10,size.height-10,hashes.length?`${hashes.length} source SHA-256 fingerprints retained`:'Source fingerprints unavailable',`text-anchor="end" font-size="${doc.fontSize*.8}"`)}</g>`;
+  const notes=[...new Set(warnings)];let warningText='';if(notes.length)warningText=textNode(10,doc.template==='kicad'?11:8,`Rendering notes (${notes.length}): ${notes[0].slice(0,130)}${notes.length>1?' · See source rendering notes':''}`,`fill="#965b00" font-size="${doc.template==='kicad'?Math.min(doc.fontSize*.8,2):doc.fontSize*.8}"`);
+  const worksheet=doc.template==='kicad'?kicadWorksheet():null,frame=worksheet?.frame||`<rect x="6" y="6" width="${size.width-12}" height="${size.height-12}" fill="none" stroke="${doc.accent}" stroke-width="${doc.lineWidth}"/><path d="M 6 ${size.height-28} H ${size.width-6}" stroke="${doc.accent}" stroke-width="${doc.lineWidth}"/>`;
+  const description=doc.template==='kicad'?'KiCad-style worksheet template; custom .kicad_wks files are not interpreted. Raster views / vector dimensions. '+notes.join(' | '):notes.join(' | ');
+  const result=`<svg xmlns="http://www.w3.org/2000/svg" width="${size.width}mm" height="${size.height}mm" viewBox="0 0 ${size.width} ${size.height}"><metadata>${metadata}</metadata><desc>${escape(description)}</desc><rect width="100%" height="100%" fill="white"/><g font-family="Arial, sans-serif" font-size="${doc.fontSize}" fill="#263b49">${frame}${chunks.join('')}${warningText}${worksheet?.footer||footer}</g></svg>`;
+  if(bytes(result)>MAX_SVG)fail('Rendered sheet exceeds 32 MiB.');return result;
+ }
+ const api={SCHEMA,MAX_BYTES,papers,create,validate,serialize,pageSize,viewTransform,autoDimensions,svg};root.KiCadDraftsmanModel=api;if(typeof module==='object'&&module.exports)module.exports=api;
+})(globalThis);
+
+;
+/* Source-bound workspace search. Repository text is always inert data. */
+((root)=>{
+  'use strict';
+  const Search=root.KiCadProjectSearch||(typeof require==='function'?require('./project-search.js'):null);
+  const Model=root.KiCadDesignModel||(typeof require==='function'?require('./design-model.js'):null);
+  const Diff=root.KiCadDesignDiff||(typeof require==='function'?require('./design-diff.js'):null);
+  const Draftsman=root.KiCadDraftsmanModel||(typeof require==='function'?require('./draftsman-model.js'):null);
+  const MiB=1024*1024;
+  const LIMITS=Object.freeze({drawings:128,drawingBytes:64*MiB,sourceBytes:96*MiB,
+    inventory:20000,reports:12,reportBytes:MiB,reportTotalBytes:4*MiB,drafts:32,draftKeys:256,draftBytes:4*MiB,draftTotalBytes:8*MiB,
+    jsonNodes:12000,records:50000,results:80,scopes:4,debounce:160});
+  const caches=new Map();let nextId=0;
+  const safePath=path=>typeof path==='string'&&path.length<=1000&&!path.startsWith('/')&&
+    !/^[A-Za-z]:/.test(path)&&!/[\\\x00-\x1f\x7f]/.test(path)&&path.split('/').every(p=>p&&p!=='.'&&p!=='..');
+  const drawing=path=>/\.(?:kicad_(?:sch|pcb)|sch)$/i.test(path);
+  const bytes=text=>new TextEncoder().encode(text).byteLength;
+  const text=(value,max=500)=>String(value??'').slice(0,max);
+  const normalizedScope=scope=>({repository:scope?.repository||'',ref:scope?.ref||'',provider:scope?.provider||'github',host:scope?.host||'https://github.com'});
+  const scopeKey=scope=>JSON.stringify(Object.values(normalizedScope(scope)));
+  const reportPath=path=>/\.(wbk|raw|csv|tsv)$/i.test(path)||(/\.json$/i.test(path)&&/draftsman|simulat|spice|report|analysis|(?:^|[._/-])(?:erc|drc)(?:[._/-]|$)/i.test(path));
+  const viewFor=path=>/draftsman/i.test(path)?'draftsman':/\.(wbk|raw|csv|tsv)$/i.test(path)||/simulat|spice/i.test(path)?'simulation':undefined;
+  function sameScope(source,scope){return source&&scopeKey(source)===scopeKey(scope);}
+  function scopedDrafts(storage,scope){
+    const drafts=[];let total=0;
+    const model=root.KiCadDraftsmanModel||Draftsman;
+    if(!storage||!model?.validate)return drafts;
+    const count=Math.min(Number(storage.length)||0,LIMITS.draftKeys);
+    for(let i=0;i<count&&drafts.length<LIMITS.drafts;i++){
+      try{
+        const key=storage.key(i);if(typeof key!=='string'||!key.startsWith('kivi:draftsman:')||key.length>2400)continue;
+        const identity=JSON.parse(key.slice('kivi:draftsman:'.length));
+        if(!Array.isArray(identity)||identity.length!==6||identity.some(v=>typeof v!=='string')||!safePath(identity[4])||!drawing(identity[4])||!/^[a-f0-9]{64}$/.test(identity[5]))continue;
+        const source={provider:identity[0],host:identity[1],repository:identity[2],ref:identity[3],file:identity[4]};
+        // Inspect the scoped key before reading a document from browser storage.
+        if(!sameScope(source,scope))continue;
+        const raw=storage.getItem(key);if(typeof raw!=='string'||raw.length>LIMITS.draftBytes)continue;
+        const size=bytes(raw);if(size>LIMITS.draftBytes||size+total>LIMITS.draftTotalBytes)continue;total+=size;
+        const document=model.validate(raw);if(!sameScope(document.source,scope))continue;
+        drafts.push({source,document,label:document.title||'Local Draftsman draft'});
+      }catch{/* Invalid or inaccessible storage records do not affect project search. */}
+    }
+    return drafts;
+  }
+  function warningsOf(value){return (Array.isArray(value?.warnings)?value.warnings:[]).slice(0,40).map(w=>text(w,600));}
+  function jsonFields(value,warnings){
+    const fields=[],stack=[['',value]];let visited=0;
+    while(stack.length&&visited++<LIMITS.jsonNodes){
+      const [key,item]=stack.pop();
+      if(item&&typeof item==='object'){
+        const entries=Object.entries(item);if(entries.length>LIMITS.jsonNodes)warnings.add('Large JSON collections are only partially indexed.');
+        for(let i=Math.min(entries.length,LIMITS.jsonNodes)-1;i>=0;i--)stack.push([text(key?key+'.'+entries[i][0]:entries[i][0],300),entries[i][1]]);
+      }else if(item!==undefined&&item!==null)fields.push([key||'value',text(item,4096)]);
+    }
+    if(stack.length)warnings.add('Saved JSON search reached its node budget; remaining values are omitted.');
+    return fields;
+  }
+  function buildRecords(input={},dependencies={}){
+    const search=dependencies.search||Search,model=dependencies.model||Model,warnings=new Set(warningsOf(input));
+    const records=[],objects=[];let sourceBytes=0;
+    const add=(result,properties={},object=null)=>{
+      if(records.length>=LIMITS.records){warnings.add('Workspace search reached its 50000-record budget.');return;}
+      const id='workspace:'+records.length;
+      const entry=object?{...object,id,properties:{...object.properties,path:result.path}}:
+        {id,path:result.path,kind:result.kind,label:result.label,properties:{...properties,path:result.path}};
+      entry.workspaceResult=result;objects.push(entry);records.push(result);
+    };
+    const files=[],drawingPaths=new Set();
+    for(const file of (input.files||[]).slice(0,LIMITS.drawings)){
+      if(!safePath(file?.path)||!drawing(file.path)||typeof file.content!=='string')continue;
+      if(drawingPaths.has(file.path)){warnings.add(file.path+': duplicate drawing source omitted.');continue;}drawingPaths.add(file.path);
+      if(file.content.length>LIMITS.drawingBytes){warnings.add(file.path+': drawing exceeds 64 MiB and was omitted.');continue;}
+      const size=bytes(file.content);
+      if(size>LIMITS.drawingBytes){warnings.add(file.path+': drawing exceeds 64 MiB and was omitted.');continue;}
+      if(sourceBytes+size>LIMITS.sourceBytes){warnings.add('Drawing search reached its 96 MiB source budget.');break;}
+      sourceBytes+=size;files.push(file);
+    }
+    if((input.files||[]).length>LIMITS.drawings||input.totalDrawings>files.length)warnings.add(`Indexed ${files.length} of ${input.totalDrawings??input.files.length} drawings (maximum 128, 64 MiB each, 96 MiB total).`);
+    let sheets=[];const netTables=new Map();
+    for(const file of files.filter(f=>/\.kicad_pcb$/i.test(f.path)&&/\(net\s+\d+\s+"/.test(f.content))){
+      try{
+        const ast=(dependencies.diff||Diff).parse(file.content),table=new Map();
+        for(const form of ast){if(Array.isArray(form)&&form[0]==='net'&&typeof form[2]?.quoted==='string')table.set(String(form[1]),form[2].quoted);}
+        netTables.set(file.path,table);
+      }catch{/* The design-model path reports malformed drawings below. */}
+    }
+    function addDesign(built){
+        sheets.push(...(built.sheets||[]));
+        for(const warning of warningsOf(built))warnings.add(warning);
+        for(const object of built.objects||[]){
+          const properties={...object.properties},savedNet=netTables.get(object.path)?.get(String(properties.Net));
+          if(savedNet!==undefined)properties.Net=savedNet;
+          if(['label','global_label','hierarchical_label'].includes(object.kind)&&typeof properties.Text==='string')properties.Net=properties.Text;
+          const result={kind:'object',id:object.id,path:object.path,label:text(object.label||object.reference||object.kind),
+            detail:text([object.kind,object.properties?.Value].filter(Boolean).join(' · ')),position:object.position,
+            uuid:object.uuid,reference:object.reference,objectKind:object.kind};
+          if(typeof properties.Net==='string'&&properties.Net)result.netName=properties.Net;
+          if(object.kind==='footprint'&&/\.kicad_pcb$/i.test(object.path))result.canShow3D=true;
+          add(result,{}, {...object,properties});
+        }
+    }
+    if(files.length){
+      try{addDesign(model.buildProject(files));}
+      catch(error){
+        warnings.add('Some drawing content could not be indexed: '+text(error.message));
+        // A damaged sheet must not hide the valid drawings in the same project.
+        for(const file of files){try{addDesign(model.buildProject([file]));}catch(failure){warnings.add(file.path+': '+text(failure.message));}}
+      }
+    }
+    const inventory=Array.isArray(input.inventory)?input.inventory:[];
+    const seen=new Set();
+    for(const item of [...inventory.slice(0,LIMITS.inventory),...files,...(input.settings||[])]){
+      const path=typeof item==='string'?item:item?.path;if(!safePath(path)||seen.has(path))continue;seen.add(path);
+      add({kind:'file',path,label:path.split('/').at(-1),detail:path,view:viewFor(path)},{filename:path});
+    }
+    if(inventory.length>LIMITS.inventory)warnings.add('File-name search is limited to the first 20000 inventory entries.');
+    let reportBytes=0,reportCount=0;
+    for(const file of [...(input.settings||[]).slice(0,8),...(input.reports||[]).slice(0,LIMITS.reports)]){
+      if(!safePath(file?.path)||typeof file.content!=='string')continue;
+      if(file.content.length>LIMITS.reportBytes){warnings.add(file.path+': saved text exceeds 1 MiB and was omitted.');continue;}
+      const size=bytes(file.content);if(size>LIMITS.reportBytes||reportBytes+size>LIMITS.reportTotalBytes){warnings.add('Saved report text reached its 1 MiB per file / 4 MiB total budget.');continue;}
+      reportBytes+=size;reportCount++;
+      if(file.content.includes('\0')){warnings.add(file.path+': binary output is indexed by file name only.');continue;}
+      const base={kind:'report',path:file.path,label:file.path.split('/').at(-1),view:viewFor(file.path)};
+      if(/\.(json|kicad_pro|wbk)$/i.test(file.path)){
+        try{
+          let parsed=JSON.parse(file.content),record=base;
+          const draftsman=root.KiCadDraftsmanModel||Draftsman;
+          if(parsed?.schema==='pocket-kivi-draftsman/v1'){
+            try{
+              if(!draftsman?.validate)throw Error('Draftsman validation is unavailable.');
+              const document=draftsman.validate(parsed);
+              if(!sameScope(document.source,input.scope))throw Error('Document belongs to another source revision.');
+              const references=[...new Set([...(document.pages||[]).flatMap(page=>page.items.filter(item=>item.type==='view').map(item=>item.file)),...Object.keys(document.source.hashes||{})])].filter(path=>safePath(path)&&/\.kicad_pcb$/i.test(path));
+              const sourceFile=references.length===1?references[0]:references.includes(input.scope?.file)?input.scope.file:undefined;
+              record={...base,kind:'draft',label:document.title||base.label,view:'draftsman',document,sourceFile};
+              parsed=Object.fromEntries(Object.entries(document).filter(([key])=>key!=='source'));
+            }catch(error){warnings.add(file.path+': '+text(error.message)+' Indexed as inert saved JSON.');}
+          }
+          for(const [key,value]of jsonFields(parsed,warnings))add({...record,detail:text(key+': '+value,240)},{[key]:value,content:key+' '+value});
+          continue;
+        }catch{warnings.add(file.path+': not valid saved JSON; bounded plain text was indexed.');}
+      }
+      // Overlap preserves phrases spanning a chunk boundary without loading HTML.
+      for(let at=0;at<file.content.length;at+=3968){const content=file.content.slice(at,at+4096);add({...base,detail:text(content,240)},{content});}
+    }
+    let draftBytes=0;
+    for(const draft of (input.drafts||[]).slice(0,LIMITS.drafts)){
+      if(!sameScope(draft?.source,input.scope)||!safePath(draft.source.file))continue;
+      let document=draft.document;
+      try{
+        if(typeof document==='string'){if(document.length>LIMITS.draftBytes||bytes(document)>LIMITS.draftBytes)throw Error();document=JSON.parse(document);}
+        if(!document||typeof document!=='object')continue;
+        const serialized=JSON.stringify(document),size=bytes(serialized);if(serialized.length>LIMITS.draftBytes||size>LIMITS.draftBytes||size+draftBytes>LIMITS.draftTotalBytes)throw Error();draftBytes+=size;
+        const content=Object.fromEntries(Object.entries(document).filter(([key])=>key!=='source'));
+        const fields=jsonFields(content,warnings),result={kind:'draft',path:draft.source.file,label:text(draft.label||'Local Draftsman draft'),detail:'Saved locally · '+draft.source.file,view:'draftsman',document};
+        // Never index the draft envelope/source; only its explicitly scoped document.
+        for(const [key,value]of fields)add({...result,detail:text(key+': '+value,240)},{[key]:value,content:key+' '+value});
+        if(!fields.length)add(result,{content:result.label});
+      }catch{warnings.add('An oversized or invalid local Draftsman draft was omitted.');}
+    }
+    if((input.drafts||[]).length>LIMITS.drafts)warnings.add('Only the first 32 supplied local drafts are indexed.');
+    const index=search.createIndex(objects,{sheets});for(const warning of index.warnings||[])warnings.add(warning);
+    warnings.add('Coverage: saved drawings, file names, project settings, bounded simulation/report text and supplied local Draftsman drafts. Binary/3D model contents and unsaved edits are not indexed.');
+    return {records,index,warnings:[...warnings],snapshotRef:input.snapshotRef,drawings:files.length,reportCount};
+  }
+  function toolResults(query){
+    const key=String(query||'').trim().toLowerCase().replace(/^>\s*/,'').replace(/[-_]+/g,' ').replace(/\s+/g,' ');
+    return ['sheet tree','sheet browser','sheet navigator','show sheet tree','open sheet tree','minimap','mini map','sheet map'].includes(key)?[{kind:'command',action:'sheet-tree',label:'Show sheet browser',detail:'Reopen the floating schematic sheet tree',path:''}]:[];
+  }
+  function searchRecords(index,query,options={}){
+    const result=(options.search||Search).search(index.index,query,{limit:LIMITS.results*4,preferredPath:options.preferredPath}),seen=new Set(),results=[];
+    for(const match of result.results){
+      const record=match.object.workspaceResult,key=JSON.stringify([record.kind,record.path,record.id||record.uuid||record.reference||record.label]);
+      if(seen.has(key))continue;
+      seen.add(key);
+      const snippets=[...new Set((match.snippets||[]).map(item=>item.text).filter(value=>value!==record.label))];
+      results.push({...record,query,detail:snippets.join(' · ').slice(0,240)||record.detail});
+      if(results.length===(options.limit||LIMITS.results))break;
+    }
+    return {...result,results,total:results.length,truncated:result.truncated||seen.size>=LIMITS.results,warnings:index.warnings};
+  }
+  async function read(request,type,extra){
+    const reply=await request(type,extra);
+    if(reply?.ok===false)throw Error(reply.error||'Project read failed.');
+    return reply?.ok===true?reply.result:reply;
+  }
+  async function loadReports(options,scope,inventory,snapshotRef){
+    const warnings=[];
+    const reports=[];let total=0,attempted=0;
+    for(const item of (inventory.files||[]).slice(0,LIMITS.inventory)){
+      const path=typeof item==='string'?item:item?.path;
+      if(!safePath(path)||!reportPath(path)&&!(options.project&&/\.(?:kicad_pro|pro)$/i.test(path)))continue;
+      if(attempted>=LIMITS.reports){warnings.push('Saved report content is limited to 12 eligible files.');break;}
+      if(Number.isFinite(item.size)&&(item.size>LIMITS.reportBytes||item.size+total>LIMITS.reportTotalBytes)){warnings.push(path+': report exceeds the saved-text byte budget.');continue;}
+      attempted++;
+      try{
+        const file=await read(options.request,'project-file',{...scope,ref:snapshotRef,file:path});
+        if(typeof file?.content!=='string')throw Error('Saved text unavailable.');
+        if(file.path&&file.path!==path)throw Error('Saved file path did not match.');
+        if(file.snapshotRef&&file.snapshotRef!==snapshotRef)throw Error('Saved file revision did not match the project snapshot.');
+        if(file.content.length>LIMITS.reportBytes)throw Error('Saved text exceeds 1 MiB.');
+        const size=bytes(file.content);if(size>LIMITS.reportBytes||size+total>LIMITS.reportTotalBytes)throw Error('Saved report text exceeds 1 MiB per file / 4 MiB total.');
+        total+=size;reports.push({path,content:file.content});
+      }catch(error){warnings.push(path+': '+text(error.message));}
+    }
+    return {reports,warnings};
+  }
+  const projectStem=path=>path.replace(/\.(?:kicad_(?:pro|sch|pcb)|pro|sch)$/i,'');
+  const folder=path=>path.split('/').slice(0,-1).join('/');
+  function relatedInventory(inventory,paths,anchors){
+    const supported=/\.(?:kicad_pro|pro|wbk|raw|csv|tsv|json|pdf|gbr|gerber|drl|kicad_wks|kicad_dru|kicad_sym|kicad_mod|step|stp|wrl|glb|svg|png|bmp|jpe?g)$/i;
+    const entries=inventory.slice(0,LIMITS.inventory);
+    const valid=entries.filter(item=>safePath(item?.path));
+    const projectFile=/\.(?:kicad_pro|pro)$/i;
+    const stems=new Set(anchors.map(projectStem));
+    const ownDirectories=new Set(),otherProjects=new Map();
+    for(const {path}of valid){
+      if(!projectFile.test(path))continue;
+      const directory=folder(path),stem=projectStem(path);
+      if(stems.has(stem))ownDirectories.add(directory);
+      else{
+        if(!otherProjects.has(directory))otherProjects.set(directory,[]);
+        otherProjects.get(directory).push(stem);
+      }
+    }
+    const namedFor=(path,stem)=>['.','-','_'].some(separator=>path.startsWith(stem+separator));
+    return valid.filter(item=>{
+      const path=item.path;
+      if(paths.has(path))return true;
+      if(!supported.test(path))return false;
+      if(projectFile.test(path))return stems.has(projectStem(path));
+      const directory=folder(path);
+      const namedStem=[...stems].find(stem=>directory===folder(stem)&&namedFor(path,stem));
+      if(namedStem)return !otherProjects.get(directory)?.some(stem=>stem.length>namedStem.length&&namedFor(path,stem));
+      // Shared folders have no implicit ownership. A nested project ends its parent's scope.
+      const parts=path.split('/').slice(0,-1);
+      while(parts.length||ownDirectories.has('')){
+        const current=parts.join('/');
+        if(otherProjects.has(current))return false;
+        if(ownDirectories.has(current)){
+          if(current===directory)return true;
+          const relative=path.slice(current?current.length+1:0);
+          return /^(?:analysis|reports?|results?|simulations?|models?|fabrication|gerbers?|manufacturing)\//i.test(relative);
+        }
+        if(!parts.length)break;
+        parts.pop();
+      }
+      return false;
+    });
+  }
+  function scopedProject(options,build){
+    const {scope,project}=options,snapshotRef=scope.ref,entry=scope.file,anchor=projectStem(entry);
+    const inputs=new Map(),warnings=[];
+    const loadDrawing=path=>{
+      if(!inputs.has(path))inputs.set(path,Promise.resolve().then(()=>project.loadDrawing(path)).then(files=>{
+        if(!Array.isArray(files)||!files.some(file=>file.path===path))throw Error('Saved drawing unavailable: '+path);
+        const rootPath=!/\.kicad_pcb$/i.test(path)?root.KiCadBrowserData?.rootSheetPath(files,path)||path:path;
+        return {path,rootPath,files};
+      }));
+      return inputs.get(path);
+    };
+    const primary=drawing(entry)?[entry]:[anchor+(/\.pro$/i.test(entry)?'.sch':'.kicad_sch'),anchor+'.kicad_pcb'];
+    const first=Promise.any(primary.map(loadDrawing));
+    const paths=new Set(),anchors=new Set([entry]);
+    const buildDrawing=({rootPath,files})=>{
+      anchors.add(rootPath);
+      const fresh=files.filter(file=>safePath(file.path)&&drawing(file.path)&&!paths.has(file.path));
+      for(const file of fresh)paths.add(file.path);
+      return build({files:fresh,inventory:fresh.map(file=>({path:file.path})),scope,snapshotRef,warnings:fresh.map(file=>file.discoveryWarning).filter(Boolean)});
+    };
+    const merge=(a,b)=>({...a,records:[...a.records,...b.records].slice(0,LIMITS.records),index:{...a.index,entries:[...a.index.entries,...b.index.entries].slice(0,LIMITS.records)},
+      warnings:[...new Set([...a.warnings,...b.warnings])],drawings:a.drawings+b.drawings,reportCount:a.reportCount+b.reportCount});
+    const source={pending:true};
+    source.core=first.then(buildDrawing,()=>build({scope,snapshotRef,inventory:[{path:entry}],warnings:['Saved drawings are unavailable for this project.']}));
+    const drawings=first.then(async selected=>{
+      const stem=projectStem(selected.rootPath),other=/\.kicad_pcb$/i.test(selected.path)?stem+'.kicad_sch':stem+'.kicad_pcb';
+      const requested=[...new Set([...primary,other,...(project.openDrawings||[])])].filter(path=>safePath(path)&&drawing(path)&&path!==selected.path);
+      const companions=await Promise.allSettled(requested.map(loadDrawing));
+      let indexed=await source.core;
+      for(const result of companions)if(result.status==='fulfilled')indexed=merge(indexed,await buildDrawing(result.value));
+      return indexed;
+    },()=>source.core);
+    source.stages=[drawings];
+    // Supplemental file discovery never holds up drawing results.
+    const listing=first.catch(()=>null).then(()=>project.loadInventory?.()).catch(error=>{
+      warnings.push('Related file listing unavailable: '+text(error.message));return null;
+    });
+    source.complete=Promise.all([drawings,listing]).then(async([indexed,inventory])=>{
+      if(inventory?.snapshotRef&&String(inventory.snapshotRef).toLowerCase()!==snapshotRef.toLowerCase()){
+        warnings.push('Related file listing revision did not match the open project.');inventory=null;
+      }
+      const entries=relatedInventory(inventory?.files||[],paths,[...anchors]).filter(item=>!paths.has(item.path));
+      const settings=entries.filter(item=>/\.(?:kicad_pro|pro)$/i.test(item.path));
+      const extra=await loadReports(options,scope,{files:[...settings,...entries.filter(item=>reportPath(item.path))]},snapshotRef);
+      return merge(indexed,await build({scope,snapshotRef,inventory:entries,reports:extra.reports,warnings:[...warnings,...extra.warnings]}));
+    }).finally(()=>{source.pending=false;});
+    for(const stage of [source.core,drawings])stage.catch(()=>{});
+    return source;
+  }
+  async function load(options){
+    const build=(source)=>root.KiCadLoading?.run&&!options.dependencies?
+      root.KiCadLoading.run('workspace-search',source,()=>buildRecords(source)):
+      Promise.resolve().then(()=>buildRecords(source,options.dependencies));
+    if(options.project)return scopedProject(options,build);
+    const scope={...options.scope},warnings=[];let saved={},inventory={};
+    const checkSnapshot=(value,expected)=>{if(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(expected||'')&&value?.snapshotRef&&String(value.snapshotRef).toLowerCase()!==expected.toLowerCase())throw Error('Project response revision did not match the requested immutable snapshot.');};
+    try{saved=await read(options.request,'project-search-files',scope);if(!Array.isArray(saved?.files))throw Error('Invalid project drawing response.');checkSnapshot(saved,scope.ref);}
+    catch(error){saved={};warnings.push('Drawing content unavailable: '+text(error.message));}
+    let snapshotRef=saved.snapshotRef||scope.ref;
+    try{inventory=Array.isArray(saved.inventory)?{files:saved.inventory,snapshotRef:saved.snapshotRef}:await read(options.request,'project-inventory',{...scope,ref:snapshotRef});if(!Array.isArray(inventory?.files))throw Error('Invalid project inventory.');checkSnapshot(inventory,snapshotRef);}
+    catch(error){inventory={};warnings.push('File inventory unavailable: '+text(error.message));}
+    if(!saved.files&&!inventory.files)throw Error(warnings.join(' '));
+    if(!saved.snapshotRef&&inventory.snapshotRef)snapshotRef=inventory.snapshotRef;
+    const input={...saved,inventory:inventory.files||[],scope,snapshotRef,
+      warnings:[...warnings,...warningsOf(saved),...warningsOf(inventory)]};
+    const core=build(input);
+    const source={core,pending:true};
+    source.complete=Promise.all([core,loadReports(options,scope,inventory,snapshotRef)]).then(async([indexed,extra])=>{
+      if(!extra.reports.length)return {...indexed,warnings:[...indexed.warnings,...extra.warnings]};
+      const supplemental=await build({...extra,scope,snapshotRef});
+      if(!indexed.index.entries.length)return {...supplemental,warnings:[...new Set([...indexed.warnings,...supplemental.warnings])]};
+      return {...indexed,index:{...indexed.index,entries:[...indexed.index.entries,...supplemental.index.entries]},
+        warnings:[...new Set([...indexed.warnings,...supplemental.warnings])],reportCount:supplemental.reportCount};
+    }).finally(()=>{source.pending=false;});
+    return source;
+  }
+  function createController(options){
+    let epoch=0,disposed=false;const cache=options.cache||caches;
+    const directory=String(options.scope?.file||'').split('/').slice(0,-1).join('/');
+    function ensure(){
+      const openDrawings=options.project?.openDrawings?.slice();
+      const key=JSON.stringify([scopeKey(options.scope),options.project?options.scope.file:directory,openDrawings]);
+      if(!cache.has(key)){
+        while(cache.size>=LIMITS.scopes)cache.delete(cache.keys().next().value);
+        const clear=()=>{if(cache.get(key)===promise)cache.delete(key);};
+        const promise=load(options.project?{...options,project:{...options.project,openDrawings}}:options).then(source=>{source.complete.catch(clear);return source;},error=>{clear();throw error;});
+        cache.set(key,promise);
+      }
+      return cache.get(key);
+    }
+    return {
+      preload(){return ensure().then(source=>source.core);},
+      setCompanion(path){
+        if(!options.project||options.project.openDrawings?.[0]===path)return;
+        options.project.openDrawings=path?[path]:[];
+        epoch++;
+        void this.preload().catch(()=>{});
+      },
+      async search(query,onPartial){
+        const ticket=++epoch;if(disposed||!query.trim())return null;const commands=toolResults(query);if(commands.length)return{results:commands,total:commands.length,truncated:false,warnings:[]};
+        const ranking={...options.dependencies,preferredPath:options.activePath?.()||options.scope?.file};
+        let indexed;
+        try{
+          const source=await ensure();
+          if(onPartial&&source.pending){
+            let preceding;
+            for(const stage of [source.core,...(source.stages||[])]){
+              const indexed=await stage;
+              if(disposed||ticket!==epoch)return null;
+              if(source.pending&&indexed!==preceding)onPartial(searchRecords(indexed,query,ranking));
+              preceding=indexed;
+            }
+          }
+          indexed=await source.complete;
+        }catch(error){if(disposed||ticket!==epoch)return null;throw error;}
+        if(disposed||ticket!==epoch)return null;
+        let index=indexed;
+        if(options.getDrafts){
+          // Drafts are re-read on each explicit query; the immutable source load is shared.
+          try{
+            const drafts=await options.getDrafts();if(disposed||ticket!==epoch)return null;
+            const allowed=options.project?new Set(indexed.records.filter(record=>record.kind==='file'&&drawing(record.path)).map(record=>record.path)):null;
+            const localDrafts=allowed?drafts?.filter(draft=>allowed.has(draft.source?.file)):drafts;
+            if(localDrafts?.length){const local=buildRecords({drafts:localDrafts,scope:options.scope},options.dependencies);index={...indexed,index:{...indexed.index,entries:[...indexed.index.entries,...local.index.entries]},warnings:[...new Set([...indexed.warnings,...local.warnings])]};}
+          }catch{index={...indexed,warnings:[...indexed.warnings,'Local Draftsman drafts could not be read.']};}
+        }
+        return searchRecords(index,query,ranking);
+      },
+      cancel(){epoch++;},destroy(){disposed=true;epoch++;}
+    };
+  }
+  function mount(options){
+    const document=options.document||root.document,holder=options.holder||options.host;
+    const make=(tag,value)=>{const node=document.createElement(tag);if(value!==undefined)node.textContent=value;return node;};
+    const host=make('div');host.className='workspace-project-search';
+    const input=make('input');input.type='search';input.placeholder='Search open KiCad project';input.autocomplete='off';input.maxLength=2048;
+    input.setAttribute('aria-label','Search open KiCad project');input.setAttribute('role','combobox');input.setAttribute('aria-autocomplete','list');input.setAttribute('aria-expanded','false');
+    const popover=make('div');popover.className='workspace-project-search-popup';popover.hidden=true;
+    const status=make('p','Search saved objects, files, simulations and Draftsman. Ctrl+K to focus.');status.className='workspace-search-status';status.setAttribute('role','status');status.setAttribute('aria-live','polite');
+    const list=make('div');list.id='workspace-search-results-'+(++nextId);list.setAttribute('role','listbox');input.setAttribute('aria-controls',list.id);
+    const coverage=make('details'),warnings=make('p');
+    coverage.className='workspace-search-coverage';coverage.hidden=true;
+    warnings.className='workspace-search-warnings';coverage.append(make('summary','Search coverage'),warnings);
+    popover.append(status,list,coverage);
+    if(root.KiCadUIIcons)host.append(root.KiCadUIIcons.icon('search'));
+    host.append(input,popover);holder.append(host);
+    const controller=createController(options);if(options.project)void controller.preload().catch(()=>{});let timer=null,epoch=0,rows=[],active=-1,disposed=false;
+    function reveal(){popover.hidden=false;input.setAttribute('aria-expanded','true');}
+    function dismiss(){clearTimeout(timer);epoch++;controller.cancel();popover.hidden=true;input.setAttribute('aria-expanded','false');input.removeAttribute('aria-activedescendant');}
+    async function open(result){
+      dismiss();try{await options.open(result);}catch(error){if(disposed)return;status.textContent='Could not open result: '+text(error.message);reveal();}
+    }
+    function activate(index){
+      active=index;for(let i=0;i<rows.length;i++)rows[i].setAttribute('aria-selected',String(i===active));
+      if(rows[active]){input.setAttribute('aria-activedescendant',rows[active].id);rows[active].scrollIntoView?.({block:'nearest'});}
+    }
+    function render(result,pending=false){
+      const previous=rows[active]?.result;
+      const sameResult=item=>previous&&item.kind===previous.kind&&item.path===previous.path&&
+        (item.uuid||item.id||item.label)===(previous.uuid||previous.id||previous.label);
+      status.textContent=result.error||(
+        `${result.results.length} result${result.results.length===1?'':'s'}${pending?' · Indexing related files…':result.truncated?' · More matches available':''}`
+      );
+      warnings.textContent=pending?'':result.warnings.filter(w=>!w.startsWith('Coverage:')).join(' ');
+      coverage.hidden=!warnings.textContent;
+      list.replaceChildren();rows=[];active=-1;input.removeAttribute('aria-activedescendant');
+      for(const [i,item]of result.results.entries()){
+        const row=make('div');row.className='workspace-search-result';row.id=list.id+'-'+i;row.setAttribute('role','option');row.setAttribute('aria-selected','false');
+        const button=make('button');button.type='button';button.className='workspace-search-open';
+        const matched=item.detail&&item.detail!==item.label?make('small',item.detail):null;
+        const kind=item.objectKind||item.kind;
+        const category=kind.charAt(0).toUpperCase()+kind.slice(1).replaceAll('_',' ');
+        button.append(make('strong',item.label),make('small',item.path?category+' · '+item.path:item.detail));
+        if(item.path&&matched)button.append(matched);
+        button.addEventListener('click',()=>open(item));row.append(button);
+        if(item.canShow3D){const three=make('button','Show in 3D');three.type='button';three.className='workspace-search-3d';three.addEventListener('click',()=>open({...item,view:'3d'}));row.append(three);}
+        row.result=item;list.append(row);rows.push(row);
+      }
+      const selected=result.results.findIndex(sameResult);
+      if(selected>=0)activate(selected);
+    }
+    async function run(){
+      const query=input.value,ticket=++epoch;if(!query.trim()){dismiss();return;}
+      reveal();status.textContent='Searching saved project…';list.replaceChildren();rows=[];active=-1;
+      try{
+        const result=await controller.search(query,partial=>{if(partial.results.length&&!disposed&&ticket===epoch)render(partial,true);});
+        if(result&&!disposed&&ticket===epoch)render(result);
+      }catch(error){if(!disposed&&ticket===epoch){status.textContent='Search unavailable: '+text(error.message)+'. Type again to retry.';warnings.textContent='';coverage.hidden=true;}}
+    }
+    function onInput(){clearTimeout(timer);epoch++;controller.cancel();rows=[];active=-1;list.replaceChildren();input.removeAttribute('aria-activedescendant');if(!input.value.trim()){dismiss();return;}reveal();status.textContent='Searching saved project…';warnings.textContent='';coverage.hidden=true;timer=setTimeout(run,LIMITS.debounce);}
+    function onKey(event){
+      if(event.key==='Escape'){dismiss();return;}
+      if(event.key==='ArrowDown'||event.key==='ArrowUp'){event.preventDefault();reveal();if(rows.length)activate((active+(event.key==='ArrowDown'?1:active<0?0:-1)+rows.length)%rows.length);return;}
+      if(event.key==='Enter'){event.preventDefault();clearTimeout(timer);const selected=rows[active<0?0:active];if(selected&&!popover.hidden)open(selected.result);else run();}
+    }
+    function onGlobalKey(event){if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='k'&&!event.altKey){event.preventDefault();input.focus();input.select?.();reveal();}}
+    function onOutside(event){if(!host.contains(event.target))dismiss();}
+    input.addEventListener('input',onInput);input.addEventListener('keydown',onKey);document.addEventListener('keydown',onGlobalKey);document.addEventListener('pointerdown',onOutside);
+    return {input,popover,controller,setCompanion(path){dismiss();controller.setCompanion(path);},destroy(){disposed=true;dismiss();controller.destroy();document.removeEventListener('keydown',onGlobalKey);document.removeEventListener('pointerdown',onOutside);host.remove();}};
+  }
+  const api={LIMITS,safePath,toolResults,scopedDrafts,buildRecords,searchRecords,createController,mount};root.KiCadWorkspaceSearch=api;
+  if(typeof module==='object'&&module.exports)module.exports=api;
+})(typeof globalThis==='object'?globalThis:this);
+
+;
 /* Bundled parser worker: no repository requests, credentials or dynamic code. */
 'use strict';
 
 onmessage=event=>{
   try{
-    const {job,payload}=event.data||{};let result;
+    const {job,payload}=event.data||{};let result;let transfers=[];
     if(job==='settings'){
       postMessage({stage:'Reading saved board settings…'});
       result=KiCadProjectSettings.parse(payload.content,{file:payload.file});
+    }else if(job==='workspace-search'){
+      result=KiCadWorkspaceSearch.buildRecords(payload);
     }else if(job==='drawing'){
       postMessage({stage:'Indexing saved project objects…'});
-      const {files,rootFile,pcb}=payload,snapshot=KiCadDesignDiff.prepareProject(files,{forConnectivity:true}),model=KiCadDesignModel.buildProject(files,null,snapshot,{forConnectivity:true}),file=files.find(f=>f.path===rootFile);
+      const {files,rootFile,pcb}=payload,snapshot=KiCadDesignDiff.prepareProject(files,{forConnectivity:true,compactCopper:pcb}),model=KiCadDesignModel.buildProject(files,null,snapshot,{forConnectivity:true}),file=files.find(f=>f.path===rootFile);
       if(!file)throw Error('The requested drawing is absent.');
       postMessage({stage:'Building drawing geometry…'});
       const sheets=files.filter(f=>/\.(kicad_sch|sch)$/i.test(f.path));
-      const design=(pcb?KiCadPCBRenderer:KiCadSchematicRenderer).build(KiCadDesignDiff.preparedFile(snapshot,rootFile),rootFile,{textVariables:file.textVariables,sheetNumber:sheets.findIndex(f=>f.path===rootFile)+1,sheetCount:sheets.length,sheetName:'/',...(globalThis.KiCadFileCompatibility?.textContext?.(files,rootFile,{rootFile,parse:(content,file)=>KiCadDesignDiff.preparedFile(snapshot,file.path)})||{})});
+      const design=(pcb?KiCadPCBRenderer:KiCadSchematicRenderer).build(KiCadDesignDiff.preparedFile(snapshot,rootFile),rootFile,{packedZones:pcb,textVariables:file.textVariables,sheetNumber:sheets.findIndex(f=>f.path===rootFile)+1,sheetCount:sheets.length,sheetName:'/',...(globalThis.KiCadFileCompatibility?.textContext?.(files,rootFile,{rootFile,parse:(content,file)=>KiCadDesignDiff.preparedFile(snapshot,file.path)})||{})});
       postMessage({stage:'Resolving saved connectivity…'});
       const nets=KiCadNetModel.build(files,new Map([[rootFile,design]]),snapshot);
+      if(design.packedZones)transfers=[...new Set(design.primitives.flatMap(primitive=>primitive.zoneCoordinates?[primitive.zoneCoordinates.buffer]:[]))];
       result={model,rules:[...model._rules],design,nets};
     }else throw Error('Unknown preparation job.');
-    postMessage({ok:true,result});
+    postMessage({ok:true,result},transfers);
   }catch(error){postMessage({ok:false,error:error.message||'KiCad preparation failed.'});}
 };

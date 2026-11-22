@@ -241,39 +241,59 @@
     const parsed=compile(query),warnings=[...(index?.warnings||[])];
     if(parsed.error)return {results:[],total:0,truncated:false,error:parsed.error,warnings};
     const limit=Number.isSafeInteger(options.limit)?Math.max(1,Math.min(LIMITS.results,options.limit)):200;
-    const results=[],budget={steps:LIMITS.patternSteps};
+    const ranked=[],budget={steps:LIMITS.patternSteps},preferredPath=options.preferredPath;
+    const compare=(a,b)=>b.score-a.score||
+      (preferredPath?Number(b.object.path===preferredPath)-Number(a.object.path===preferredPath):0)||
+      order(a.object.path,b.object.path)||order(a.object.id,b.object.id);
+    let total=0,cutoff=null;
+    const groups=(parsed.groups.length?parsed.groups:[[]]).map(group=>group.slice().sort((a,b)=>Number(Boolean(a.pattern))-Number(Boolean(b.pattern))));
     try {
-    for(const entry of index?.entries||[]) {
-      let best=null;
-      for(const group of parsed.groups.length?parsed.groups:[[]]) {
-        const matches=[];let score=0,valid=true;
-        // Cheap literal terms narrow candidates before bounded pattern matching.
-        for(const token of [...group].sort((a,b)=>Number(Boolean(a.pattern))-Number(Boolean(b.pattern)))) {
-          const fields=token.field?[[token.field,entry.fields.get(token.field)]]:[...entry.fields];
-          const found=fields.filter(([,field])=>field&&(token.pattern?patternMatch(token.pattern,field.folded,budget):field.folded.includes(token.term)));
-          if(token.excluded ? found.length>0 : found.length===0){valid=false;break;}
-          if(!token.excluded)for(const [name,field] of found) {
-            const strength=field.folded===token.term?10:field.folded.startsWith(token.term)?5:1;
-            score+=strength+(name==="ref"?3:0);matches.push({field:name,text:field.display,term:token.term});
+      for(const entry of index?.entries||[]) {
+        let best=null;
+        for(const group of groups) {
+          const matches=[];let score=0,valid=true;
+          for(const token of group) {
+            const fields=token.field?[[token.field,entry.fields.get(token.field)]]:entry.fields;
+            let found=false;
+            for(const [name,field] of fields) {
+              if(!field||!(token.pattern?patternMatch(token.pattern,field.folded,budget):field.folded.includes(token.term)))continue;
+              found=true;
+              if(token.excluded)break;
+              const strength=field.folded===token.term?10:field.folded.startsWith(token.term)?5:1;
+              score+=strength+(name==='ref'?3:0);
+              matches.push({field:name,text:field.display,folded:field.folded,term:token.term});
+            }
+            if(found===token.excluded){valid=false;break;}
           }
+          if(valid&&(!best||score>best.score))best={score,matches};
         }
-        if(valid && (!best || score>best.score))best={score,matches};
+        if(!best)continue;
+        total++;
+        const candidate={object:entry.object,score:best.score,matches:best.matches};
+        if(cutoff&&compare(candidate,cutoff)>=0)continue;
+        ranked.push(candidate);
+        if(ranked.length===2*limit){
+          ranked.sort(compare);
+          ranked.length=limit;
+          cutoff=ranked[limit-1];
+        }
       }
-      if(!best)continue;
-      const object=entry.object,seen=new Set(),snippets=[];
-      for(const match of best.matches) {
-        if(seen.has(match.field))continue;seen.add(match.field);
-        const at=fold(match.text).indexOf(match.term),start=Math.max(0,at-36),end=Math.min(match.text.length,start+140);
-        snippets.push({field:match.field,text:`${start?"...":""}${match.text.slice(start,end)}${end<match.text.length?"...":""}`});
+    }catch(error){return {results:[],total:0,truncated:false,error:error.message,warnings};}
+    ranked.sort(compare);
+    const results=ranked.slice(0,limit).map(({object,score,matches})=>{
+      const seen=new Set(),snippets=[];
+      for(const match of matches){
+        if(seen.has(match.field))continue;
+        seen.add(match.field);
+        const at=match.folded.indexOf(match.term),start=Math.max(0,at-36),end=Math.min(match.text.length,start+140);
+        snippets.push({field:match.field,text:`${start?'...':''}${match.text.slice(start,end)}${end<match.text.length?'...':''}`});
         if(snippets.length===6)break;
       }
-      results.push({object,id:object.id,path:object.path,uuid:object.uuid||null,score:best.score,
-        matchedFields:[...seen],snippets});
-    }
-    } catch(error) {return {results:[],total:0,truncated:false,error:error.message,warnings};}
-    results.sort((a,b)=>b.score-a.score||order(a.path,b.path)||order(a.id,b.id));
-    return {results:results.slice(0,limit),total:results.length,truncated:results.length>limit,error:null,warnings};
+      return {object,id:object.id,path:object.path,uuid:object.uuid||null,score,matchedFields:[...seen],snippets};
+    });
+    return {results,total,truncated:total>limit,error:null,warnings};
   }
+
   const api={LIMITS,compile,createIndex,search,parseNetClasses,netClasses,savedColor,netClassColor};root.KiCadProjectSearch=api;
   if(typeof module==="object" && module.exports)module.exports=api;
 })(typeof globalThis==="object"?globalThis:this);

@@ -61,7 +61,7 @@ test('Settings update controls render once and show a checked result without nav
  const api=load({document:{createElement:node,querySelectorAll:s=>s==='[data-product-updates]'?[host]:[]},browser:{runtime:{requestUpdateCheck:async()=>({status:'no_update'})}}});
  api.decorate();assert.equal(host.children.length,3);
  const [button,status,links]=host.children;
- assert.equal(links.children.length,2);assert.match(links.children[0].href,/^https:\/\/chromewebstore.google.com\//);
+ assert.equal(links.children.length,3);assert.match(links.children[0].href,/^https:\/\/chromewebstore.google.com\//);
  const pending=button.onclick();assert.equal(button.disabled,true);await pending;
  assert.equal(button.disabled,false);assert.match(status.textContent,/No update is available/);
 });
@@ -123,4 +123,26 @@ test('toolbar deep link starts one check and shows the result in Settings',async
  await new Promise(resolve=>setImmediate(resolve));
  assert.equal(checks,1);
  assert.match(host.children[1].textContent,/No update is available/);
+});
+
+
+test('a newer public GitHub prerelease is shown when the browser reports no store update',async()=>{
+ let checked=0;
+ const api=load({
+  chrome:{runtime:{getManifest:()=>({version:'0.12.99'}),requestUpdateCheck(cb){cb('no_update');}}},
+  AbortController,setTimeout,clearTimeout,
+  fetch:async(url,options)=>{
+   checked++;
+   assert.equal(url,'https://api.github.com/repos/wayri/KiCad-Online/releases?per_page=5');
+   assert.equal(options.credentials,'omit');
+   return {ok:true,json:async()=>[
+    {tag_name:'v1.0.0',draft:true},
+    {tag_name:'v0.12.105',draft:false,prerelease:true},
+    {tag_name:'v0.12.98',draft:false}
+   ]};
+  }
+ });
+ const result=await api.checkUpdates();
+ assert.equal(checked,1);assert.equal(result.status,'release_available');assert.equal(result.version,'0.12.105');
+ assert.match(api.updateMessage(result),/on GitHub.*Store copies update when the browser offers it/);
 });

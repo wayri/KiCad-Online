@@ -66,7 +66,7 @@
  const remoteEntry=path=>({path,read:async()=>{const file=await request('project-file',{file:path});if(typeof file?.content!=='string')throw Error('Fabrication file is unavailable at the requested revision.');return file.content;}});
  $('projectSet').onchange=()=>{const entry=setSources?.get($('projectSet').value);if(entry)load([entry],{resolve:setResolve});};
  $('repository').onclick=async()=>{try{
-  const selected=query.get('file');if(selected&&candidate(selected)){await load([remoteEntry(selected)],{resolve:remoteEntry});return;}
+  const selected=query.get('file');if(query.get('scan')!=='1'&&selected&&candidate(selected)){await load([remoteEntry(selected)],{resolve:remoteEntry});return;}
   const inventory=await request('project-inventory',{file:query.get('file')||'board.gbrjob'});if(/^[a-f0-9]{40}$/i.test(inventory.snapshotRef||'')){if((layers.length||jobs.length)&&scope.ref&&scope.ref!==inventory.snapshotRef)throw Error('Project revision changed. Clear the imported set before loading this revision.');scope.ref=inventory.snapshotRef;}const files=inventory.files.filter(f=>candidate(f.path)),jobFiles=files.filter(f=>KiCadGerberRenderer.isJobPath(f.path));
   if(jobFiles.length===1){await load([remoteEntry(jobFiles[0].path)],{resolve:remoteEntry});return;}
   if(jobFiles.length>1||files.length>16){choose((jobFiles.length?jobFiles:files).map(f=>remoteEntry(f.path)),remoteEntry,jobFiles.length?'Select one saved job to load its declared fabrication set.':'Select one file, or import a selected fabrication set of up to 16 layers.');return;}

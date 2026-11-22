@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ('analysis-data.js', 'analysis-viewer.html', 'analysis-viewer.css', 'analysis-viewer.js', 'merge-conflicts.js', 'conflict-viewer.html', 'conflict-viewer.js', 'conflict-viewer.css', 'conflict-properties.js', 'bom-manager.js', 'bom-manager.css', 'step-worker-vscode.js', 'vendor/occt/occt-import-js.wasm', 'vendor/occt/NOTICE.md',
     'vendor/occt/license.occt-import-js.txt', 'vendor/occt/license.occt.txt', 'vendor/occt/OCCT_LGPL_EXCEPTION.txt', 'vendor/occt/EMSCRIPTEN-LICENSE.txt',
     'loading-ui.js', 'loading-ui.css', 'icons/icon48.png', 'load-worker.js', 'bom-analytics.js', 'file-compatibility.js', 'html-preview.js', 'html-sandbox.html', 'html-sandbox.js',
-    'parsing.js', 'project-viewer.html', 'project-viewer.css', 'project-viewer.js', 'project-settings.js', 'project-settings-ui.js', 'gerber-renderer.js',
+    'parsing.js', 'project-launch.js', 'project-viewer.html', 'project-viewer.css', 'project-viewer.js', 'project-settings.js', 'project-settings-ui.js', 'gerber-renderer.js',
     'revision-viewer.html', 'revision-viewer.css', 'revision-viewer.js', 'terms.html',
     'ui-icons.js', 'browser-data.js', 'legacy-kicad.js', 'design-diff.js', 'design-model.js',
     'net-model.js', 'overview-connectivity.js', 'ratsnest.js', 'paired-review.js', 'project-search.js', 'workspace-search.js', 'rule-reports.js', 'review-navigation.js', 'view-state.js', 'review-comments.js', 'comment-compose.js', 'review-workspace.js', 'review-tools.js', 'repo-models.js',

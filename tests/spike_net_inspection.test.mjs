@@ -85,3 +85,18 @@ test('main and probe highlights borrow the same saved zone geometry and leave it
  for(const {geometry} of zones)geometry.dispose();
  assert.equal(sharedDisposals,zones.length);
 });
+
+test('selecting a small net on a dense board scans off-net tracks once',{skip:!THREE},()=>{
+ const {board,view}=fixture();let reads=0;
+ const unrelated=Array.from({length:90000},()=>({
+  get net(){reads++;return 'UNRELATED';},
+  layer:'F.Cu',
+ }));
+ board.tracks.push(...unrelated);
+ const state=view.update({netNames:['SIGNAL']});
+ assert.equal(reads,unrelated.length);
+ assert.equal(state.tracks,4);
+ assert.equal(state.pads,4);
+ assert.equal(state.omitted,0);
+ view.dispose();
+});

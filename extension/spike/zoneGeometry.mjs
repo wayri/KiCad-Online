@@ -11,10 +11,17 @@ export function savedZoneBufferGeometry(THREE,zone,{world,triangulate,maxBytes=6
  if(typeof world!=='function'||typeof triangulate!=='function'||!Number.isSafeInteger(maxBytes)||maxBytes<0)throw TypeError('Invalid saved zone geometry options.');
  if(zoneGeometryEstimate(zone)>maxBytes)throw Object.assign(Error('Saved zone exceeds the remaining typed-geometry byte budget.'),{code:'ZONE_GEOMETRY_BUDGET'});
  const coordinates=new Float64Array(zone.size*2);let n=0;
- for(const node of zone.sourcePoints){
+ const addPoint=(x,y)=>{
+  const point=world([x,y]);
+  if(!point.every(Number.isFinite)||n>=zone.size)throw Error('Invalid saved zone coordinate.');
+  coordinates[n*2]=point[0];coordinates[n*2+1]=point[1];n++;
+ };
+ const packed=zone.sourcePoints[1];
+ if(packed instanceof Float64Array){
+  for(let i=0;i<packed.length;i+=2)addPoint(packed[i],packed[i+1]);
+ }else for(const node of zone.sourcePoints){
   if(!Array.isArray(node)||atom(node[0])!=='xy')continue;
-  const point=world([Number(atom(node[1])),Number(atom(node[2]))]);
-  if(!point.every(Number.isFinite)||n>=zone.size)throw Error('Invalid saved zone coordinate.');coordinates[n*2]=point[0];coordinates[n*2+1]=point[1];n++;
+  addPoint(Number(atom(node[1])),Number(atom(node[2])));
  }
  if(n!==zone.size)throw Error('Saved zone point count changed.');
  if(n>3&&coordinates[0]===coordinates[(n-1)*2]&&coordinates[1]===coordinates[(n-1)*2+1])n--;
