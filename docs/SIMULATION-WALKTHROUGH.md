@@ -30,16 +30,20 @@ The KiCad workbook stores the setup. The CSV or ASCII RAW holds the samples. Exp
 
 The transient cursor pair reads 500 µs and −0.199967 V apart. The viewer snaps to saved sample points. Native KiCad remains the place to edit the circuit, tune device values, evaluate simulator measurements, and rerun analyses. [Format and host details](ANALYSIS_VIEWER.md)
 
+### Cross-probe a saved schematic voltage
+
+From the schematic, open **Simulation → Saved KiCad / wayriCAD results** and choose **Link net plots** beside a waveform export. Pick a signal to locate its wire, or select a linked net in the schematic to show its waveform. Use **Saved sample** to step through the saved voltage and time. KERO's **ST01_OUT** links on the root, bank 1, and decoder sheets through their exact qualified names. [KERO schematic cross-probe example](https://github.com/wayri/KERO/blob/aab26d9b461297fe7346345e706824c0b0dc6482/encoder/simulation/README.md#probe-the-schematic)
+
 ## 3. Try the example circuits
 
 | Circuit | Saved results to review | What to look for |
 | --- | --- | --- |
-| KERO encoder | Six switching transients | Follow the eleven-stage ring, decoder margin, frame timing and coin-cell current. The six cases reproduced the original waveform hashes and all ten complete frames decoded hello world. [KERO encoder workbook and plots](https://github.com/wayri/KERO/blob/4e8c4cef632155ef833f68baa9a58807f42d02f5/encoder/simulation/README.md) |
+| KERO encoder | Six switching transients | Follow the eleven-stage ring, decoder margin, frame timing and coin-cell current. The six cases reproduced the original waveform hashes and all ten complete frames decoded hello world. [KERO encoder workbook and plots](https://github.com/wayri/KERO/blob/aab26d9b461297fe7346345e706824c0b0dc6482/encoder/simulation/README.md) |
 | KERO R1/C3 timing branch | Transient and AC | The isolated 1 MΩ/1 µF branch has a 1 s time constant. The AC output at 0.159 Hz is about −3.01 dBV and −45° with the ideal 1 V test source. |
 | KiCad generic op-amp demo | Transient, AC, and a two-source DC sweep | Compare two transient samples, then look for about 20 dBV at 1 kHz in the AC tab. In DC, select a sweep to distinguish two branches that share the same input voltages. |
 | KiCad boost converter demo | Switching transient with a load step | The native workbook restores two output markers. In the viewing export they read about 4.963 V and 4.957 V. Zoom around 13 ms to inspect the load change. |
 
-The op-amp, boost and isolated timing-branch runs used KiCad 10.0.6 schematic exports and its bundled ngspice-46 library. The full KERO encoder ran in Xyce 7.8 with the TI family macro. The separate legacy blinker ran with behavioral amplifiers in ngspice. [Full legacy blinker workbook and results](https://github.com/wayri/KERO/blob/4e8c4cef632155ef833f68baa9a58807f42d02f5/analysis/simulation/README.md) The boost demo used the native PWM model and produced 1,072,433 adaptive samples. The viewing export uses 18,001 points from ngspice's 1 µs linearized output. Use a smaller time window at finer sampling for switch-edge analysis.
+The op-amp, boost and isolated timing-branch runs used KiCad 10.0.6 schematic exports and its bundled ngspice-46 library. The full KERO encoder ran in Xyce 7.8 with the TI family macro. The separate legacy blinker ran with behavioral amplifiers in ngspice. [Full legacy blinker workbook and results](https://github.com/wayri/KERO/blob/aab26d9b461297fe7346345e706824c0b0dc6482/analysis/simulation/README.md) The boost demo used the native PWM model and produced 1,072,433 adaptive samples. The viewing export uses 18,001 points from ngspice's 1 µs linearized output. Use a smaller time window at finer sampling for switch-edge analysis.
 
 ![Op-amp Bode plot with the gain cursor at 1 kHz](images/simulation-workbook/ac-bode.jpg)
 
