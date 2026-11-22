@@ -23,6 +23,8 @@ does not execute either KiCad or wayriCAD plugins or solvers.
 
 ## Open a KiCad simulation workbook
 
+Follow the [workbook and drawing sheet walkthrough](SIMULATION-WALKTHROUGH.md) for the KiCad export steps and transient, AC, nested DC, and switching examples.
+
 Include the `.wbk` and its ASCII SPICE `.raw`, CSV or TSV exports in the same project. Open the workbook, select a workbook tab, then choose its export from **Saved result**. Each tab has its own binding. Result files are read when selected from the same project revision. Use the export from the intended run. Opening an ASCII RAW file directly gives you its saved plots without a workbook.
 
 In **Graphs**, choose visible signals and a cursor signal. Pan or zoom the plot, use **Fit** to reset the view, and set **Cursor A** and **Cursor B** to compare saved samples. You can step a cursor through saved samples with the arrow keys. AC plots provide magnitude, dB, phase, and real/imaginary views. For nested DC sweeps, select a sweep to compare samples at repeated x values. **Locate net** sends the exact saved voltage net name to the chosen drawing. Data, Report and Source describe the selected project file.
