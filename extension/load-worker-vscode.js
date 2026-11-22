@@ -2466,14 +2466,14 @@
           if (!p || typeof name!=="string" || !name) continue;
           const pinUuid=field(pin,"uuid"), sheetId=record.metadata.uuid || record.id || record.key;
           const pinRecord={...record,id:`${record.id || record.key}/pin:${pinUuid || name}`,metadata:{...record.metadata,uuid:pinUuid}};
-          const entry=add({record:pinRecord,kind:"sheet_pin",position:p,sheetPin:{sheetId,name}});
+          const entry=add({record:pinRecord,kind:"sheet_pin",position:p,sheetPin:{sheetId,name},direction:value(pin[2])});
           anchors.push({p,index:entry.index});
         }
       } else if (LABELS.has(record.kind) || record.kind === "junction") {
         const p=point(record.form,"at");
         if (!p) continue;
         const entry=add({record,kind:record.kind,position:p,name:LABELS.has(record.kind) ? String(value(record.form[1])) : null,
-          namePriority:({global_label:0,label:2,hierarchical_label:3})[record.kind]});
+          direction:field(record.form,"shape"),namePriority:({global_label:0,label:2,hierarchical_label:3})[record.kind]});
         anchors.push({p,index:entry.index,junction:record.kind === "junction"});
       }
     }
@@ -2513,7 +2513,7 @@
       const key=JSON.stringify([owner,String(p.pinNumber),p.connectPoint.x,p.connectPoint.y]);
       if (pins.has(key)) {pins.get(key).primitives.push(p); continue;}
       const power=powerSymbols.get(owner), isPower=power && power.pinNumber===String(p.pinNumber);
-      const entry=add({record,kind:"pin",position:p.connectPoint,pin:String(p.pinNumber),primitives:[p],
+      const entry=add({record,kind:"pin",position:p.connectPoint,pin:String(p.pinNumber),primitives:[p],direction:p.pinType,
         name:isPower ? power.name : null,namePriority:isPower ? 1 : undefined,power:!!isPower,flag:powerFlags.has(owner),global:!!(isPower && power.global)});
       pins.set(key,entry); anchors.push({p:p.connectPoint,index:entry.index});
     }
@@ -2581,7 +2581,7 @@
         net.primitives.push(...((entry.power||entry.flag) ? (byUuid.get(uuid) || []).filter((p)=>!p.frame) : entry.kind === "pin" ? entry.primitives :
           (byUuid.get(uuid) || []).filter((p)=>p.kind === entry.kind || entry.kind==="sheet_pin"&&p.kind==="sheet-pin" || p.kind==="text-overbar"&&(p.electricalKind===entry.kind||entry.kind==="sheet_pin"&&p.electricalKind==="sheet-pin"))));
         net.members.push({uuid,reference:entry.kind === "pin" ? r.metadata.properties.Reference || "" : "",
-          pad:"",pin:entry.pin || "",kind:entry.kind,position:entry.position,...((entry.name||entry.sheetPin?.name)?{name:entry.name||entry.sheetPin.name}:{}),...(entry.sheetPin?{sheetId:entry.sheetPin.sheetId}:{})});
+          pad:"",pin:entry.pin || "",kind:entry.kind,position:entry.position,...(entry.direction&&!entry.flag?{direction:entry.direction}:{}),...((entry.name||entry.sheetPin?.name)?{name:entry.name||entry.sheetPin.name}:{}),...(entry.sheetPin?{sheetId:entry.sheetPin.sheetId}:{})});
         net.stats.lengthMm+=entry.length || 0;
       }
       nets.push(net);
