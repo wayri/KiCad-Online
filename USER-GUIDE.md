@@ -240,6 +240,8 @@ The warning lists the affected identities and count. Choose assembly progress, p
 
 ## 5. Open fabrication files, documents and results
 
+Follow the [simulation workbook and drawing sheet walkthrough](docs/SIMULATION-WALKTHROUGH.md) for saved results, plot controls, and A/B cursors.
+
 | Tool | Workflow and boundary |
 | --- | --- |
 | Gerber viewer & analyzer | In Android/browser, import fabrication layers and Excellon drills, toggle films, adjust opacity, measure, and export analysis JSON. Parsed bounds, stroke widths and drill findings are screening data, not complete DFM. Unsupported macros, transforms and slots are reported. VS Code provides inline Gerber/drill inspection, not the standalone analyzer page. [Gerber guide](docs/GERBER-VIEWER.md). |
