@@ -1,5 +1,9 @@
 # Install KiCad Online
 
+Browser patch 0.20.1 adds compact project downloads and interactive PDFs. Its
+Chrome/Chromium and Firefox packages supersede the 0.20.0 browser ZIPs. Android,
+VS Code and other platform assets remain at their last separately published versions.
+
 Release package: **extension 0.20.0 / Android 1.104**. Store submission
 and approval are separate from GitHub downloads. See [release status](RELEASE-STATUS.md).
 

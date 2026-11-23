@@ -56,7 +56,8 @@ class PackageFirefoxTests(unittest.TestCase):
 
     def test_pdf_uses_browser_native_renderer_without_a_modified_third_party_library(self):
         packed = builder.payload()
-        self.assertFalse(any(name.startswith('vendor/pdfjs/') for name in packed))
+        self.assertEqual({name for name in packed if name.startswith('vendor/pdfjs/')}, {'vendor/pdfjs/standard_fonts/LiberationSans-Regular.ttf', 'vendor/pdfjs/standard_fonts/LICENSE_LIBERATION'})
+        self.assertEqual(packed['vendor/pdfjs/standard_fonts/LiberationSans-Regular.ttf'], (ROOT/'extension/vendor/pdfjs/standard_fonts/LiberationSans-Regular.ttf').read_bytes())
         self.assertEqual(packed['pdf-viewer.js'], (ROOT/'extension/firefox/pdf-viewer.js').read_bytes())
         self.assertIn(b'pdf-viewer.js', packed['pdf-viewer.html'])
         self.assertNotIn(b'.innerHTML', packed['analysis-viewer.js'])

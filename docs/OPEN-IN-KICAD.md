@@ -1,22 +1,38 @@
-# Open a repository project in local KiCad
+# Download project files and drawings
 
-**Open in KiCad** downloads the selected commit as a ZIP using the browser's
-Save As dialog, extracts a separate project folder beside that ZIP, and opens the
-selected project, schematic or PCB in installed desktop KiCad. The repository is
-unchanged. The saved ZIP and extracted project remain on your computer until you
-remove them. This is a desktop feature; Android cannot launch desktop KiCad.
+The drawing toolbar has one **Download** button. Its compact popup provides the
+whole saved repository revision as a ZIP, selected KiCad source files as a ZIP,
+interactive PDF drawings, and the current drawing as PNG. Nothing opens in KiCad
+automatically. The separate **Open in KiCad** ribbon button has been removed.
 
-A browser extension cannot launch local programs by itself. Install the optional
-native messaging helper once on Windows. Download-only viewing continues to work
-without it. Grant the optional native messaging permission only when using this
-feature. Organization policies may forbid native messaging or batch launchers;
-the helper does not bypass those policies.
+PDF can include all schematic sheets and PCB layouts, all schematic sheets,
+selected drawings, or the current drawing. Source files come from the same pinned
+revision. Incomplete inventories and exports above the size limits are rejected
+rather than silently producing a partial project. Full remote ZIPs include assets;
+selected-file ZIPs contain only the selected native KiCad sources. Whole-project
+ZIP export for local workspaces is not yet supported by this popup.
+
+PDFs contain vector geometry, searchable text, component fields and net links.
+The app PDF viewer supports clicking and right-clicking parts to inspect saved
+properties, plus net selection and navigation. Other readers vary in their support
+for annotations and property menus. The export uses the browser's saved-source
+renderer, not the KiCad CLI; review any rendering warnings shown in Export details.
+Unresolved hierarchy connections do not acquire speculative cross-sheet links.
+
+Limits: 64 PDF drawings, 256 source files, 8 MiB per source file and 32 MiB total
+source data. A vendored font is embedded; no remote font or desktop helper is needed.
+
+## Legacy optional desktop helper
+
+The following setup describes the retained native messaging backend for legacy
+clients. The current drawing toolbar does not invoke it. To open a downloaded
+project, extract the ZIP and open its project file in KiCad manually.
 
 ## Windows setup
 
 Requirements: Python 3.10 or newer, an installed KiCad distribution containing
-`kicad.exe`, `eeschema.exe` and `pcbnew.exe` together, and the KiCad Online extension.
-Download and extract the [Windows helper source ZIP](https://github.com/wayri/KiCad-Online/releases/download/v0.12.68/pocket-kivi-windows-kicad-helper-0.12.68.zip), or use a trusted checkout of this project. From its root, run:
+`kicad.exe`, `eeschema.exe` and `pcbnew.exe` together, and the Pocket KiVi extension.
+Use a trusted checkout or source archive of this project. From its root, run:
 
 ```powershell
 python scripts/install_native_host.py --chrome-id YOUR_CHROME_EXTENSION_ID --kicad 'C:\Program Files\KiCad\9.0\bin\kicad.exe'
@@ -35,7 +51,7 @@ The installer copies a standalone host and fixed configuration under
 **HKEY_CURRENT_USER**. It needs no administrator privileges and contacts no
 network service. It never runs automatically when you import this package.
 Keep the configured Python and KiCad installations available. Restart your browser
-and select **Open in KiCad**. A preflight checks the helper before downloading;
+and use a legacy client that explicitly invokes the helper. A preflight checks the helper before downloading;
 choose the ZIP save location when prompted. Canceling Save As does not launch KiCad.
 
 The browser-facing host name is `dev.pocketkivi.kicad`. The Windows launcher uses a
@@ -49,7 +65,7 @@ unit tests do not establish compatibility with a managed installation.
 ## Updating or removing the helper
 
 The installer deliberately refuses an existing installation or registration.
-To update, close the browser, remove the previous **KiCad Online helper only**,
+To update, close the browser, remove the previous **Pocket KiVi helper only**,
 then rerun the installer. Keep all downloaded projects.
 
 In Registry Editor, remove only the host's keys for browsers you installed:

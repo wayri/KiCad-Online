@@ -77,6 +77,8 @@ function workspaceRuntime(respond=async()=>[], hooks={}){
   if(hooks.vscode)context.KiCadVSCodeContext=typeof hooks.vscode==='object'?hooks.vscode:{};
   if(hooks.navigation){Object.assign(context,{KiCadProjectSearch:require('../project-search.js'),KiCadRuleReports:require('../rule-reports.js'),KiCadDesignDiff:diff,KiCadPCBRenderer:require('../pcb-renderer.js'),KiCadSchematicRenderer:require('../schematic-renderer.js')});vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../review-navigation.js'),'utf8'),context);get('ruleSeverity').value='all';get('showRuleMarkers').checked=true;}
   canvas.setNetHighlights=(nets,options)=>{canvas.highlightNets=nets;canvas.netHighlight=nets[0]||null;canvas.netPrimitives=new Set(nets.flatMap(n=>n.primitives||[]));canvas.highlightMode=options.mode;};
+  context.document.querySelector=selector=>body.querySelector(selector);
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../project-download.js'),'utf8'),context);
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../review-workspace.js'),'utf8'),context);
   const workspace=context.KiCadReviewWorkspace.mount({files:[file],repository:'wayri/fixture',ref:'main',rootFile:file.path,pcb:true,getCanvas:()=>canvas,currentFile:()=>file.path,focus(){},openSheet(){},getDesigns:()=>designs,...hooks});
   canvas.layers={query_point:at=>hooks.query?.(at)||[]};
@@ -1103,9 +1105,10 @@ test('DRC/ERC controls toggle findings independently from synchronized saved-rep
   view.get('closeRuleWindow').click();view.get('viewRuleChecks').click();assert.equal(view.get('ruleWindow').hidden,false);view.get('viewRuleChecks').click();assert.equal(view.get('ruleWindow').hidden,true);assert.ok(markers()>0);
  }
 });
-test('calculator shortcut retains repository context and closes the mobile tools sheet',()=>{
- const calls=[],view=workspaceRuntime(undefined,{engineeringLauncher:{open:(...args)=>calls.push(args)}});let closed=false;view.document.body.append(view.get('androidToolsSheet'));view.get('androidToolsSheet').close=()=>{closed=true;};view.get('openCalculators').click();assert.equal(closed,true);assert.equal(calls[0][0],'calculator-viewer.html');assert.equal(calls[0][1].repository,'wayri/fixture');assert.equal(calls[0][1].ref,'main');assert.equal(calls[0][1].file,undefined);
+test('engineering tools retains source context without a duplicate calculator button',()=>{
+ const calls=[],view=workspaceRuntime(undefined,{engineeringLauncher:{openMenu:args=>calls.push(args)}});let closed=false;view.document.body.append(view.get('androidToolsSheet'));view.get('androidToolsSheet').close=()=>{closed=true;};view.get('openEngineeringTools').click();assert.equal(closed,true);assert.equal(calls[0].repository,'wayri/fixture');assert.equal(calls[0].ref,'main');assert.equal(calls[0].file,'board.kicad_pcb');assert.equal(view.get('drawingTools').children.some(node=>node.id==='openCalculators'),false);
 });
+
 test('schematic ERC window jumps to an explicitly associated loaded subsheet and rejects unresolved locations',async()=>{
  const files=[{path:'root.kicad_sch',content:'(kicad_sch (uuid root))'},{path:'child.kicad_sch',content:'(kicad_sch (uuid child))'}],opened=[];
  const view=workspaceRuntime(undefined,{navigation:true,pcb:false,files,openSheet:(file,position)=>opened.push({file,position})});view.load();view.get('viewRuleChecks').click();assert.equal(view.get('viewRuleChecks').textContent,'ERC');
@@ -2382,13 +2385,13 @@ test('drawing download opens one compact modal without replacing the drawing',()
  const dialogs=view.document.querySelectorAll('dialog[open]');
  assert.equal(dialogs.length,1);
  const [dialog]=dialogs;
- assert.equal(dialog.className,'drawing-download-dialog');
- assert.equal(dialog.getAttribute('aria-labelledby'),'drawingDownloadTitle');
+ assert.equal(dialog.className,'project-download');
+ assert.equal(dialog.getAttribute('aria-label'),'Download project');
  const [,body,footer]=dialog.children;
- const format=body.children[0].children[0],extent=body.children[1].children[0];
+ const format=body.children[0].children[1],extent=body.children[1].children[0];
  assert.equal(format.focused,true);
- assert.deepEqual(format.children.map(option=>option.value),['pdf','png']);
- assert.deepEqual(extent.children.map(option=>option.value),['full','viewport']);
+ assert.deepEqual(format.children.map(option=>option.value),['project','files','pdf','png']);
+ assert.deepEqual(extent.children.map(option=>option.value),['project','schematic','selected','current']);
  assert.deepEqual(footer.children.map(button=>button.textContent),['BoM CSV…','Download']);
  assert.equal(host.hidden,false);
  dialog.children[0].children[1].click();

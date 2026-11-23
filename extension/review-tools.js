@@ -130,5 +130,32 @@
   for(const primitive of primitives){if(primitive.frame&&!paper)continue;view.paint.call(painter,primitive,{color:view.netClassColors?.get(primitive)||null});}
   return{canvas,widthMM:box.w,heightMM:box.h};
  }
- root.KiCadReviewTools={papers,area,page,crop,capture,ruler,angle,snap,boardExtents,measurementHistory,rasterPDF,drawingImage};if(typeof module==='object'&&module.exports)module.exports=root.KiCadReviewTools;
+ // Store only selected source files. ZIP paths stay relative on every platform.
+ function zipFiles(entries){
+  if(!Array.isArray(entries)||!entries.length||entries.length>256)throw Error('Choose between 1 and 256 project files.');
+  const encode=value=>new TextEncoder().encode(value),seen=new Set(),items=[];let total=0,size=22;
+  const table=Uint32Array.from({length:256},(_,n)=>{for(let bit=0;bit<8;bit++)n=(n&1)?0xedb88320^(n>>>1):n>>>1;return n>>>0;});
+  for(const entry of entries){
+   const path=entry?.path;
+   if(typeof path!=='string'||!path||path.length>1024||/[\\\x00-\x1f\x7f:]/.test(path)||path.startsWith('/')||path.split('/').some(part=>!part||part==='.'||part==='..'||/[. ]$/.test(part)||/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part)))throw Error('Unsafe project file path.');
+   const identity=path.normalize('NFC').toLowerCase();if(seen.has(identity))throw Error('Duplicate project file path.');seen.add(identity);
+   const name=encode(path),data=typeof entry.content==='string'?encode(entry.content):entry.content;
+   if(name.length>65535||!(data instanceof Uint8Array)||data.length>8*1024*1024||(total+=data.length)>32*1024*1024)throw Error('Project file ZIP exceeds the 8 MiB/file or 32 MiB total budget.');
+   let crc=0xffffffff;for(const byte of data)crc=table[(crc^byte)&255]^(crc>>>8);crc=(crc^0xffffffff)>>>0;
+   items.push({name,data,crc});size+=30+name.length+data.length+46+name.length;
+  }
+  const bytes=new Uint8Array(size),view=new DataView(bytes.buffer);let offset=0;
+  const u16=(at,value)=>view.setUint16(at,value,true),u32=(at,value)=>view.setUint32(at,value,true);
+  for(const item of items){
+   item.offset=offset;u32(offset,0x04034b50);u16(offset+4,20);u16(offset+6,0x800);u16(offset+12,0x21);u32(offset+14,item.crc);u32(offset+18,item.data.length);u32(offset+22,item.data.length);u16(offset+26,item.name.length);
+   bytes.set(item.name,offset+30);bytes.set(item.data,offset+30+item.name.length);offset+=30+item.name.length+item.data.length;
+  }
+  const central=offset;
+  for(const item of items){
+   u32(offset,0x02014b50);u16(offset+4,20);u16(offset+6,20);u16(offset+8,0x800);u16(offset+14,0x21);u32(offset+16,item.crc);u32(offset+20,item.data.length);u32(offset+24,item.data.length);u16(offset+28,item.name.length);u32(offset+42,item.offset);
+   bytes.set(item.name,offset+46);offset+=46+item.name.length;
+  }
+  u32(offset,0x06054b50);u16(offset+8,items.length);u16(offset+10,items.length);u32(offset+12,offset-central);u32(offset+16,central);return bytes;
+ }
+ root.KiCadReviewTools={papers,area,page,crop,capture,ruler,angle,snap,boardExtents,measurementHistory,rasterPDF,zipFiles,drawingImage};if(typeof module==='object'&&module.exports)module.exports=root.KiCadReviewTools;
 })(globalThis);

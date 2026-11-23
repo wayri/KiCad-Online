@@ -53,7 +53,7 @@
   doc.body.setAttribute('data-workspace-context',context);
   for(const id of workspaceActions){const node=doc.getElementById(id);if(!node)continue;const hidden=context!=='standalone';if(node.dataset.contextHidden!==String(hidden))node.dataset.contextHidden=String(hidden);}
  }
- const secondary=['openTestpoints','filterTestpoints','highlightTestpoints','populationHighlight','toggleRuleMarkers','openBoardAnalytics','openRepositoryExplorer','openCalculators','openEngineeringTools','openReviewHandoff','settingsButton','themeButton','openSavedReports','openBomManager','viewRuleChecks'];
+ const secondary=['openTestpoints','filterTestpoints','highlightTestpoints','populationHighlight','toggleRuleMarkers','openBoardAnalytics','openRepositoryExplorer','openEngineeringTools','openReviewHandoff','settingsButton','themeButton','openSavedReports','openBomManager','viewRuleChecks'];
  function install(doc,host=root){
   if(host.KiCadAndroidRuntime||doc.body.classList.contains('android-design'))return null;
   doc.body.setAttribute('data-workspace-chrome','');
@@ -100,14 +100,9 @@
   const about=create('button','workspace-menu-about','About KiCad Online');about.type='button';about.setAttribute('data-icon','info');about.onclick=()=>{close();host.KiCadProductInfo?.showAbout();};
   const trigger=create('button','workspace-more-tools icon-only','More tools');trigger.type='button';trigger.id='workspaceMoreTools';trigger.title='More tools';trigger.setAttribute('aria-label','More tools');trigger.setAttribute('aria-expanded','false');trigger.setAttribute('aria-controls',menu.id);trigger.setAttribute('data-icon','tools');
   const moved=[];
-  const quick=create('div','workspace-quick-tools');
-  for(const [id,label,icon]of [['viewRuleChecks','Rules','rules'],['openBomManager','BoM','assembly'],['openSavedReports','Reports','analytics']]){
-   const action=create('button','',label);action.type='button';action.setAttribute('data-icon',icon);action.title=label;action.setAttribute('aria-label',label==='Reports'?'Saved analysis and KiCad Monkey reports':label==='Rules'?'Rules and ERC or DRC findings':label==='3D'?'Switch 2D and 3D view':label);
-   action.onclick=()=>{const target=doc.getElementById(id);if(target&&!target.disabled&&!target.hidden)target.click();};action.dataset.target=id;quick.append(action);
-  }
   const search=create('input','workspace-tool-search');search.type='search';search.placeholder='Find a tool…';search.setAttribute('aria-label','Find drawing tool');
   const noTools=create('p','workspace-tools-empty','No matching tools');noTools.hidden=true;noTools.setAttribute('role','status');
-  menu.append(search,quick,noTools,about);
+  menu.append(search,noTools,about);
   function move(node,parent,before=null){moved.push({node,parent:node.parentNode,next:node.nextSibling});parent.insertBefore(node,before);}
   function reconcile(){
    syncViewNavigation();syncContextControls(doc,context);
@@ -123,7 +118,7 @@
   const settings=doc.getElementById('settingsButton');rail.insertBefore(trigger,settings?.parentNode===rail?settings:null);doc.body.append(menu);
   function close(restore=false){if(menu.hidden)return;menu.hidden=true;trigger.setAttribute('aria-expanded','false');if(restore)trigger.focus();}
   function place(){if(menu.hidden)return;const rect=trigger.getBoundingClientRect(),width=host.visualViewport?.width||host.innerWidth,height=host.visualViewport?.height||host.innerHeight;menu.style.maxWidth=Math.max(1,width-16)+'px';menu.style.maxHeight=Math.max(1,height-16)+'px';menu.style.overflowY='auto';const box=host.KiCadResponsiveControls?.fitBounds?.({left:rect.left-menu.offsetWidth-6,top:rect.top,width:menu.offsetWidth,height:menu.offsetHeight},{left:0,top:0,width,height});if(box){menu.style.right='auto';menu.style.left=box.left+'px';menu.style.top=box.top+'px';}else{menu.style.right=Math.max(8,width-rect.left+6)+'px';menu.style.top=Math.max(8,Math.min(rect.top,height-menu.offsetHeight-8))+'px';}}
-  function filter(){const nodes=[...menu.querySelectorAll('button')],query=search.value.trim().toLowerCase();for(const node of nodes)if(node.dataset.searchHidden){node.hidden=false;delete node.dataset.searchHidden;}for(const node of nodes){const target=node.dataset.target&&doc.getElementById(node.dataset.target),unavailable=Boolean(node.dataset.target&&(!target||target.hidden||target.dataset.contextHidden==='true')),filtered=Boolean(query&&!((node.getAttribute('aria-label')||'')+' '+node.textContent+' '+node.title).toLowerCase().includes(query));node.hidden=unavailable||filtered||node.dataset.contextHidden==='true';if(filtered&&!unavailable)node.dataset.searchHidden='true';if(node.dataset.target)node.disabled=!target||target.disabled;}quick.hidden=[...quick.children].every(node=>node.hidden);noTools.hidden=!nodes.every(node=>node.hidden);place();}
+  function filter(){const nodes=[...menu.querySelectorAll('button')],query=search.value.trim().toLowerCase();for(const node of nodes)if(node.dataset.searchHidden){node.hidden=false;delete node.dataset.searchHidden;}for(const node of nodes){const target=node.dataset.target&&doc.getElementById(node.dataset.target),unavailable=Boolean(node.dataset.target&&(!target||target.hidden||target.dataset.contextHidden==='true')),filtered=Boolean(query&&!((node.getAttribute('aria-label')||'')+' '+node.textContent+' '+node.title).toLowerCase().includes(query));node.hidden=unavailable||filtered||node.dataset.contextHidden==='true';if(filtered&&!unavailable)node.dataset.searchHidden='true';if(node.dataset.target)node.disabled=!target||target.disabled;}noTools.hidden=!nodes.every(node=>node.hidden);place();}
   search.oninput=filter;
   function open(){menu.hidden=false;search.value='';filter();trigger.setAttribute('aria-expanded','true');place();search.focus();}
   trigger.onclick=()=>menu.hidden?open():close();
@@ -146,7 +141,7 @@
   }
   const selection=doc.getElementById('selectionMode');if(selection){selection.setAttribute('aria-label','Select parts or nets');selection.options[0].textContent='Smart select';selection.options[1].textContent='Parts';selection.options[2].textContent='Nets';}
   const options=doc.getElementById('reviewToolsButton');if(options){options.classList.add('workspace-view-options');options.setAttribute('data-icon','settings');options.setAttribute('aria-label','View options, object visibility and variants');options.title='View options, object visibility, variants and rendering notes';}
-  host.KiCadUIIcons?.decorate?.(viewNavigation);host.KiCadUIIcons?.decorate?.(trigger);host.KiCadUIIcons?.decorate?.(quick);host.KiCadUIIcons?.decorate?.(options);
+  host.KiCadUIIcons?.decorate?.(viewNavigation);host.KiCadUIIcons?.decorate?.(trigger);host.KiCadUIIcons?.decorate?.(options);
   const instance={close,dispose(){observer?.disconnect();modeObserver?.disconnect();detachUI?.dispose();viewNavigation.remove();simulationDialog?.remove();host.removeEventListener('kicad-review:simulation-view',openSimulation);close();doc.removeEventListener('pointerdown',outside);doc.removeEventListener('keydown',keys,true);host.removeEventListener('resize',place);for(const item of moved.reverse())item.parent.insertBefore(item.node,item.next?.parentNode===item.parent?item.next:null);menu.remove();trigger.remove();display.remove();installations.delete(toolbar);}};
   installations.set(toolbar,instance);return instance;
  }

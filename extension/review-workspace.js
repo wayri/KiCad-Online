@@ -2476,23 +2476,6 @@
       const url=root.KiCadProjectLaunch?.repositoryProjectsURL({repository,ref,file:rootFile,...providerContext},p=>chrome.runtime.getURL(p));
       root.open(url||chrome.runtime.getURL('dashboard.html'),'_blank','noopener');
     });home.id='openProjectDashboard';home.setAttribute('data-icon','dashboard');home.setAttribute('aria-label','Projects in this repository');home.title='Projects in this repository';document.querySelector('#frameControls .frame-actions').prepend(home);}
-    let nativeOpenBusy=false;
-    const cancelNativeOpen=()=>{if(nativeOpenBusy)chrome.runtime.sendMessage({type:'native-kicad-cancel'}).catch(()=>{});};
-    if(!root.KiCadLocalRuntime&&!root.KiCadAndroidRuntime&&!root.KiCadVSCodeContext&&['chrome-extension:','moz-extension:'].includes(root.location?.protocol)){
-      const openLocal=button('Open in KiCad',()=>{
-        const contextQuery=new URLSearchParams(root.location.search),source={repository:contextQuery.get('repository'),ref:contextQuery.get('ref')||contextQuery.get('head'),file:contextQuery.get('file'),...(contextQuery.get('provider')==='gitlab'?{provider:'gitlab',host:contextQuery.get('host')||'https://gitlab.com'}:{})};
-        const dialog=make('dialog');dialog.className='bom-manager';dialog.setAttribute('aria-label','Open project in local KiCad');const heading=make('header'),body=make('section'),footer=make('footer'),status=make('p');heading.className='bom-manager-heading';const close=button('Close',()=>dialog.close());heading.append(make('h2','Open in KiCad'),close);
-        body.append(make('p','Save this complete project revision as a ZIP, then open an extracted copy in your installed KiCad. The browser asks where to save the ZIP. Existing project folders are not overwritten.'),make('small','Requires the optional KiCad Online desktop helper and KiCad. Permissions are requested only when you continue.'),make('p','Extension ID: '+chrome.runtime.id),status);status.setAttribute('role','status');
-        const setup=make('a','Desktop helper setup');setup.href='https://github.com/wayri/KiCad-Online/blob/main/docs/OPEN-IN-KICAD.md';setup.target='_blank';setup.rel='noopener noreferrer';body.append(setup);
-        const start=button('Choose save location and open',()=>{
-          if(nativeOpenBusy)return;start.disabled=true;nativeOpenBusy=true;status.textContent='Checking desktop helper, then choosing the ZIP save location…';
-          let permissions;try{permissions=chrome.permissions.request({permissions:['downloads','nativeMessaging']});}catch(error){nativeOpenBusy=false;start.disabled=false;status.textContent=error.message;return;}
-          Promise.resolve(permissions).then(granted=>{if(!granted)throw Error('Downloads and Native Messaging permissions were not granted.');if(!dialog.isConnected)throw Error('Open in KiCad cancelled.');return request('native-kicad-open',{...source,confirmed:true});}).then(result=>{status.textContent=result.opened?'Project saved and opened in KiCad.':'KiCad did not confirm opening.';}).catch(error=>{status.textContent=error.message;}).finally(()=>{nativeOpenBusy=false;if(dialog.isConnected)start.disabled=false;});
-        });
-        if(!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/i.test(source.ref||'')){start.disabled=true;status.textContent='Open a project at a saved commit before launching KiCad.';}
-        footer.append(start);dialog.append(heading,body,footer);dialog.addEventListener('close',()=>{cancelNativeOpen();dialog.remove();},{once:true});dialog.addEventListener('click',event=>{if(event.target===dialog){const box=dialog.getBoundingClientRect();if(event.clientX<box.left||event.clientX>box.right||event.clientY<box.top||event.clientY>box.bottom)dialog.close();}});document.body.append(dialog);dialog.showModal();
-      });openLocal.id='openInKiCad';openLocal.title='Download project and open in installed KiCad';openLocal.setAttribute('aria-label','Open project in local KiCad');openLocal.setAttribute('data-icon','native-kicad');openLocal.className='icon-only';$('drawingTools').append(openLocal);root.addEventListener('pagehide',cancelNativeOpen);
-    }
     const nativeGit=Boolean(root.KiCadVSCodeContext?.canOpenHistorical&&!root.KiCadAndroidRuntime);
     async function openCommit(sha){
       if(!root.KiCadRevisionActions?.validSHA(sha))throw Error('Choose a saved commit.');
@@ -2559,63 +2542,18 @@
     const filterTestpoints=button('Testpoints',()=>{$('androidToolsSheet')?.close?.();$('objectFilter').value='testpoints';$('allSheets').checked=false;$('partSearch').value='';renderObjects();navigate('parts');$('partSearch').focus();});filterTestpoints.id='filterTestpoints';filterTestpoints.setAttribute('data-icon','search');filterTestpoints.setAttribute('aria-label','Filter to testpoints');filterTestpoints.title='Show testpoints on this drawing, then search by reference, value or net';filterTestpoints.disabled=!root.KiCadTestpointTools?.classify;$('partsPane').insertBefore(filterTestpoints,$('objectFilter'));
     const photoButton=button('Photo & AR review',()=>{refreshNets();root.KiCadPhotoReview.open({objects,files,variants:model.variants.map(v=>({...v,objects:KiCadDesignModel.applyVariant(model,v.id)})),selectedVariant:variant,onDiscussion:({report,capture,path})=>editComment({id:crypto.randomUUID(),createdAt:new Date().toISOString(),threadType:'discussion',text:report.markdown+'\n\nAttached: compressed top/bottom contact sheet. Export the JSON log separately for complete evidence.',severity:'info',tags:['assembly-inspection'],capture,anchor:{...anchor(null,null),file:path,uuid:null,reference:null,position:null,area:null,kind:'drawing'}}),scope:JSON.stringify([provider,host,repository,ref]),testpoints:root.KiCadTestpointTools.summarize({objects,nets:netModel.nets,designs:options.getDesigns?.()}).rows,onLocate:object=>selectObject(object,true,true),onSchematic:schematicMatches,onExport:engineeringExport});});photoButton.id='openPhotoReview';photoButton.disabled=!pcb;
     const engineeringButton=button('Engineering tools',()=>{$('androidToolsSheet')?.close?.();root.KiCadEngineeringLauncher?.openMenu({repository,ref,file:currentFile(),provider,host});});engineeringButton.id='openEngineeringTools';engineeringButton.setAttribute('data-icon','gear');engineeringButton.className='icon-only';engineeringButton.title='PDF, Gerber analyzer, BoM import and calculators';engineeringButton.disabled=!root.KiCadEngineeringLauncher;
-    const calculatorButton=button('Calculators',()=>{$('androidToolsSheet')?.close?.();root.KiCadEngineeringLauncher?.open('calculator-viewer.html',{repository,ref,provider,host});});calculatorButton.id='openCalculators';calculatorButton.setAttribute('data-icon','calculator');calculatorButton.className='icon-only';calculatorButton.setAttribute('aria-label','Open engineering calculators');calculatorButton.title='Offline engineering calculators';calculatorButton.disabled=!root.KiCadEngineeringLauncher;$('drawingTools').append(calculatorButton);
     const handoffButton=button('Transfer review',openReviewHandoff);handoffButton.id='openReviewHandoff';handoffButton.setAttribute('data-icon','send');handoffButton.className='icon-only';handoffButton.title='Transfer verified review state between app and extension';handoffButton.disabled=!root.KiCadReviewHandoff;$('drawingTools').append(engineeringButton,handoffButton);
     testpointButton.title='Testpoints: filter saved nets and locate connected parts';testpointButton.setAttribute('aria-label','Testpoints and connected nets');testpointButton.setAttribute('data-icon','inspect');testpointButton.className='icon-only';testpointButton.disabled=!root.KiCadTestpointTools;
-    let drawingDownloadDialog=null;
-    resizeCleanups.push(()=>{drawingDownloadDialog?.remove();drawingDownloadDialog=null;});
-    function openDrawingDownload(){
+    let drawingDownloadDialog=null,downloadModule=null,downloadDisposed=false;
+    resizeCleanups.push(()=>{downloadDisposed=true;drawingDownloadDialog?.close();drawingDownloadDialog=null;});
+    async function openDrawingDownload(){
       if(drawingDownloadDialog?.open)return;
       $('androidToolsSheet')?.close?.();
-      const dialog=make('dialog');dialog.className='drawing-download-dialog';dialog.setAttribute('aria-labelledby','drawingDownloadTitle');
-      const header=make('header'),body=make('section'),footer=make('footer'),status=make('p'),format=make('select'),extent=make('select');
-      const title=make('h2','Download drawing');
-      title.id='drawingDownloadTitle';header.append(title,button('Close',()=>dialog.close()));
-      for(const [value,label]of [['pdf','PDF (raster drawing)'],['png','PNG image']]){
-        const option=make('option',label);option.value=value;format.append(option);
-      }
-      for(const [value,label]of [['full',pcb?'Full PCB layout':'Full current schematic sheet'],['viewport','Current 2D viewport']]){
-        const option=make('option',label);option.value=value;extent.append(option);
-      }
-      format.setAttribute('aria-label','Drawing download format');extent.setAttribute('aria-label','Drawing download extent');
-      status.setAttribute('role','status');status.className='drawing-download-status';
-      const formatLabel=make('label','Format'),extentLabel=make('label','Include'),details=make('details');
-      formatLabel.append(format);extentLabel.append(extent);
-      details.append(make('summary','Export details'),make('p','Exports the current saved drawing using visible layers and objects. Review panels and highlights are excluded. PDF and PNG use raster rendering up to 4096 pixels per edge and 12 megapixels.'));
-      body.append(formatLabel,extentLabel,details,status);
-      let native=Boolean(root.KiCadVSCodeContext);try{native=native||Boolean(root.top.AndroidKiCad||root.top.KiViewIOS);}catch{}
-      const generate=button('Download',async()=>{
-        const outputFormat=format.value,scope=extent.value;
-        generate.disabled=format.disabled=extent.disabled=true;status.textContent='Rendering drawing…';
-        try{
-          await new Promise(resolve=>setTimeout(resolve,0));
-          if(drawingDownloadDialog!==dialog||!dialog.open)return;
-          const image=root.KiCadReviewTools.drawingImage(getCanvas(),{scope});let blob;
-          if(outputFormat==='pdf'){
-            const data=image.canvas.toDataURL('image/jpeg',.94),raw=root.atob(data.slice(data.indexOf(',')+1)),bytes=Uint8Array.from(raw,c=>c.charCodeAt(0));
-            blob=new Blob([root.KiCadReviewTools.rasterPDF(bytes,image.canvas.width,image.canvas.height,image.widthMM,image.heightMM)],{type:'application/pdf'});
-          }else blob=await new Promise((resolve,reject)=>image.canvas.toBlob(value=>value?resolve(value):reject(Error('Image encoding failed.')),'image/png'));
-          if(drawingDownloadDialog!==dialog||!dialog.open)return;
-          const name=currentFile().split('/').at(-1).replace(/[^A-Za-z0-9_.-]/g,'_').slice(0,140).replace(/\.[^.]+$/,'')+'.'+outputFormat,link=make('a'),url=URL.createObjectURL(blob);
-          link.href=url;link.download=name;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
-          status.textContent='Generated '+name+' · '+image.canvas.width+' × '+image.canvas.height+' pixels.';
-        }catch(error){status.textContent=error.message;}
-        finally{generate.disabled=format.disabled=extent.disabled=false;}
-      });
-      if(native){generate.disabled=true;status.textContent='PDF and PNG downloads are available in the browser viewer.';}
-      footer.append(button('BoM CSV…',()=>{dialog.close();openBomManager();notice('Choose your BoM columns and filters, then select Import / export → Export visible CSV.');}),generate);
-      dialog.append(header,body,footer);
-      dialog.addEventListener('keydown',event=>{if(event.key==='Escape')event.stopPropagation();});
-      dialog.addEventListener('click',event=>{
-        if(event.target!==dialog)return;
-        const rect=dialog.getBoundingClientRect();
-        if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)dialog.close();
-      });
-      dialog.addEventListener('close',()=>{
-        if(drawingDownloadDialog===dialog)drawingDownloadDialog=null;
-        dialog.remove();
-      },{once:true});
-      drawingDownloadDialog=dialog;document.body.append(dialog);dialog.showModal();format.focus();
+      try{
+        if(!root.KiCadProjectDownload){downloadModule??=import(chrome.runtime.getURL('project-download.js')).catch(error=>{downloadModule=null;throw error;});await downloadModule;}
+        if(downloadDisposed||drawingDownloadDialog?.open)return;
+        drawingDownloadDialog=root.KiCadProjectDownload.open({request,scope:{repository,ref,file:currentFile(),...providerContext},remote:remoteAvailable,rootFile,getCanvas,onBom:openBomManager,focus:()=>downloadDrawingButton.focus()});
+      }catch(error){notice(error.message);}
     }
     fastPISession=pcb?root.KiCadFastPIWorkspace?.mount({files,currentFile,getCanvas,getScene:()=>scene,getNets:()=>netModel.nets,getSelectedNet:()=>selectedNet}):null;
     const fastPIButton=button('Fast DC drop',()=>{try{if(!fastPISession){notice('Fast DC drop needs a PCB layout. Open Layout, then Simulation → Fast DC drop.');return;}fastPISession.open();}catch(error){notice(error.message);}});fastPIButton.id='openFastPI';fastPIButton.title='Experimental DC copper screening with two picked contacts';fastPIButton.setAttribute('data-icon','fast-pi');fastPIButton.disabled=!root.KiCadFastPIWorkspace;$('drawingTools').append(fastPIButton);
@@ -2643,7 +2581,7 @@
     }
 
     const draftsmanButton=button('Draftsman',async()=>{if(!root.KiCadDraftsmanWorkspace)return;draftsmanButton.disabled=true;try{draftsmanSession=await root.KiCadDraftsmanWorkspace.open({source:{provider:repository==='local/workspace'?'local':provider,host,repository,ref},files,currentFile:currentFile(),getDesigns:()=>options.getDesigns?.()||new Map(),getCanvas,objects:model.objects,request,canSaveRepository:Boolean(remoteAvailable&&!root.KiCadVSCodeContext&&!root.KiCadAndroidRuntime&&!root.KiCadLocalRuntime),onClose:()=>{draftsmanSession=null;draftsmanButton.disabled=false;}});}catch(error){notice(error.message);draftsmanButton.disabled=false;}});draftsmanButton.id='openDraftsman';draftsmanButton.setAttribute('data-icon','draftsman');draftsmanButton.title='Draftsman: drawing sheets, dimensions, notes, BoM and PDF/SVG export';draftsmanButton.disabled=!root.KiCadDraftsmanWorkspace;$('drawingTools').append(draftsmanButton);
-    const downloadDrawingButton=button('Download',openDrawingDownload);downloadDrawingButton.id='downloadDrawing';downloadDrawingButton.title='Generate schematic/layout PDF or PNG, or export BoM CSV';downloadDrawingButton.setAttribute('aria-label','Download drawing or BoM');downloadDrawingButton.setAttribute('data-icon','download');downloadDrawingButton.className='icon-only';$('drawingTools').append(downloadDrawingButton);
+    const downloadDrawingButton=button('Download',openDrawingDownload);downloadDrawingButton.id='downloadDrawing';downloadDrawingButton.title='Download project, selected files, interactive PDF or PNG';downloadDrawingButton.setAttribute('aria-label','Download project or drawing');downloadDrawingButton.setAttribute('data-icon','download');downloadDrawingButton.className='icon-only';$('drawingTools').append(downloadDrawingButton);
     const bomManagerButton=button('Assembly',openBomManager);bomManagerButton.id='openBomManager';bomManagerButton.title='BoM and assembly: quantities, variants and unfinished parts';bomManagerButton.setAttribute('aria-label','Open BoM and assembly');bomManagerButton.setAttribute('data-icon','assembly');bomManagerButton.className='icon-only';bomManagerButton.disabled=!root.KiCadBomManager;
     // Core bench actions stay one click away. Camera inspection is secondary.
     $('drawingTools').insertBefore(bomManagerButton,$('drawingTools').firstChild);$('drawingTools').insertBefore(testpointButton,bomManagerButton.nextSibling);$('drawingTools').insertBefore(highlightTestpoints,testpointButton.nextSibling);
@@ -2909,7 +2847,7 @@
       },
       comment3D(record){let object=resolveObject(objects,rootFile,record);const pinNumber=record?.pinNumber??(record?.type==='Pad'?record.name:null);if(object&&pinNumber!=null){const position=object.position;if(object.parentId)object=objects.find(o=>o.id===object.parentId&&o.path===rootFile);if(object)editComment(null,anchor(position,{...object,kind:'pad',reference:object.reference+'.'+pinNumber,uuid:record.uuid||object.uuid}));return;}if(object){editComment(null,anchor(object.position,object));return;}const net=savedNetFor3D(netModel.nets,rootFile,record);if(net){editComment(null,KiCadReviewComments.normalizeAnchor({...anchor(null,{path:rootFile,kind:'drawing'}),kind:'net',netName:net.name}));return;}notice("This 3D object has no unambiguous saved anchor; switch to 2D to place a comment.");},
       setScene(next){attach?.hideMagnifier?.();scene=next;fastPISession?.viewportChanged?.();applyObjectVisibility();if(simulationNet)showSimulation(simulationNet);scene?.setSelectionMode?.($('selectionMode').value||'all');$("measureButton").setAttribute("aria-pressed","false");$("highlightControls").hidden=Boolean(scene&&!scene.setSelection);$("highlightDnp").disabled=Boolean(scene);$("measureButton").disabled=Boolean(scene&&!scene.setMeasurementMode);for(const id of ["navLayers","pointComment","areaComment","drawCommentArea"])$(id).disabled=Boolean(scene);$("navNets").disabled=Boolean(scene&&!scene.setSelection);if(scene&&!["parts","files","bom"].includes(navigatorTab))navigate("parts");if(scene){setCommentMode(null);measureMode=false;measurePoints=[];getCanvas()?.canvas.classList?.toggle("ruler-mode",false);measurePreview=rulerSnap=boardMeasure=null;$("rulerControls").hidden=true;$("measureButton").setAttribute("aria-pressed","false");$("measurementStatus").textContent="";scene.setPopulation(objects.filter((item)=>item.kind==="footprint").map((item)=>({reference:item.reference,populated:item.populated})));}updateHighlights();draw();},
-      dispose(){pinFunctionsDialog?.remove();variableDialog?.remove();variableButton?.remove();variableResolvers.clear();navigationHelp?.dispose();fastPISession?.dispose();draftsmanSession?.dispose();reviewStatesDisposed=true;reviewThreadStates.clear();commentFocus?.dispose();cancelNativeOpen();root.removeEventListener?.('pagehide',cancelNativeOpen);projectFilesDisposed=true;objectVisibilityDisposed=true;root.removeEventListener?.('kicad-review:analysis-net-focus',analysisNetFocus);simulationTicket++;simulationView?.dispose();chatPanel?.dispose();conversationTicket++;if(root.KiCadChatDraft===chatDraftFacade){if(previousChatDraft)root.KiCadChatDraft=previousChatDraft;else delete root.KiCadChatDraft;}root.removeEventListener?.('pointerdown',outsideTouchPicker,true);dismissTouchPicker();netColorDisposed=true;netColorTicket++;threadTicket++;releasePastePreview();pasteGeneration++;mentionDisposed=true;mentionGeneration++;clearTimeout(mentionTimer);loadId++;remoteLoad++;netBuilder?.clear();reviewToolsObserver?.disconnect();sidebarObserver?.disconnect();root.removeEventListener?.('resize',layoutSidebars);root.removeEventListener?.('resize',ruleResize);ruleWindowObserver?.disconnect();for(const cleanup of resizeCleanups)cleanup();root.removeEventListener?.('keydown',reviewKeydown);narrowPanels.removeEventListener?.("change",keepDrawingVisible);navigation?.dispose();attach?.dispose();}}
+      dispose(){pinFunctionsDialog?.remove();variableDialog?.remove();variableButton?.remove();variableResolvers.clear();navigationHelp?.dispose();fastPISession?.dispose();draftsmanSession?.dispose();reviewStatesDisposed=true;reviewThreadStates.clear();commentFocus?.dispose();projectFilesDisposed=true;objectVisibilityDisposed=true;root.removeEventListener?.('kicad-review:analysis-net-focus',analysisNetFocus);simulationTicket++;simulationView?.dispose();chatPanel?.dispose();conversationTicket++;if(root.KiCadChatDraft===chatDraftFacade){if(previousChatDraft)root.KiCadChatDraft=previousChatDraft;else delete root.KiCadChatDraft;}root.removeEventListener?.('pointerdown',outsideTouchPicker,true);dismissTouchPicker();netColorDisposed=true;netColorTicket++;threadTicket++;releasePastePreview();pasteGeneration++;mentionDisposed=true;mentionGeneration++;clearTimeout(mentionTimer);loadId++;remoteLoad++;netBuilder?.clear();reviewToolsObserver?.disconnect();sidebarObserver?.disconnect();root.removeEventListener?.('resize',layoutSidebars);root.removeEventListener?.('resize',ruleResize);ruleWindowObserver?.disconnect();for(const cleanup of resizeCleanups)cleanup();root.removeEventListener?.('keydown',reviewKeydown);narrowPanels.removeEventListener?.("change",keepDrawingVisible);navigation?.dispose();attach?.dispose();}}
   }
   function measurementCandidates(canvas,at,pixels=8,constrain=false){
     const radius=Math.max(4,Math.min(32,pixels))/Math.max(.001,canvas.viewport.camera.zoom),all=canvas.design?.primitives||canvas.primitives||[];

@@ -79,7 +79,8 @@ def payload(root: Path = ROOT) -> dict[str, bytes]:
     files.discard('html-sandbox.html')
     files.discard('html-sandbox.js')
     # Firefox supplies its own maintained PDF renderer; do not fork PDF.js.
-    files = {name for name in files if not name.startswith('vendor/pdfjs/')}
+    font_assets = {'vendor/pdfjs/standard_fonts/LiberationSans-Regular.ttf', 'vendor/pdfjs/standard_fonts/LICENSE_LIBERATION'}
+    files = {name for name in files if not name.startswith('vendor/pdfjs/')} | font_assets
     manifest['background'] = {'scripts': [SHIM, *dependencies, worker]}
     manifest['browser_specific_settings'] = {'gecko_android': {'strict_min_version': '142.0'}, 'gecko': {
         'id': ADDON_ID,
