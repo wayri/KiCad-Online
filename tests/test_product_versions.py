@@ -21,6 +21,8 @@ class ProductVersionTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name); self.common = load('package_extension')
         self.put('extension/vendor/pdfjs/FILES.json', '{"files":[]}')
+        for name in ('LiberationSans-Regular.ttf', 'LICENSE_LIBERATION'):
+            self.put(f'extension/vendor/pdfjs/standard_fonts/{name}', b'Firefox PDF font fixture')
         self.manifest = {'version':'0.12.78','background':{'service_worker':'background.js'},'content_scripts':[],
                          'icons':{},'permissions':['offscreen'],'content_security_policy':{'extension_pages':"script-src 'self'",'sandbox':"sandbox allow-scripts"}}
         self.put('extension/manifest.json', json.dumps(self.manifest))

@@ -1,16 +1,12 @@
 # Install KiCad Online
 
-Browser patch 0.20.1 adds compact project downloads and interactive PDFs. Its
-Chrome/Chromium and Firefox packages supersede the 0.20.0 browser ZIPs. Android,
-VS Code and other platform assets remain at their last separately published versions.
+Release package for browser extensions and VS Code is **0.20.2**. Store
+submission and approval are separate from GitHub downloads. See [release status](RELEASE-STATUS.md).
 
-Release package: **extension 0.20.0 / Android 1.104**. Store submission
-and approval are separate from GitHub downloads. See [release status](RELEASE-STATUS.md).
-
-Download `kicad-visual-review-chrome-edge-brave-opera-vivaldi-chromium-0.20.0.zip`,
-or `kicad-visual-review-firefox-0.20.0.zip` / `kicad-visual-review-vscode-0.20.0.vsix`
-from [the 0.20.0 GitHub release](https://github.com/wayri/KiCad-Online/releases/tag/v0.20.0).
-Android: `pocket-kivi-android-phone-tablet-1.104-development.apk` is included in the matching release.
+Download `kicad-visual-review-chrome-edge-brave-opera-vivaldi-chromium-0.20.2.zip`,
+or `kicad-visual-review-firefox-0.20.2.zip` / `kicad-visual-review-vscode-0.20.2.vsix`
+from [the 0.20.2 GitHub release](https://github.com/wayri/KiCad-Online/releases/tag/v0.20.2).
+Android 1.104 uses the separate [development APK](https://github.com/wayri/KiCad-Online/releases/tag/v0.20.0).
 GitHub's automatic Source code archives are source checkouts, not installable extensions.
 
 The browser and VS Code editions support Windows, Linux and macOS. Ordinary
@@ -46,7 +42,7 @@ code --install-extension wayri.kicad-visual-review
 For a downloaded VSIX, replace the filename with the actual package:
 
 ```sh
-code --install-extension ./kicad-visual-review-vscode-0.20.0.vsix
+code --install-extension ./kicad-visual-review-vscode-0.20.2.vsix
 ```
 
 On macOS, VS Code's **Shell Command: Install 'code' command in PATH** enables this optional terminal route. The Extensions UI does not need it.
@@ -68,18 +64,11 @@ Brave, Opera and Vivaldi can use the same ZIP where their extension manager supp
 
 For local projects, choose **Open folder**, **Open files**, or drag and drop supported files/folders. Folder selection preserves sheet/model paths. Files selected locally stay local unless you explicitly export/share them. The installed local workspace works without internet. See [local workspace details](LOCAL-VIEWER.md).
 
-### Open in KiCad setup
+### Download and open projects
 
-The browser viewer's **Open in KiCad** button saves the repository at its viewed
-commit through the browser's Save As dialog, then asks the optional desktop helper
-to validate/extract that ZIP into a new sibling folder and launch installed KiCad.
-It never overwrites an existing project folder. The feature requests Downloads and
-Native Messaging permissions only when used; ordinary viewing needs neither.
-Install the Windows helper once using [Open in KiCad setup](OPEN-IN-KICAD.md).
-Managed browsers can block native messaging. macOS/Linux native installation and
-an installed-browser launch have not yet been validated; use manual ZIP extraction
-and opening in KiCad there. A missing helper produces setup instructions rather
-than claiming KiCad opened.
+Use **Download** in the browser viewer to save a complete remote repository ZIP,
+selected KiCad sources, or drawing exports. Extract the source ZIP, then open
+the project from desktop KiCad. See the [download and export guide](OPEN-IN-KICAD.md).
 
 For online projects, open a normal repository file page for `.kicad_sch` or `.kicad_pcb`, rather than a raw download URL. Allow the declared host access. Public viewing needs no connected account. Supported private session reads require an explicitly approved matching signed-in tab; API history, binary assets and publication may still require a connected account. Android has its own authorization flow. See [Git host support](GIT-HOSTS.md) and [GitHub sign-in](GITHUB-SIGNIN.md).
 
@@ -89,7 +78,7 @@ For online projects, open a normal repository file page for `.kicad_sch` or `.ki
 
 Install the signed store version from [Mozilla Add-ons](https://addons.mozilla.org/en-US/firefox/addon/pocket-kiview-kicad-review/). The store lists the version currently available; it may differ from GitHub while an update is under review.
 
-To try the unsigned [Firefox 0.20.0 ZIP](https://github.com/wayri/KiCad-Online/releases/download/v0.20.0/kicad-visual-review-firefox-0.20.0.zip), use desktop Firefox 140+, extract it, open `about:debugging#/runtime/this-firefox`, and select **Load Temporary Add-on → manifest.json**. Temporary installations end at browser restart.
+To try the unsigned [Firefox 0.20.2 ZIP](https://github.com/wayri/KiCad-Online/releases/download/v0.20.2/kicad-visual-review-firefox-0.20.2.zip), use desktop Firefox 140+, extract it, open `about:debugging#/runtime/this-firefox`, and select **Load Temporary Add-on → manifest.json**. Temporary installations end at browser restart.
 
 The [Firefox guide](FIREFOX.md) covers updates, local projects, Firefox-based browsers and mobile limits. Firefox Android 142+ is declared by the package; physical-device extension testing is not complete. The separate Android APK is available below. Keep signature checks and organization policies enabled.
 
