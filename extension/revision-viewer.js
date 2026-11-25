@@ -163,13 +163,13 @@
     const floatingLayers=document.createElement('div'),floatingButtons=new Map(),floatingEyes=new Map();
     floatingLayers.id='floatingLayerSelector';floatingLayers.className='floating-layer-selector';
     floatingLayers.setAttribute('role','group');floatingLayers.setAttribute('aria-label','PCB layer selector');
-    floatingLayers.title='Highlight a layer or use its eye to show/hide it · scroll here to cycle copper layers';
+    floatingLayers.title='Choose a layer to focus. Use its eye to show or hide it.';
     let layerWheel=0,lastLayerCycle=0;
     const stepCopper=step=>{if(scene)return;const copper=(canvas.design?.layers||[]).filter(layer=>layer.endsWith('.Cu'));if(!copper.length)return;const index=copper.indexOf(canvas.focusedLayer),next=index<0?(step>0?0:copper.length-1):(index+step+copper.length)%copper.length;canvas.focusLayer(copper[next],$('layerFocusMode').value==='isolate'?'isolate':'dim');layers();canvas.draw();};
-    floatingLayers.addEventListener('wheel',event=>{if(scene||event.ctrlKey)return;event.preventDefault();event.stopPropagation();layerWheel+=(event.deltaY||event.deltaX||0)*(event.deltaMode===1?16:event.deltaMode===2?400:1);if(Math.abs(layerWheel)<30||Date.now()-lastLayerCycle<120)return;stepCopper(layerWheel>0?1:-1);layerWheel=0;lastLayerCycle=Date.now();},{passive:false});
+    floatingLayers.addEventListener('wheel',event=>{if(scene||event.ctrlKey||event.target.closest?.('.compact-layer-options'))return;event.preventDefault();event.stopPropagation();layerWheel+=(event.deltaY||event.deltaX||0)*(event.deltaMode===1?16:event.deltaMode===2?400:1);if(Math.abs(layerWheel)<30||Date.now()-lastLayerCycle<120)return;stepCopper(layerWheel>0?1:-1);layerWheel=0;lastLayerCycle=Date.now();},{passive:false});
     floatingLayers.addEventListener('keydown',event=>{if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key))return;event.preventDefault();event.stopPropagation();stepCopper(['ArrowRight','ArrowDown'].includes(event.key)?1:-1);});
     floatingLayers.hidden=true;if(pcb)host.append(floatingLayers);
-    let floatingSignature='',floatingToggle=null,floatingFocusMode=null,floatingPinOne=null,layerKeyboard=false,layerHovered=false;
+    let floatingSignature='',floatingToggle=null,floatingFocusMode=null,floatingPinOne=null;
     const compactLayerBar=!globalThis.KiCadAndroidUI;
     const placeFloatingLayers=()=>{
       if(!compactLayerBar)return;
@@ -182,24 +182,22 @@
         else right=Math.max(right,rect.right-box.left+8);
       }
       if(rect.width-left-right<140){left=10;right=10;}
-      floatingLayers.style.left=left+'px';floatingLayers.style.right=right+'px';
+      floatingLayers.style.maxWidth=Math.max(120,rect.width-left-right)+'px';floatingLayers.style.right=right+'px';
     };
     const closeFloatingLayers=()=>{floatingLayers.classList.remove('layers-expanded');floatingToggle?.setAttribute('aria-expanded','false');floatingLayers.style.left='';floatingLayers.style.right='';};
-    floatingLayers.addEventListener('pointerenter',event=>{if(!compactLayerBar||event.pointerType==='touch')return;layerHovered=true;placeFloatingLayers();floatingLayers.classList.add('layers-expanded');floatingToggle?.setAttribute('aria-expanded','true');});
-    floatingLayers.addEventListener('pointerdown',()=>{layerKeyboard=false;});
-    floatingLayers.addEventListener('pointerleave',()=>{layerHovered=false;if(compactLayerBar&&!layerKeyboard)closeFloatingLayers();});
-    floatingLayers.addEventListener('focusout',event=>{if(!layerHovered&&!floatingLayers.contains(event.relatedTarget))closeFloatingLayers();});
-    floatingLayers.addEventListener('keydown',event=>{layerKeyboard=true;if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeFloatingLayers();floatingToggle?.focus?.();}});
+    floatingLayers.addEventListener('focusout',event=>{if(event.relatedTarget&&!floatingLayers.contains(event.relatedTarget))closeFloatingLayers();});
+    floatingLayers.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeFloatingLayers();floatingToggle?.focus?.();}});
     syncFloatingLayers=()=>{
       const savedLayers=canvas.design?.layers||[];
       const hidden=!pcb||Boolean(scene)||!savedLayers.length;if(floatingLayers.hidden!==hidden)floatingLayers.hidden=hidden;if(hidden)return;
       const signature=JSON.stringify(savedLayers);
       if(signature!==floatingSignature){
         floatingSignature=signature;floatingLayers.replaceChildren();floatingButtons.clear();floatingEyes.clear();
-        const layerOptions=document.createElement('div');
+        const layerOptions=document.createElement('div'),layerRows=document.createElement('div'),layerPresets=document.createElement('div');
+        layerRows.className='compact-layer-rows';layerPresets.className='compact-layer-presets';
         if(compactLayerBar){
-          layerOptions.className='compact-layer-options';floatingToggle=document.createElement('button');floatingToggle.type='button';floatingToggle.className='compact-layer-toggle';floatingToggle.setAttribute('aria-label','Choose PCB layers');floatingToggle.setAttribute('aria-expanded','false');floatingToggle.textContent='Layers';
-          floatingToggle.onclick=()=>{const expanded=layerHovered||floatingToggle.getAttribute('aria-expanded')!=='true';floatingToggle.setAttribute('aria-expanded',String(expanded));floatingLayers.classList.toggle('layers-expanded',expanded);if(expanded)placeFloatingLayers();else{floatingLayers.style.left='';floatingLayers.style.right='';}};
+          layerOptions.className='compact-layer-options';floatingToggle=document.createElement('button');floatingToggle.type='button';floatingToggle.className='compact-layer-toggle';floatingToggle.setAttribute('aria-label','Choose PCB layers');floatingToggle.setAttribute('aria-expanded','false');floatingToggle.textContent='Layers';floatingToggle.title='Layers (L) · Cycle copper with [ and ]';
+          floatingToggle.onclick=()=>{const expanded=floatingToggle.getAttribute('aria-expanded')!=='true';floatingToggle.setAttribute('aria-expanded',String(expanded));floatingLayers.classList.toggle('layers-expanded',expanded);if(expanded)placeFloatingLayers();else{floatingLayers.style.left='';floatingLayers.style.right='';}};
           floatingLayers.classList.remove('layers-expanded');floatingLayers.append(floatingToggle,layerOptions);
         }
         const add=(name,title,action,color,targetNode)=>{
@@ -220,15 +218,16 @@
         const pinOneCaption=document.createElement('span');pinOneCaption.textContent='Pin 1 markers';
         pinOneLabel.append(floatingPinOne,pinOneCaption);
         (compactLayerBar?layerOptions:floatingLayers).append(pinOneLabel);
+        if(compactLayerBar)layerOptions.append(layerRows,layerPresets);
         for(const layer of savedLayers){
           const item=document.createElement('div'),eye=document.createElement('button');
           item.className='compact-layer-item';eye.type='button';eye.className='compact-layer-eye';eye.dataset.layerVisibility=layer;
           add(layer,'Focus layer '+layer,()=>{canvas.focusLayer(layer,$('layerFocusMode').value==='isolate'?'isolate':'dim');},KiCadPCBRenderer.colorFor?.(layer)||'#8c9cab',item);
           eye.onclick=()=>{if(scene)return;canvas.layerPresetName=null;const visible=canvas.visibleLayers.has(layer);if(visible){canvas.visibleLayers.delete(layer);if(canvas.focusedLayer===layer)canvas.focusedLayer=null;}else canvas.visibleLayers.add(layer);layers();canvas.draw();};
-          item.append(eye);(compactLayerBar?layerOptions:floatingLayers).append(item);floatingEyes.set(layer,eye);
+          item.append(eye);(compactLayerBar?layerRows:floatingLayers).append(item);floatingEyes.set(layer,eye);
         }
-        add('All','Show all saved board layers',()=>canvas.layerPreset('all'));
-        add('Overview','Show all copper layers, both silkscreens and the board outline',()=>canvas.layerPreset('overview'));
+        add('All','Show all saved board layers',()=>canvas.layerPreset('all'),null,compactLayerBar?layerPresets:null);
+        add('Overview','Show all copper layers, both silkscreens and the board outline',()=>canvas.layerPreset('overview'),null,compactLayerBar?layerPresets:null);
         add('Filled copper','Toggle saved filled copper zones',()=>canvas.setZoneVisibility({filled:canvas.showFilledCopper===false}));
         add('Zone outlines','Toggle saved zone boundary outlines',()=>canvas.setZoneVisibility({outlines:canvas.showZoneOutlines===false}));
         add('Worksheet','Show or hide the saved KiCad page and title block',()=>{preferences.worksheet=!canvas.paperVisible;canvas.setWorksheetVisible(preferences.worksheet);savePreferences();});
@@ -789,7 +788,16 @@
       if(scene){if(event.key.toLowerCase()==='f'||event.key==='Home'){event.preventDefault();scene.fit?.(event.key==='Home');}else if(['+','='].includes(event.key)){event.preventDefault();scene.zoom?.(1.25);}else if(['-','_'].includes(event.key)){event.preventDefault();scene.zoom?.(.8);}return;}
 
       if(event.key==='Escape'&&!$('viewerSettings').hidden){event.preventDefault();closeSettings();return;}
-      if(event.key==='Escape'&&canvas.focusedLayer){canvas.restoreLayers();layers();canvas.draw();}else if(['[',']'].includes(event.key)&&pcb){const choices=canvas.design.layers||[],index=choices.indexOf(canvas.focusedLayer||canvas.activeLayer);if(choices.length){event.preventDefault();canvas.focusLayer(choices[(index+(event.key===']'?1:-1)+choices.length)%choices.length],$('layerFocusMode').value||'dim');layers();canvas.draw();}}else if(event.shiftKey&&event.key.toLowerCase()==='f'&&canvas.focusedLayer){event.preventDefault();$('fitLayer').click();}else if(['+','='].includes(event.key)){event.preventDefault();zoom(1.25);}else if(['-','_'].includes(event.key)){event.preventDefault();zoom(1/1.25);}else if(event.key.toLowerCase()==='f'){event.preventDefault();fit('drawing');}else if(event.key==='Home'){event.preventDefault();fit('page');}else if(event.key.toLowerCase()==='t'){event.preventDefault();preferences.drawingTheme=dark?'light':'dark';applyTheme();savePreferences();}
+      if(pcb&&event.key.toLowerCase()==='l'){
+        event.preventDefault();
+        if(event.shiftKey){
+          const mode=$('layerFocusMode');mode.value=mode.value==='isolate'?'dim':'isolate';mode.onchange();
+        }else if(floatingToggle)floatingToggle.click();
+        else $('mainLayerBrowser')?.click();
+        return;
+      }
+      if(event.key==='Escape'&&floatingToggle?.getAttribute('aria-expanded')==='true'){event.preventDefault();closeFloatingLayers();return;}
+      if(event.key==='Escape'&&canvas.focusedLayer){canvas.restoreLayers();layers();canvas.draw();}else if(['[',']'].includes(event.key)&&pcb){event.preventDefault();stepCopper(event.key===']'?1:-1);}else if(event.shiftKey&&event.key.toLowerCase()==='f'&&canvas.focusedLayer){event.preventDefault();$('fitLayer').click();}else if(['+','='].includes(event.key)){event.preventDefault();zoom(1.25);}else if(['-','_'].includes(event.key)){event.preventDefault();zoom(1/1.25);}else if(event.key.toLowerCase()==='f'){event.preventDefault();fit('drawing');}else if(event.key==='Home'){event.preventDefault();fit('page');}else if(event.key.toLowerCase()==='t'){event.preventDefault();preferences.drawingTheme=dark?'light':'dark';applyTheme();savePreferences();}
 
     });
 

@@ -17,8 +17,8 @@
   const text=(value,max=500)=>String(value??'').slice(0,max);
   const normalizedScope=scope=>({repository:scope?.repository||'',ref:scope?.ref||'',provider:scope?.provider||'github',host:scope?.host||'https://github.com'});
   const scopeKey=scope=>JSON.stringify(Object.values(normalizedScope(scope)));
-  const reportPath=path=>/\.(wbk|raw|csv|tsv)$/i.test(path)||(/\.json$/i.test(path)&&/draftsman|simulat|spice|report|analysis|(?:^|[._/-])(?:erc|drc)(?:[._/-]|$)/i.test(path));
-  const viewFor=path=>/draftsman/i.test(path)?'draftsman':/\.(wbk|raw|csv|tsv)$/i.test(path)||/simulat|spice/i.test(path)?'simulation':undefined;
+  const reportPath=path=>/\.(wbk|raw|csv|tsv|egres|s[1-9][0-9]?p)$/i.test(path)||(/\.json$/i.test(path)&&/draftsman|simulat|spice|emerge|report|analysis|(?:^|[._/-])(?:erc|drc)(?:[._/-]|$)/i.test(path));
+  const viewFor=path=>/draftsman/i.test(path)?'draftsman':/\.(wbk|raw|csv|tsv|egres|s[1-9][0-9]?p)$/i.test(path)||/simulat|spice|emerge/i.test(path)?'simulation':undefined;
   function sameScope(source,scope){return source&&scopeKey(source)===scopeKey(scope);}
   function scopedDrafts(storage,scope){
     const drafts=[];let total=0;
@@ -208,7 +208,7 @@
   const projectStem=path=>path.replace(/\.(?:kicad_(?:pro|sch|pcb)|pro|sch)$/i,'');
   const folder=path=>path.split('/').slice(0,-1).join('/');
   function relatedInventory(inventory,paths,anchors){
-    const supported=/\.(?:kicad_pro|pro|wbk|raw|csv|tsv|json|pdf|gbr|gerber|drl|kicad_wks|kicad_dru|kicad_sym|kicad_mod|step|stp|wrl|glb|svg|png|bmp|jpe?g)$/i;
+    const supported=/\.(?:kicad_pro|pro|wbk|raw|csv|tsv|egres|s[1-9][0-9]?p|json|pdf|gbr|gerber|drl|kicad_wks|kicad_dru|kicad_sym|kicad_mod|step|stp|wrl|glb|svg|png|bmp|jpe?g)$/i;
     const entries=inventory.slice(0,LIMITS.inventory);
     const valid=entries.filter(item=>safePath(item?.path));
     const projectFile=/\.(?:kicad_pro|pro)$/i;

@@ -778,6 +778,34 @@ test('existing issue publication stores the exact comment link', async (t) => {
     remoteRefs: [result.result.remoteRef] }).remoteRefs, [result.result.remoteRef]);
 });
 
+test('connected Issue fallback requires the same GitHub login and exact comment receipt',async t=>{
+  localStore.clear();sessionStore.clear();
+  const request={comment:sampleComment(),destination:'issue',repository:'owner/board',number:9};
+  await assert.rejects(KiCadGitHubReviewApi.publish(request,'reviewer'),/Connect the extension to the same GitHub account/);
+  await message({type:'github-auth-set',token:'github_pat_'+'g'.repeat(60)},options);
+  let posts=0,receiptMatches=false;
+  withPublishingFetch(t,async(url,init)=>{
+    if(init.method==='GET'){
+      assert.equal(url,'https://api.github.com/repos/owner/board/issues/9');
+      return json({number:9,locked:false});
+    }
+    assert.equal(url,'https://api.github.com/repos/owner/board/issues/9/comments');
+    posts++;
+    return json({id:456,user:{login:'reviewer'},body:receiptMatches?JSON.parse(init.body).body:'other body',html_url:'https://github.com/owner/board/issues/9#issuecomment-456'});
+  });
+  await assert.rejects(KiCadGitHubReviewApi.publish(request,'other'),/same GitHub account/);
+  assert.equal(posts,0);
+  await assert.rejects(KiCadGitHubReviewApi.publish(request,'Reviewer'),/did not confirm the matching reply/);
+  await assert.rejects(KiCadGitHubReviewApi.publish(request,'reviewer'),/unconfirmed outcome/);
+  assert.equal(posts,1);
+  localStore.clear();
+  receiptMatches=true;
+  const result=await KiCadGitHubReviewApi.publish(request,'reviewer');
+  assert.equal(result.remoteRef.url,'https://github.com/owner/board/issues/9#issuecomment-456');
+  assert.equal((await KiCadGitHubReviewApi.publish(request,'reviewer')).duplicate,true);
+  assert.equal(posts,2);
+});
+
 test('discussion categories and both discussion publication operations use GraphQL', async (t) => {
   let clock = Date.now(); t.mock.method(Date, 'now', () => clock);
   localStore.clear(); sessionStore.clear();

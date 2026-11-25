@@ -60,6 +60,34 @@ test('3D popup layer controls hide mixed-layer instances without changing shared
  probe.setVisibleLayers(['F.Cu','F.Fab']);h.flush();assert.equal(probe.getStats().selection.matched,1);assert.deepEqual(probe.getVisibleLayers(),['F.Cu','F.Fab']);probe.dispose();h.geometry.dispose();h.material.dispose();
 });
 
+test('a late linked model replaces the selected stand-in in a layer-filtered probe',{skip:!threePath},async()=>{
+ const THREE=await import(pathToFileURL(threePath).href),{createSharedProbeViewport}=await helper(),h=viewportHarness(THREE);
+ const instances=new THREE.InstancedMesh(h.geometry,h.material,2),record={type:'Component',ref:'U2',layer:'F.Cu'};
+ instances.userData.records=[record,{type:'Component',ref:'U3',layer:'B.Cu'}];
+ instances.setMatrixAt(0,new THREE.Matrix4().makeTranslation(2,1,3));
+ h.source.add(instances);
+ const probe=createSharedProbeViewport({...h.args,selection:{references:['U2']}});
+ probe.setVisibleLayers(['F.Cu']);
+ h.flush();
+ assert.equal(probe.getStats().selection.matched,1);
+ instances.setMatrixAt(0,new THREE.Matrix4().makeScale(0,0,0));
+ instances.instanceMatrix.needsUpdate=true;
+ const model=new THREE.Mesh(h.geometry,h.material);
+ model.userData.record={...record,modelPath:'u2.wrl'};
+ h.source.add(model);
+ probe.sourceAdded(model);
+ h.flush();
+ assert.equal(probe.getStats().selection.matched,1,'only the linked model remains selected');
+ const matrix=new THREE.Matrix4();
+ h.rendered.at(-1).scene.traverse(object=>{
+  if(object.userData.records===instances.userData.records){
+   object.getMatrixAt(0,matrix);
+   assert.equal(matrix.determinant(),0,'the filtered instance buffer must also hide the resolved proxy');
+  }
+ });
+ probe.dispose();h.geometry.dispose();h.material.dispose();
+});
+
 test('probe picking keeps authoritative part, net and pin records separate', {skip:!threePath},async()=>{
  const THREE=await import(pathToFileURL(threePath).href),{createSharedProbeViewport}=await helper(),h=viewportHarness(THREE),pad=new THREE.Mesh(h.geometry,h.material),record={type:'Pad',ref:'U1',name:'1',uuid:'pad-one',net:'GND',at:[0,0],width:1,height:1};
  pad.scale.set(.1,.1,.1);pad.position.z=1;pad.userData.record=record;h.source.add(pad);const selected=[],gestures=[],probe=createSharedProbeViewport({...h.args,onSelect:(value,gesture)=>{selected.push(value);gestures.push(gesture);}});h.flush();

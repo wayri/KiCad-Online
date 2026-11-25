@@ -5,7 +5,7 @@ const pathOK=p=>typeof p==='string'&&p.length<=500&&!/[\\:\x00-\x1f]/.test(p)&&p
 const drawing=p=>/(?:\.kicad_(sch|pcb)|\.sch)$/i.test(p),textFile=p=>/\.(kicad_(sch|pcb|pro|prl|dru|wks)|sch|pro|lib|json|gbr|ger|gerber|gtl|gbl|gts|gbs|gto|gbo|gtp|gbp|gko|gm\d+|g\d+|drl|xln|csv|tsv|txt|wbk|raw|html|htm)$/i.test(p)||/(^|\/)(sym-lib-table|fp-lib-table)$/i.test(p);
 // Candidate reports are opened as inert saved data, including unfamiliar JSON schemas.
 const fabricationFile=p=>typeof p==='string'&&/\.(gbr|ger|gerber|gtl|gbl|gts|gbs|gto|gbo|gtp|gbp|gko|gm\d+|g\d+|drl|xln)$/i.test(p);
-const analysisFile=p=>typeof p==='string'&&/\.(wbk|raw|csv|tsv|html|htm|json|txt)$/i.test(p);
+const analysisFile=p=>typeof p==='string'&&/\.(wbk|raw|csv|tsv|html|htm|json|txt|egres|s[1-9][0-9]?p)$/i.test(p);
 const pdfFile=p=>typeof p==='string'&&/\.pdf$/i.test(p);
 // Match drawing parser budgets in UTF-8 bytes; retain existing inert report budgets.
 const textFileByteLimit=p=>(/\.kicad_pcb$/i.test(p)?64:/(?:\.kicad_sch|\.sch|\.lib)$/i.test(p)?8:32)*1024*1024;

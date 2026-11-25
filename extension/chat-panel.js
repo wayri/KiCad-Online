@@ -85,7 +85,13 @@
   const dirty=state=>!!state&&(!!state.text.trim()||!!state.capture||!!state.capturePending||!!state.annotation);
   function releaseCapturePreview(state){if(state?.capturePreviewUrl){try{(h.URL||root.URL)?.revokeObjectURL?.(state.capturePreviewUrl);}catch{}delete state.capturePreviewUrl;}}
   function startCapturePreview(state,blob){releaseCapturePreview(state);if(!['image/png','image/jpeg','image/webp'].includes(blob.type)||blob.size>8*1024*1024)return;try{state.capturePreviewUrl=(h.URL||root.URL)?.createObjectURL?.(blob);}catch{}}
-  function message(text,error=false){status.textContent=String(text||'').slice(0,1000);status.className='chat-status'+(error?' error':'');}
+  function message(text,error=false,githubIssue=''){
+   status.textContent=String(text||'').slice(0,1000);
+   status.className='chat-status'+(error?' error':'');
+   if(githubIssue){
+    const link=make('a','','Open issue on GitHub');link.href=githubIssue;link.target='_blank';link.rel='noopener noreferrer';status.append(' ',link);
+   }
+  }
   function placeMenu(menu,anchor){
    if(!menu.parentElement||menu.parentElement!==d.body)d.body.append(menu);menu.classList?.add('chat-portal-menu');menu.style.position='fixed';menu.style.right=menu.style.bottom='auto';
    const rect=anchor.getBoundingClientRect?.()||{left:8,top:8},point={x:rect.left,y:rect.top};
@@ -183,7 +189,10 @@
     const now=options.getScope();if(scopeIdentity(now)!==scopeIdentity(payload))throw Error('Source changed during confirmation. Review the destination again before sending.');
     const receipt=await options.request('chat-message-write',{...payload,confirmedSend:true});sent=true;releaseCapturePreview(state);Object.assign(state,blank());if(key===scopeKey&&scopeIdentity()===scopeIdentity(payload))acceptMessage(receipt,payload,state);if(key===scopeKey){syncComposer();message('Message sent. Refreshing conversation…');}
     if(key===scopeKey&&scopeIdentity()===scopeIdentity(payload)&&conversationVisible()){if(readPromise)await readPromise;if(disposed||key!==scopeKey||scopeIdentity()!==scopeIdentity(payload))return;if(!await readCurrent(true))throw Error('Refresh failed after posting.');message(receipt?.receiptWarning||'Message sent.');}
-   }catch(error){if(!disposed&&key===scopeKey)message(sent?'Message sent, but refresh failed. Refresh the conversation to confirm the latest provider view.':error.message||'Sending failed. Your draft was kept. Inspect the thread before retrying an uncertain result.',!sent);}
+   }catch(error){if(!disposed&&key===scopeKey){
+    const issue=options.provider!=='gitlab'&&targetThread.kind==='issue'?contentApi.safeUrl(thread.url):'';
+    message(sent?'Message sent. Use Refresh to update the conversation.':(error.message||'Sending failed.')+' Your draft is kept.',!sent,issue);
+   }}
    finally{sending=false;if(!disposed)syncComposer();}
   }
   async function saveDraft(all=false){if(saving||sending||stateChanging)return false;const state=currentDraft();if(!state)return false;state.text=input.value;const states=all?[...drafts.values()].filter(dirty):[state];saving=true;syncComposer();

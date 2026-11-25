@@ -24,16 +24,24 @@
  }catch(error){announce(error.message);}}
  locate.onclick=()=>{const plot=report?.plots[Number($('plot').value)],series=plot?.series?.find(s=>s.name===$('probeTrace').value);return locateSignal(series?.signal,text=>{$('cursor').textContent=text;});};
  drawing.hidden=nativeEditor;
- const familyLabels={kicad:'KiCad simulation',wayricad:'wayriCAD analysis',other:'Other / unclassified exports'};
+ const familyLabels={kicad:'KiCad simulation',wayricad:'wayriCAD analysis',emerge:'EMerge results',other:'Other / unclassified exports'};
  const familyFilter=make('select'),familyRow=make('label','Source');familyFilter.id='resultFamily';familyFilter.setAttribute('aria-label','Result source family');familyRow.className='file-picker';
  for(const [value,label]of [['all','All saved results'],...Object.entries(familyLabels)])option(familyFilter,label,value);familyFilter.value='all';familyRow.append(familyFilter);$('file').parentNode.before(familyRow);
  const browse=make('details'),browseLabel=make('summary','Browse results'),viewBar=make('div');
  const fileRow=$('file').parentNode,views=document.querySelector('nav[aria-label="Analysis views"]');
  browse.className='analysis-file-browser';browse.append(browseLabel,familyRow,fileRow);
  viewBar.className='analysis-toolbar';views.before(viewBar);viewBar.append(views,browse);
+ const standalone=!context.repository&&!nativeEditor&&!rootAndroid();
+ const localInput=make('input'),localButton=make('button','Open EMerge file');
+ localInput.type='file';localInput.hidden=true;
+ localInput.accept=['.egres','.json',...Array.from({length:32},(_,i)=>'.s'+(i+1)+'p')].join(',');
+ localButton.type='button';localButton.onclick=()=>localInput.click();
+ localInput.onchange=()=>{const file=localInput.files[0];localInput.value='';if(file)void load(file.name,file);};
+ viewBar.insertBefore(localButton,browse);viewBar.append(localInput);browse.hidden=standalone;
+ if(standalone){$('probeTools').hidden=true;$('chart').hidden=true;$('graphControls').hidden=true;$('plot').disabled=true;$('status').textContent='Open a saved EMerge GUI, Touchstone, or Quick EMerge result.';}
  let resultFiles=[],knownFamilies=new Map();
  function sourceFamily(path){return knownFamilies.get(path)||KiCadAnalysisData.family(path);}
- function familyDescription(value){return value==='all'?'Choose KiCad simulation, wayriCAD analysis, or unclassified exports.':value==='kicad'?'KiCad workbooks and saved circuit waveforms. Workbooks contain setup, not simulated samples.':value==='wayricad'?'wayriCAD saved plugin results. Spatial fields support 2D/3D overlays and saved-value probing; source PCB placement requires a matching hash.':'Unclassified exports stay separate until their producer is identified. CSV/TSV filenames alone do not prove their origin.';}
+ function familyDescription(value){return value==='all'?'Choose KiCad simulation, wayriCAD analysis, EMerge results, or unclassified exports.':value==='kicad'?'KiCad workbooks and saved circuit waveforms. Workbooks contain setup, not simulated samples.':value==='wayricad'?'wayriCAD saved plugin results. Spatial fields support 2D/3D overlays and saved-value probing; source PCB placement requires a matching hash.':value==='emerge'?'Saved EMerge GUI, Touchstone, and Quick EMerge results.':'Unclassified exports stay separate until their producer is identified. CSV/TSV filenames alone do not prove their origin.';}
  function filterFiles(preferred){$('file').replaceChildren();for(const path of resultFiles)if(familyFilter.value==='all'||sourceFamily(path)===familyFilter.value)option($('file'),path,path);if(preferred&&[...$('file').options].some(o=>o.value===preferred))$('file').value=preferred;familyFilter.title=familyDescription(familyFilter.value);familyFilter.setAttribute('aria-description',familyFilter.title);}
  familyFilter.onchange=()=>{const preferred=$('file').value;filterFiles(preferred);if($('file').value)void load($('file').value);else{ticket++;closeSimulation();globalThis.KiCadAnalysisBomLink?.update();report=null;chartMap=null;resetProbes();overlay.update(null,[]);$('sourceLabel').textContent=familyLabels[familyFilter.value]||'Saved results';$('status').textContent='No files in this source group. Choose another source group.';$('chart').hidden=true;$('graphEmpty').textContent='No saved results in this group.';$('plotLimits').textContent='';$('cursor').textContent='';$('plot').replaceChildren();$('table').replaceChildren();$('fieldList').replaceChildren();$('tableHost').replaceChildren();$('warnings').replaceChildren();$('sourceText').textContent='';$('probeTools').hidden=true;$('frameControl').hidden=true;$('graphControls').hidden=true;}};
  const colors=['#0085bf','#d56142','#40a575','#a46ac9','#c89812','#bd5686'];
@@ -42,11 +50,11 @@
  function acceptProbe(point){$('cursor').textContent=point?describeProbe(point):'No saved value at this location.';if(point&&probeMode){if(probeMode==='A')probeA=point;else probeB=point;probeMode=null;renderProbes();draw();}}
  const overlay=KiCadAnalysisOverlay.mount({request,context,onProbe:acceptProbe,onHover:point=>{$('cursor').textContent=point?describeProbe(point):'';},onFrame:index=>{$('savedFrame').value=String(index);$('savedFrame').oninput();}});
  function resetProbes(){probeMode=null;probeA=probeB=null;renderProbes();}
- function describeProbe(p){return p?'X '+format(p.x)+(p.y===undefined?' · '+p.axis:' mm · Y '+format(p.y)+' mm'+(Number.isFinite(p.z)?' · Z '+format(p.z)+' mm':''))+' · '+(p.value===null?'No saved value':format(p.value)+(p.unit?' '+p.unit:' · '+p.name))+' · '+p.method:'Not set';}
+ function describeProbe(p){const coordinates=p?.xLabel&&p.yLabel?p.xLabel+' '+format(p.x)+' · '+p.yLabel+' '+format(p.y):p?'X '+format(p.x)+(p.y===undefined?' · '+p.axis:' mm · Y '+format(p.y)+' mm'+(Number.isFinite(p.z)?' · Z '+format(p.z)+' mm':'')):'';return p?coordinates+' · '+(p.value===null?'No saved value':format(p.value)+(p.unit?' '+p.unit:' · '+p.name))+' · '+p.method:'Not set';}
  function renderProbes(){
   $('probeA').setAttribute('aria-pressed',String(probeMode==='A'));$('probeB').setAttribute('aria-pressed',String(probeMode==='B'));
   const delta=KiCadAnalysisData.probeDifference(probeA,probeB);
-  $('probeResult').textContent=[probeMode?'Tap the graph to set '+probeMode+'.':'',probeA?'A: '+describeProbe(probeA):'',probeB?'B: '+describeProbe(probeB):'',delta?'B − A: ΔX '+format(delta.dx)+(delta.dy===undefined?' · '+probeA.axis:' mm · ΔY '+format(delta.dy)+' mm · Distance '+format(delta.distance)+' mm')+' · Δvalue '+(delta.delta===null?'Unavailable (missing saved value)':format(delta.delta)+(probeA.unit?' '+probeA.unit:' · '+probeA.name)):''].filter(Boolean).join('\n')||'Tap the graph to inspect a saved value. Mark A and B to compare two points.';
+  $('probeResult').textContent=[probeMode?'Tap the graph to set '+probeMode+'.':'',probeA?'A: '+describeProbe(probeA):'',probeB?'B: '+describeProbe(probeB):'',delta?'B − A: ΔX '+format(delta.dx)+(delta.dy===undefined?' · '+probeA.axis:probeA.xLabel?' · '+probeA.xLabel+' · ΔY '+format(delta.dy)+' · '+probeA.yLabel:' mm · ΔY '+format(delta.dy)+' mm · Distance '+format(delta.distance)+' mm')+' · Δvalue '+(delta.delta===null?'Unavailable (missing saved value)':format(delta.delta)+(probeA.unit?' '+probeA.unit:' · '+probeA.name)):''].filter(Boolean).join('\n')||'Tap the graph to inspect a saved value. Mark A and B to compare two points.';
  }
  for(const name of ['A','B'])$('probe'+name).onclick=()=>{probeMode=probeMode===name?null:name;renderProbes();};
  $('probeClear').onclick=()=>{resetProbes();draw();};$('probeTrace').onchange=()=>{resetProbes();draw();};
@@ -99,14 +107,18 @@
   $('simulationGraph').hidden=false;$('legacyGraph').hidden=true;
   chartMap=null;overlay.update(null,[]);
  }
- async function load(path){const generation=++ticket;closeSimulation();globalThis.KiCadAnalysisBomLink?.update();$('status').textContent='Loading '+path+'…';try{
-  const source=await readProjectFile(path);if(disposed||generation!==ticket)return;
-  globalThis.KiCadAnalysisBomLink?.update(path,source,resultRevision);
-  report=KiCadAnalysisData.parse(path,source);knownFamilies.set(path,report.family);familyFilter.value=report.family;filterFiles(path);$('sourceLabel').textContent=(report.familyLabel||familyLabels[report.family])+' · '+report.kind+' · '+path;
+ async function load(path,localFile){const generation=++ticket;closeSimulation();globalThis.KiCadAnalysisBomLink?.update();$('status').textContent='Loading '+path+'…';try{
+  if(localFile&&(!KiCadAnalysisEMerge.candidate(path)&&!/\.json$/i.test(path)))throw Error('Choose an EMerge result, Touchstone file, or Quick EMerge JSON.');
+  if(localFile&&localFile.size>KiCadAnalysisData.MAX_BYTES)throw Error('EMerge export exceeds 64 MiB.');
+  const source=await (localFile?localFile.text():readProjectFile(path));if(disposed||generation!==ticket)return;
+  report=localFile?KiCadAnalysisEMerge.parse(path,source):KiCadAnalysisData.parse(path,source);
+  if(!localFile){knownFamilies.set(path,report.family);familyFilter.value=report.family;filterFiles(path);}
+  if(!localFile&&report.family!=='emerge')globalThis.KiCadAnalysisBomLink?.update(path,source,resultRevision);
+  $('sourceLabel').textContent=(report.familyLabel||familyLabels[report.family])+' · '+report.kind+' · '+path;
   $('analysisTitle').textContent=path.split('/').at(-1);$('analysisTitle').title=path;
   const warnings=[...report.warnings];
   $('sourceText').textContent=source.slice(0,512000);if(source.length>512000)$('sourceText').append(make('p','Source preview limited to 512,000 characters.'));
-  try{openSimulation(path,source,generation);}catch(error){closeSimulation();warnings.push(error.message);}
+  try{if(report.family!=='emerge')openSimulation(path,source,generation);}catch(error){closeSimulation();warnings.push(error.message);}
   $('warnings').replaceChildren(...warnings.filter(w=>!simulation||!w.startsWith('This workbook stores simulation commands, signals and display settings, not waveform samples.')&&!w.startsWith('Complex traces are displayed as real and imaginary components')).map(w=>make('p',w)));
   $('plot').replaceChildren();if(!simulation){report.plots.forEach((p,i)=>option($('plot'),p.title,i));void overlay.setReport(report.savedSource);selectPlot();}
   $('table').replaceChildren();report.tables.forEach((t,i)=>option($('table'),t.title,i));rowLimit=100;fieldLimit=200;activateTab(simulation||report.plots.length?'graphs':report.tables.length?'tables':'fields');
@@ -119,7 +131,7 @@
  function draw(){if(simulation)return;const plot=report?.plots[Number($('plot').value)],node=$('chart');node.hidden=!plot;$('graphControls').hidden=!plot;$('probeTools').hidden=!plot||plot.type==='mechanical';$('frameControl').hidden=!plot?.frames;if(plot?.frames){$('savedFrame').max=String(plot.frames.length-1);$('savedFrame').value=String(plot.frameIndex);$('frameTime').textContent=format(Number(plot.frames[plot.frameIndex].time_s))+' s · '+(plot.frameIndex+1)+'/'+plot.frames.length;}$('plot').disabled=!plot;$('graphEmpty').textContent=plot?'':'No saved waveform samples in this file. See Report for settings and analytical results.';chartMap=null;$('plotLimits').textContent='';if(!plot){overlay.update(null,[]);return;}
   const ctx=node.getContext('2d'),box=node.getBoundingClientRect(),dpr=devicePixelRatio||1;node.width=Math.max(1,Math.round(box.width*dpr));node.height=Math.max(1,Math.round(box.height*dpr));ctx.setTransform(dpr,0,0,dpr,0,0);const dark=document.body.classList.contains('dark');ctx.fillStyle=dark?'#1b2b36':'#fff';ctx.fillRect(0,0,box.width,box.height);
   node.style.touchAction=plot.type==='mechanical'?'none':'pan-y';if(plot.type){$('graphControls').hidden=true;drawSpatial(plot,ctx,box);overlay.update(plot,[probeA,probeB]);return;}
-  const tx=x=>$('xScale').value==='log'?x>0?Math.log10(x):NaN:x,ty=y=>$('yScale').value==='log'?y>0?Math.log10(y):NaN:y;
+  const tx=x=>$('xScale').value==='log'?x>0?Math.log10(x):NaN:x,ty=y=>y===null?NaN:$('yScale').value==='log'?y>0?Math.log10(y):NaN:y;
   const traces=plot.series.filter(s=>selected.has(s.name));let xmin=Infinity,xmax=-Infinity,ymin=Infinity,ymax=-Infinity;
   for(const s of traces)for(const p of s.points){const x=tx(p.x),y=ty(p.y);if(!Number.isFinite(x)||!Number.isFinite(y))continue;xmin=Math.min(xmin,x);xmax=Math.max(xmax,x);ymin=Math.min(ymin,y);ymax=Math.max(ymax,y);}
   if(!Number.isFinite(xmin)){$('plotLimits').textContent='No finite values on these axes. Logarithmic axes require positive values.';overlay.update(plot,[probeA,probeB]);return;}
@@ -128,7 +140,34 @@
   ctx.font='10px system-ui';for(let i=0;i<=4;i++){const x=area.x+area.w*i/4,y=area.y+area.h*i/4;ctx.strokeStyle=dark?'#405361':'#dce4e9';ctx.beginPath();ctx.moveTo(x,area.y);ctx.lineTo(x,area.y+area.h);ctx.moveTo(area.x,y);ctx.lineTo(area.x+area.w,y);ctx.stroke();ctx.fillStyle=dark?'#dce8ef':'#203544';ctx.textAlign='right';const value=ymax-(ymax-ymin)*i/4;ctx.fillText(format($('yScale').value==='log'?10**value:value),area.x-6,y+3);ctx.textAlign='center';const xv=xmin+(xmax-xmin)*i/4;ctx.fillText(format($('xScale').value==='log'?10**xv:xv),x,area.y+area.h+17);}ctx.fillText(plot.xLabel,area.x+area.w/2,box.height-7);
   for(const series of traces){ctx.strokeStyle=colors[plot.series.indexOf(series)%colors.length];ctx.lineWidth=1.5;ctx.beginPath();let started=false;for(const p of series.points){const x=sx(p.x),y=sy(p.y);if(!Number.isFinite(x)||!Number.isFinite(y)){started=false;continue;}if(!started){ctx.moveTo(x,y);started=true;}else ctx.lineTo(x,y);}ctx.stroke();}
   chartMap={sx,sy,area,traces,probe:(px,py)=>{if(px<area.x||px>area.x+area.w||py<area.y||py>area.y+area.h||!selected.has($('probeTrace').value))return null;const axis=xmin+(px-area.x)/area.w*(xmax-xmin);return KiCadAnalysisData.probe(plot,$('xScale').value==='log'?10**axis:axis,undefined,$('probeTrace').value);}};drawProbes(ctx,sx,sy);$('plotLimits').textContent='Saved samples · '+traces.map(s=>s.name+': '+s.points.length).join(' · ');overlay.update(plot,[probeA,probeB]);}
+ function drawEMergeGrid(plot,ctx,box){
+  const xs=plot.x.map((_,i)=>KiCadAnalysisData.cellBounds(plot.x,i));
+  const ys=plot.y.map((_,i)=>KiCadAnalysisData.cellBounds(plot.y,i));
+  const xmin=xs[0][0],xmax=xs.at(-1)[1],ymin=ys[0][0],ymax=ys.at(-1)[1];
+  const scale=Math.min(Math.max(1,box.width-32)/(xmax-xmin),Math.max(1,box.height-58)/(ymax-ymin));
+  if(!Number.isFinite(scale)||scale<=0)return;
+  const left=(box.width-(xmax-xmin)*scale)/2,top=(box.height-34-(ymax-ymin)*scale)/2;
+  const sx=x=>left+(x-xmin)*scale,sy=y=>top+(ymax-y)*scale;
+  let min=Infinity,max=-Infinity;
+  for(const row of plot.values)for(const value of row)if(value!==null){min=Math.min(min,value);max=Math.max(max,value);}
+  const rectangles=xs.map(([a,b])=>[sx(a),(b-a)*scale]);
+  const palette=Array.from({length:241},(_,i)=>'hsl('+(240-i)+',75%,53%)');
+  for(let yi=0;yi<ys.length;yi++){
+   const [a,b]=ys[yi],y=sy(b),h=(b-a)*scale;
+   for(let xi=0;xi<xs.length;xi++){
+    const value=plot.values[yi][xi];if(value===null)continue;
+    const [x,w]=rectangles[xi];
+    ctx.fillStyle=palette[min===max?120:Math.round(240*(value-min)/(max-min))];ctx.fillRect(x,y,w,h);
+   }
+  }
+  ctx.fillStyle=document.body.classList.contains('dark')?'#dce8ef':'#203544';ctx.font='11px system-ui';ctx.textAlign='center';
+  ctx.fillText(plot.xLabel+' · '+plot.yLabel,box.width/2,box.height-26);
+  ctx.fillText(Number.isFinite(min)?format(min)+' — '+format(max)+' '+plot.unit:'No finite values',box.width/2,box.height-9);
+  chartMap={spatial:true,probe:(x,y)=>KiCadAnalysisData.probe(plot,xmin+(x-left)/scale,ymax-(y-top)/scale)};
+  drawProbes(ctx,sx,sy);
+ }
  function drawSpatial(plot,ctx,box){
+  if(plot.type==='heatmap'&&plot.xLabel&&plot.yLabel){drawEMergeGrid(plot,ctx,box);return;}
   let polygons=[],values=[];
   if(plot.type==='heatmap'){
    for(let yi=0;yi<plot.y.length;yi++)for(let xi=0;xi<plot.x.length;xi++){
@@ -182,7 +221,7 @@
  const themeObserver=typeof MutationObserver==='function'?new MutationObserver(()=>{if(simulation&&!plotTheme)simulation.setTheme(currentTheme());}):null;
  themeObserver?.observe(document.body,{attributes:true,attributeFilter:['class','data-ui-theme']});
  addEventListener('pagehide',()=>{disposed=true;ticket++;observer.disconnect();if(chartFrame!==null)cancelAnimationFrame(chartFrame);themeObserver?.disconnect();closeSimulation();overlay.dispose();});
- (async()=>{try{const inventory=await request('project-inventory',{file:query.get('file')});if(disposed)return;resultRevision=inventory.snapshotRef||context.ref;for(const f of inventory.files.filter(f=>/\.kicad_(sch|pcb)$/i.test(f.path)))option(drawing,f.path,f.path);
+ if(!standalone)(async()=>{try{const inventory=await request('project-inventory',{file:query.get('file')});if(disposed)return;resultRevision=inventory.snapshotRef||context.ref;for(const f of inventory.files.filter(f=>/\.kicad_(sch|pcb)$/i.test(f.path)))option(drawing,f.path,f.path);
   const originalDrawing=query.get('drawingFile');
   if([...drawing.options].some(option=>option.value===originalDrawing))drawing.value=originalDrawing;
   else if(drawing.options.length>1){const prompt=make('option','Choose drawing…');prompt.value='';drawing.prepend(prompt);drawing.value='';}

@@ -19,8 +19,10 @@ test('large repository catalogue lists mixed projects without reading designs an
  }).flat());
  sources['batch-239/rev/a/deep/loose.sch']='';
  const scope=setup('buffer/large-catalogue',sources),source='https://github.com/'+scope.repository;
- const launcher=viewer('project-launcher.html');
- const first=await message({type:'repository-detect',repository:scope.repository,source,ref:'HEAD'},launcher);
+ const launcher=viewer('project-launcher.html'),fetch=global.fetch;
+ global.fetch=async(url,options)=>{if(new URL(url).hostname==='api.github.com'){fixture.fetches.push({url:String(url),options});return new Response(null,{status:404});}return fetch(url,options);};
+ let first;
+ try{first=await message({type:'repository-detect',repository:scope.repository,source,ref:'HEAD'},launcher);}finally{global.fetch=fetch;}
  assert.equal(first.ok,true,first.error);
  assert.ok(first.result.projects.length>700);
  assert.equal(first.result.truncated,true);
@@ -31,7 +33,53 @@ test('large repository catalogue lists mixed projects without reading designs an
  assert.deepEqual(direct.result.projects,['batch-239/board-0.pro','batch-239/board-1.kicad_pro','batch-239/board-2.pro','batch-239/board-3.kicad_pro']);
  assert.deepEqual(direct.result.folders,['batch-239/rev']);
  assert.equal(fixture.session.some(read=>read.action==='file'),false);
- assert.equal(fixture.fetches.length,0);
+ assert.equal(fixture.fetches.length,1);
+ assert.match(fixture.fetches[0].url,/api\.github\.com/);
+});
+
+test('partial website catalogue recovers deep mixed-version projects from immutable metadata',async()=>{
+ const files=Object.fromEntries(Array.from({length:210},(_,i)=>['batch-'+i+'/project.kicad_pro','']));
+ const scope=setup('buffer/pinned-large-catalogue',files),treeSha='b'.repeat(40),ignored='c'.repeat(40),fetch=global.fetch;
+ global.fetch=async(value,options)=>{
+  const url=new URL(value);assert.equal(url.hostname,'api.github.com');
+  fixture.fetches.push({url:url.href,options});
+  if(url.pathname.endsWith('/git/commits/'+SHA))return Response.json({sha:SHA,tree:{sha:treeSha}});
+  assert.equal(url.pathname.split('/').at(-1),treeSha);assert.equal(url.search,'?recursive=1');
+  const item=(path,type='blob',mode='100644')=>({path,type,mode,sha:ignored});
+  return Response.json({sha:treeSha,truncated:false,tree:[
+   ...Array.from({length:12000},(_,i)=>item('firmware/file-'+i+'.bin')),
+   item('boards','tree','040000'),item('boards/deep/Archive Project.pro'),
+   item('boards/mixed/Flex.kicad_pro'),item('boards/mixed/Flex.kicad_sch'),
+   item('boards/loose/power.sch'),item('boards/fake.kicad_pro','blob','120000'),
+  ]});
+ };
+ try{
+  const result=await message({type:'repository-detect',repository:scope.repository,source:'https://github.com/'+scope.repository,ref:'HEAD'},viewer('project-launcher.html'));
+  assert.equal(result.ok,true,result.error);
+  assert.deepEqual(result.result.projects,['boards/deep/Archive Project.pro','boards/mixed/Flex.kicad_pro','boards/loose/power.sch']);
+  assert.deepEqual(result.result.folders,['boards']);
+  assert.equal(result.result.truncated,false);
+  assert.equal(fixture.fetches.length,2);
+  assert.equal(fixture.session.some(read=>read.action==='file'),false);
+ }finally{global.fetch=fetch;}
+});
+
+test('truncated recursive metadata falls back to pinned subtree entries',async()=>{
+ const files=Object.fromEntries(Array.from({length:210},(_,i)=>['website-'+i+'/project.kicad_pro','']));
+ const scope=setup('buffer/truncated-large-catalogue',files),treeSha='b'.repeat(40),branchSha='c'.repeat(40),fileSha='d'.repeat(40),fetch=global.fetch;
+ global.fetch=async value=>{
+  const url=new URL(value);
+  if(url.pathname.endsWith('/git/commits/'+SHA))return Response.json({sha:SHA,tree:{sha:treeSha}});
+  if(url.pathname.endsWith('/git/trees/'+treeSha))return Response.json({sha:treeSha,truncated:Boolean(url.search),tree:[{path:'deep',type:'tree',mode:'040000',sha:branchSha}]});
+  if(url.pathname.endsWith('/git/trees/'+branchSha))return Response.json({sha:branchSha,truncated:false,tree:[{path:'Recovered.kicad_pro',type:'blob',mode:'100644',sha:fileSha}]});
+  throw Error('Unexpected request');
+ };
+ try{
+  const result=await message({type:'repository-detect',repository:scope.repository,source:'https://github.com/'+scope.repository,ref:'HEAD'},viewer('project-launcher.html'));
+  assert.equal(result.ok,true,result.error);
+  assert.equal(result.result.truncated,false);
+  assert.deepEqual(result.result.projects,['deep/Recovered.kicad_pro']);
+ }finally{global.fetch=fetch;}
 });
 
 test('large saved source is chunked across both repository and viewer message boundaries',async()=>{

@@ -12,7 +12,7 @@ const copper = () => import('../spike/copperDepth.mjs');
 const depthChunk = '#include <logdepthbuf_fragment>';
 
 function compile(material, logarithmicDepthBuffer, fragmentShader = depthChunk) {
-  const shader = {fragmentShader};
+  const shader = {fragmentShader, uniforms:{}};
   material.onBeforeCompile(shader, {capabilities:{logarithmicDepthBuffer}});
   return shader.fragmentShader;
 }
@@ -25,9 +25,9 @@ test('fragment-written depth preserves copper precedence with a depth unit margi
     const shader = compile(material, true);
     assert.equal(material.polygonOffset, false);
     assert.ok(shader.includes('#ifdef USE_LOGDEPTHBUF'));
-    const match = shader.match(/gl_FragDepth = clamp\(gl_FragDepth \+ ([\deE+.-]+), 0.0, 1.0\)/);
+    const match = shader.match(/gl_FragDepth = clamp\(gl_FragDepth \+ ([\deE+.-]+) \* kicadCopperDepthMargin, 0.0, 1.0\)/);
     assert.ok(match, 'the fragment depth is clamped after applying the role bias');
-    return Number(match[1]);
+    return Number(match[1]) * 4 / (2 ** 24 - 1);
   });
   assert.ok(offsets[0] > 0 && offsets[1] < 0);
   assert.ok(Math.abs(offsets.at(-1) * (2 ** 24 - 1) - (-64)) < 1e-9);
@@ -35,6 +35,27 @@ test('fragment-written depth preserves copper precedence with a depth unit margi
   for (let i = 1; i < offsets.length; i++) {
     assert.ok(offsets[i - 1] - offsets[i] > 1 / (2 ** 24 - 1));
   }
+});
+
+test('direct copper bias follows the default framebuffer and composer targets preserve the 24-bit margin', async () => {
+  const {configureCopperDepth, registerCopperDepthPrecision} = await copper();
+  let bits = 16;
+  const renderer = {getContext:() => ({DEPTH_BITS:1, getParameter:() => bits})};
+  const scene = {};
+  registerCopperDepthPrecision(renderer, scene);
+  const material = configureCopperDepth({customProgramCacheKey:() => 'base'}, 'track');
+  const shader = {fragmentShader:depthChunk, uniforms:{}};
+  material.onBeforeCompile(shader, renderer);
+  const margin = shader.uniforms.kicadCopperDepthMargin;
+  assert.equal(margin.value, 1 / 65535);
+  scene.onBeforeRender(renderer, scene, {}, {});
+  assert.equal(margin.value, 4 / (2 ** 24 - 1));
+  scene.onBeforeRender(renderer, scene, {}, null);
+  assert.equal(margin.value, 1 / 65535);
+  bits = 24;
+  registerCopperDepthPrecision(renderer, scene);
+  scene.onBeforeRender(renderer, scene, {}, null);
+  assert.equal(margin.value, 4 / (2 ** 24 - 1));
 });
 
 test('ordinary-depth probes own reusable copper caps and share unbiased walls', {skip:!THREE}, async () => {

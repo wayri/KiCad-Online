@@ -1,6 +1,27 @@
 /* Copyright (c) 2026 wayri. SPDX-License-Identifier: MPL-2.0 */
 
 const logMaterials = new WeakMap();
+const rendererDepth = new WeakMap();
+const renderTargetMargin = 4 / (2 ** 24 - 1);
+
+/** The composer uses 24-bit depth. Direct canvas draws can have fewer bits. */
+export function registerCopperDepthPrecision(renderer, scene) {
+  const gl = renderer.getContext();
+  const bits = gl.getParameter(gl.DEPTH_BITS);
+  const directMargin = bits > 0 ? Math.max(renderTargetMargin, 1 / (2 ** bits - 1)) : renderTargetMargin;
+  const existing = rendererDepth.get(renderer);
+  if (existing) {
+    existing.directMargin = directMargin;
+    return;
+  }
+  const precision = {directMargin, uniform:{value:directMargin}};
+  rendererDepth.set(renderer, precision);
+  const inherited = scene.onBeforeRender;
+  scene.onBeforeRender = function(activeRenderer, activeScene, camera, target) {
+    inherited?.call(this, activeRenderer, activeScene, camera, target);
+    if (activeRenderer === renderer) precision.uniform.value = target ? renderTargetMargin : precision.directMargin;
+  };
+}
 
 /** Resolve depth precedence without moving saved geometry or biasing extruded walls. */
 export function copperDepthPolicy(role, surface = 'all') {
@@ -9,7 +30,8 @@ export function copperDepthPolicy(role, surface = 'all') {
   if (!['all', 'cap', 'wall'].includes(surface)) throw Error('Unknown copper surface kind.');
   return {
     polygonOffset: surface !== 'wall',
-    polygonOffsetFactor: surface === 'cap' ? rank / 2 : 0,
+    // A slope bias can lift a grazing cap through a physically closer plane.
+    polygonOffsetFactor: 0,
     polygonOffsetUnits: surface === 'wall' ? 0 : rank * 2
   };
 }
@@ -23,16 +45,18 @@ export function configureCopperDepth(material, role, surface = 'all') {
   const inheritedCompile = material.onBeforeCompile;
   const inheritedKey = material.customProgramCacheKey;
   const baseKey = inheritedKey.call(material);
-  const bias = (policy.polygonOffsetUnits * 4 / (2 ** 24 - 1)).toPrecision(12);
+  const units = policy.polygonOffsetUnits.toFixed(1);
   const chunk = '#include <logdepthbuf_fragment>';
   logMaterials.set(material, {policy, inheritedCompile, inheritedKey});
   material.onBeforeCompile = function(shader, renderer) {
     inheritedCompile?.call(this, shader, renderer);
     if (!shader.fragmentShader.includes(chunk)) throw Error('Unsupported copper depth shader.');
-    shader.fragmentShader = shader.fragmentShader.replace(chunk,
-      chunk + '\n#ifdef USE_LOGDEPTHBUF\n gl_FragDepth = clamp(gl_FragDepth + ' + bias + ', 0.0, 1.0);\n#endif');
+    shader.uniforms.kicadCopperDepthMargin = rendererDepth.get(renderer)?.uniform || {value:renderTargetMargin};
+    shader.fragmentShader = '#ifdef USE_LOGDEPTHBUF\nuniform float kicadCopperDepthMargin;\n#endif\n' +
+      shader.fragmentShader.replace(chunk, chunk +
+        '\n#ifdef USE_LOGDEPTHBUF\n gl_FragDepth = clamp(gl_FragDepth + ' + units + ' * kicadCopperDepthMargin, 0.0, 1.0);\n#endif');
   };
-  material.customProgramCacheKey = () => baseKey + '|copper-log-depth-v1:' + role + ':' + surface;
+  material.customProgramCacheKey = () => baseKey + '|copper-log-depth-v2:' + role + ':' + surface;
   return material;
 }
 

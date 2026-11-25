@@ -132,6 +132,7 @@ export function createSharedProbeViewport({THREE,OrbitControls,host,source,sourc
   const distance=boxFitDistance([Math.max(2,dimensions.x),Math.max(2,dimensions.y),Math.max(1,dimensions.z)],direction.toArray(),45,camera.aspect,.8,camera.up.toArray());if(!distance)return false;fitProjection(camera,distance);
   updateSceneBounds();controls.minDistance=.1;controls.maxDistance=Math.max(10000,distance*8);controls.target.copy(target);camera.position.copy(target).addScaledVector(direction,distance);const clip=boardClipRange(distance,clipRadius);camera.near=clip.near;camera.far=clip.far;camera.updateProjectionMatrix();controls.update();invalidate();return true;
  }
+ function sourceChanged(){if(!alive)return;tree.syncTransforms();updateSceneBounds();setSelection(currentSelection);}
  function setSelection(value={}){if(!alive)return {matched:0,highlighted:0,limited:false};currentSelection=value||{};selectionPoint=null;const result=selectedBounds();invalidate();return result;}
  function pick(event){const rect=renderer.domElement.getBoundingClientRect();if(!(rect.width>0&&rect.height>0))return;pointer.set((event.clientX-rect.left)/rect.width*2-1,-(event.clientY-rect.top)/rect.height*2+1);camera.updateMatrixWorld();scene.updateMatrixWorld(true);raycaster.setFromCamera(pointer,camera);
   const individual=Boolean(event.shiftKey&&!event.ctrlKey&&!event.metaKey),pickMode=individual?'object':mode;
@@ -161,6 +162,6 @@ export function createSharedProbeViewport({THREE,OrbitControls,host,source,sourc
   rotate(degrees=15){if(!alive||!Number.isFinite(degrees))return false;const offset=camera.position.clone().sub(controls.target).applyAxisAngle(camera.up,degrees*Math.PI/180);camera.position.copy(controls.target).add(offset);controls.update();invalidate();return true;},
   flip(){if(!alive)return false;const offset=camera.position.clone().sub(controls.target);camera.position.copy(controls.target).sub(offset);controls.update();invalidate();return true;},
   zoom(factor){if(!alive||!Number.isFinite(factor)||factor<=0)return false;const offset=camera.position.clone().sub(controls.target),distance=Math.max(controls.minDistance,Math.min(controls.maxDistance,offset.length()/factor));camera.position.copy(controls.target).add(offset.setLength(distance));controls.update();invalidate();return true;},
-  sourceAdded(node){if(alive&&tree.sourceAdded(node)){updateSceneBounds();setSelection(currentSelection);invalidate();}},
+  sourceAdded(node){if(alive&&tree.sourceAdded(node))sourceChanged();},sourceChanged,
   getStats(){return {active:alive,sharedGeometry:true,sharedCpuGeometry:true,independentGpuContext:true,sourceParses:0,modelRequests:0,maxPixelCount:500000,maxDevicePixelRatio:2,antialiasRequested:true,ambientOcclusion:false,shadows:false,fullNet3D:Boolean(netInspectionSource),netInspection:netInspection?.state()||null,selectionGeometry:netInspection?.state().active?'saved all-layer copper overlay with shared context':'exact shared source mesh',selection:{...selectionStats},contextLost};},dispose};
 }

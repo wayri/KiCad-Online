@@ -36,7 +36,7 @@
    if(theme==='light'||theme==='dark')source.uiTheme=theme;
    if(value.drawingFile!==undefined&&path(value.drawingFile)&&/\.kicad_(sch|pcb)$/i.test(value.drawingFile))source.drawingFile=value.drawingFile;
   }
-  if(page==='analysis-viewer.html'&&(!source.repository||!source.ref||!source.file||!/\.(json|csv|tsv|wbk|raw|txt|html?)$/i.test(source.file)))throw Error('Choose a saved simulation or results report from the project tree.');
+  if(page==='analysis-viewer.html'&&(!source.repository||!source.ref||!source.file||!/\.(json|csv|tsv|wbk|raw|txt|html?|egres|s[1-9][0-9]?p)$/i.test(source.file)))throw Error('Choose a saved simulation or results report from the project tree.');
   let android;try{android=root.top?.KiCadAndroid;}catch{}
   if(android){
    if(page==='analysis-viewer.html'&&android.openAnalysis)return source.resultView?android.openAnalysis(source.file,source.ref,{resultView:source.resultView}):android.openAnalysis(source.file,source.ref);
@@ -62,7 +62,7 @@
    const button=make('button',label);button.type='button';button.onclick=()=>{try{const target={...source};if(page==='bom-viewer.html'&&source.file)target.sourceFile=source.file;if(page==='pdf-viewer.html'&&!/\.pdf$/i.test(target.file||'')||page==='gerber-viewer.html'&&!/\.(gbr|ger|gerber|gtl|gbl|gts|gbs|gto|gbo|gtp|gbp|gko|gm\d+|g\d+|drl|xln)$/i.test(target.file||'')||page==='bom-viewer.html'&&!/\.(json|csv|tsv|html?)$/i.test(target.file||''))delete target.file;open(page,target);dialog.close();}catch(e){status.textContent=e.message;}};body.append(button);
   }
   body.append(make('p','For simulation plots and overlays, select a saved results report in the project tree. Supported reports retain their source revision.'));
-  if(source.file&&/\.(json|csv|tsv|wbk|raw|txt|html?)$/i.test(source.file)){
+  if(source.file&&/\.(json|csv|tsv|wbk|raw|txt|html?|egres|s[1-9][0-9]?p)$/i.test(source.file)){
    const button=make('button','Open selected results report');button.type='button';button.onclick=()=>{try{open('analysis-viewer.html',source);dialog.close();}catch(e){status.textContent=e.message;}};body.append(button);
   }
   dialog.append(heading,body,status);dialog.addEventListener('close',()=>dialog.remove(),{once:true});d.body.append(dialog);dialog.showModal();return dialog;

@@ -550,23 +550,34 @@ test('dim context is neutral gray in PCB and schematic while selected layers sta
  });
 
 
-test('dense motion previews skip GPU uploads, bound painting and settle at full detail',()=>{
+test('dense PCB motion retains fills, silk and drills in a reprojected snapshot without uploading to the GPU',()=>{
  let frame,uploads=0;
  class Motion{constructor(){uploads++;}}
- const {canvas,listeners}=runtime(1,{KiCadMotionWebGL:{Motion},requestAnimationFrame:fn=>(frame=fn,1),cancelAnimationFrame(){}}),
+ const {transform}=require('../motion-webgl.js');
+ const {canvas,listeners,operations}=runtime(1,{KiCadMotionWebGL:{Motion,transform},requestAnimationFrame:fn=>(frame=fn,1),cancelAnimationFrame(){}}),
   primitives=Array.from({length:21000},(_,i)=>({type:'line',kind:'track',uuid:String(i),
    layer:i%2?'B.Cu':'F.Cu',points:[{x:i%150,y:Math.floor(i/150)},{x:i%150+.5,y:Math.floor(i/150)}]}));
- canvas.setDocument({primitives,layers:['F.Cu','B.Cu']},'dense.kicad_pcb');
- const counts=new Map();
- canvas.paint=p=>counts.set(p.layer,(counts.get(p.layer)||0)+1);
+ primitives.push(
+  {type:'polygon',kind:'zone',zoneFill:true,fill:true,uuid:'fill',layer:'F.Cu',points:[{x:10,y:10},{x:20,y:10},{x:20,y:20}]},
+  {type:'text',text:'R1',uuid:'silk',layer:'F.SilkS',x:20,y:20},
+  {type:'circle',kind:'via',hole:true,uuid:'hole',layer:'F.Cu',x:20,y:20,r:.5}
+ );
+ canvas.setDocument({primitives,layers:['F.Cu','B.Cu','F.SilkS']},'dense.kicad_pcb');
+ const counts=new Map(),details=new Set();
+ canvas.paint=p=>{counts.set(p.layer,(counts.get(p.layer)||0)+1);details.add(p.uuid);};
  listeners.get('pointerdown')({button:2,clientX:400,clientY:300,pointerId:1,preventDefault(){}});
  assert.equal(counts.size,0);
  listeners.get('pointermove')({clientX:415,clientY:300,pointerId:1});
  frame();
  assert.equal(uploads,0);
- assert.equal(counts.size,2);
- assert.ok([...counts.values()].reduce((a,b)=>a+b,0)<=2800);
+ assert.equal(counts.size,3);
+ assert.ok([...counts.values()].reduce((a,b)=>a+b,0)>20000);
+ for(const detail of ['fill','silk','hole'])assert.ok(details.has(detail),detail);
+ assert.ok(operations.some(row=>row[0]==='drawImage'));
  counts.clear();
+ listeners.get('pointermove')({clientX:419,clientY:302,pointerId:1});
+ frame();
+ assert.equal(counts.size,0,'moving inside the overscan reuses the snapshot');
  listeners.get('pointerup')({pointerId:1});
  assert.ok([...counts.values()].reduce((a,b)=>a+b,0)>20000);
  canvas.dispose();

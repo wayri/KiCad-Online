@@ -19,7 +19,8 @@ from .http_limits import BoundedHTTPServer, DeadlineRequestHandler
 MAX_FILE_BYTES = 32 * 1024 * 1024
 MAX_PROJECT_BYTES = 96 * 1024 * 1024
 MAX_FILES = 512
-TEXT_SUFFIXES = frozenset({'.kicad_sch', '.kicad_pcb', '.kicad_pro', '.kicad_prl', '.kicad_dru', '.kicad_wks', '.json', '.csv', '.tsv', '.txt', '.wbk', '.raw', '.html', '.htm', '.gbr', '.ger', '.gerber', '.gtl', '.gbl', '.gts', '.gbs', '.gto', '.gbo', '.gtp', '.gbp', '.gko', '.drl', '.xln'})
+TOUCHSTONE_SUFFIXES = frozenset(f'.s{port}p' for port in range(1, 33))
+TEXT_SUFFIXES = frozenset({'.kicad_sch', '.kicad_pcb', '.kicad_pro', '.kicad_prl', '.kicad_dru', '.kicad_wks', '.json', '.csv', '.tsv', '.txt', '.wbk', '.raw', '.egres', '.html', '.htm', '.gbr', '.ger', '.gerber', '.gtl', '.gbl', '.gts', '.gbs', '.gto', '.gbo', '.gtp', '.gbp', '.gko', '.drl', '.xln'})
 ASSET_SUFFIXES = frozenset({'.step', '.stp', '.wrl', '.vrml', '.glb', '.pdf'})
 SKIP_DIRS = frozenset({'.git', '.svn', '.hg', '.aws', '.agents', 'node_modules', '__pycache__', '.gradle', 'build', 'dist'})
 WEB_SUFFIXES = frozenset({'.html', '.css', '.js', '.mjs', '.wasm', '.png', '.jpg', '.jpeg', '.svg', '.ico', '.md', '.txt', '.json', '.bcmap', '.pfb', '.ttf'})
@@ -66,7 +67,7 @@ def read_bounded(root: Path, relative: str, maximum: int = MAX_FILE_BYTES) -> by
 
 def supported_text(path: Path) -> bool:
     suffix = path.suffix.lower()
-    return suffix in TEXT_SUFFIXES or path.name in {'sym-lib-table', 'fp-lib-table'} or (suffix.startswith('.gm') and suffix[3:].isdigit()) or (suffix.startswith('.g') and suffix[2:].isdigit())
+    return suffix in TEXT_SUFFIXES or suffix in TOUCHSTONE_SUFFIXES or path.name in {'sym-lib-table', 'fp-lib-table'} or (suffix.startswith('.gm') and suffix[3:].isdigit()) or (suffix.startswith('.g') and suffix[2:].isdigit())
 
 
 def project_snapshot(project: str | Path) -> dict:

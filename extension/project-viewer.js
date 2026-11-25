@@ -31,7 +31,7 @@
  }
  let setupReturnTab='overview',settingsPainted=null;
  function activate(name){if(settings&&['settings','constraints','stackup'].includes(name)&&settingsPainted!==settings){settingsPainted=settings;renderSettings();stackup();}document.body.classList.toggle('focus-drawing',name==='overview'&&Boolean(previewFrame)&&!homeVisible);if(name==='constraints'&&tab!=='constraints')setupReturnTab=tab;document.body.classList.toggle('board-setup-active',name==='constraints');tab=name;for(const id of ['overview','settings','constraints','stackup','gerber','analysis','html','source']){$(id+'Panel').hidden=id!==name;$(id+'Tab').setAttribute('aria-pressed',String(id===name));}if(name==='analysis')showAnalysis();if(name==='gerber'){ensureCanvas();canvas.resize();canvas.draw();}}
- const analysisFile=path=>/\.(json|csv|tsv|wbk|raw|html?)$/i.test(path)||/\.txt$/i.test(path)&&/(report|analysis|sim|thermal|mechanic)/i.test(path);
+ const analysisFile=path=>/\.(json|csv|tsv|wbk|raw|html?|egres|s[1-9][0-9]?p)$/i.test(path)||/\.txt$/i.test(path)&&/(report|analysis|sim|thermal|mechanic)/i.test(path);
  function showAnalysis(){
   const list=$('analysisReportList'),host=$('analysisPreviewHost');list.replaceChildren();for(const file of inventory.filter(f=>analysisFile(f.path)))list.append(button(file.path,()=>load(file.path)));
   if(globalThis.KiCadVSCodeContext&&!globalThis.KiCadAndroidRuntime){const info=node('p','Saved analysis, simulation and KiCad Monkey reports open in their own Results tab.');host.replaceChildren(info);if(analysisFile(active))host.append(button('Open saved report',async()=>{try{await KiCadEngineeringLauncher.open('analysis-viewer.html',{repository,ref,file:active,...providerContext});}catch(error){info.textContent=error.message;}}));return;}

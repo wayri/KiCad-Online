@@ -73,6 +73,8 @@ These are browser captures; the comment example is a local note and the Draftsma
 
 Recognized KiCad 8–10 constructs use the shared renderer. KiCad 4–7 and legacy schematics have restricted coverage; newer formats can produce incomplete previews. See the [format matrix](docs/KICAD-COMPATIBILITY.md).
 
+For saved electromagnetic results, open **Simulation → EMerge** and select a result from the project, or use **Open local result** in the browser. The viewer reads EMerge GUI `.egres`, Touchstone 1.x `.sNp`, and Quick EMerge plugin result JSON. Use the plot selector to switch between available sweeps, S-parameter magnitude and phase, field slices, radiation maps, and array-factor cuts. Mark A and B to compare saved values. Field maps use the coordinates and quantities in the export.
+
 3D realism depends on accessible, supported model assets. Missing geometry may use labelled stand-ins. Imported ERC/DRC reports and analysis files are saved results; the viewer does not run native KiCad rule checks or simulation engines. Experimental Fast DC drop provides fixed-temperature, single-net DC screening, not engineering sign-off. Verify important design and manufacturing decisions in the appropriate native tools.
 
 ## Documentation and support

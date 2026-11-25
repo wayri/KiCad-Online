@@ -2294,7 +2294,15 @@ test('placing and replacing a point retains conversation destination and unsent 
 
 test('comment bubble pointer gestures do not dismiss its pane; linked local marker opens its thread',async()=>{
  const calls=[],note={id:'linked-bubble',text:'Review here',severity:'major',createdAt:'2026-10-01T00:00:00Z',anchor:{repository:'wayri/fixture',ref:'main',file:'board.kicad_pcb',kind:'point',position:{x:0,y:0}},remoteRefs:[{kind:'issue',repository:'wayri/fixture',number:12,url:'https://github.com/wayri/fixture/issues/12',publishedAt:'2026-10-01T00:00:00Z'}]};
- const view=workspaceRuntime(async m=>{calls.push(m);if(m.type==='comment-list')return[note];if(m.type==='github-thread-read')return{kind:'issue',number:12,title:'Review',url:note.remoteRefs[0].url,state:'open',author:'wayri',createdAt:note.createdAt,body:'Review',comments:[],warnings:[]};return[];});view.load();await view.workspace.refreshComments();const pin=view.get('commentPins').children.find(n=>n.attributes['data-note-id']===note.id);assert.ok(pin);assert.equal(pin.attributes['data-severity'],'major');const down=new Event('pointerdown',{bubbles:true,cancelable:true});pin.dispatchEvent(down);assert.equal(down.cancelBubble,true);await pin.click();await new Promise(setImmediate);assert.ok(calls.some(m=>m.type==='github-thread-read'&&m.number===12));assert.equal(view.get('commentsSidebar').hidden,false);view.workspace.dispose();
+ const view=workspaceRuntime(async m=>{calls.push(m);if(m.type==='comment-list')return[note];if(m.type==='github-thread-read')return{kind:'issue',number:12,title:'Review',url:note.remoteRefs[0].url,state:'open',author:'wayri',createdAt:note.createdAt,body:'Review',comments:[],warnings:[]};return[];});view.load();await view.workspace.refreshComments();
+ const toggle=view.get('frameControls').children.find(node=>node.id==='toggleCommentMarkers');
+ assert.equal(toggle.attributes['aria-pressed'],'true');
+ await toggle.click();
+ assert.equal(toggle.attributes['aria-pressed'],'false');
+ assert.equal(view.get('commentPins').children.some(node=>node.attributes['data-note-id']===note.id),false);
+ await toggle.click();
+ assert.equal(toggle.attributes['aria-pressed'],'true');
+ const pin=view.get('commentPins').children.find(n=>n.attributes['data-note-id']===note.id);assert.ok(pin);assert.equal(pin.attributes['data-severity'],'major');const down=new Event('pointerdown',{bubbles:true,cancelable:true});pin.dispatchEvent(down);assert.equal(down.cancelBubble,true);await pin.click();await new Promise(setImmediate);assert.ok(calls.some(m=>m.type==='github-thread-read'&&m.number===12));assert.equal(view.get('commentsSidebar').hidden,false);view.workspace.dispose();
 });
 
 

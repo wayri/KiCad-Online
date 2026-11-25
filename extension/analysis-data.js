@@ -2,11 +2,13 @@
 ((root)=>{
  'use strict';
  const MAX_BYTES=64*1024*1024,MAX_ROWS=200000,MAX_FIELDS=4000,MAX_CELLS=4000000;
- const candidate=path=>/\.(wbk|raw|csv|tsv|html?|json|txt)$/i.test(path);
- const familyLabels={kicad:'KiCad / SPICE simulation',wayricad:'wayriCAD analysis',other:'Other / unclassified exports'};
+ const emerge=root.KiCadAnalysisEMerge||(typeof require==='function'?require('./analysis-emerge.js'):null);
+ const candidate=path=>emerge?.candidate(path)||/\.(wbk|raw|csv|tsv|html?|json|txt)$/i.test(path);
+ const familyLabels={kicad:'KiCad / SPICE simulation',wayricad:'wayriCAD analysis',emerge:'EMerge results',other:'Other / unclassified exports'};
  // Classification is a presentation hint, never proof of producer or source identity.
  // Only source hashes and saved coordinate bindings authorize PCB overlay placement.
  function family(path,report){
+  if(emerge?.candidate(path)||/\.json$/i.test(path)&&/(?:^|[/_. -])(?:quick[_. -]?)?emerge(?:[/_. -]|$)/i.test(path))return 'emerge';
   const source=report?.savedSource;
   if(source&&typeof source==='object'&&!Array.isArray(source)){
    const producer=['schema','generator','tool'].map(key=>typeof source[key]==='string'?source[key].slice(0,512):'').join(' ');
@@ -260,9 +262,10 @@
  function parse(path,content){
   if(typeof content!=='string'||new TextEncoder().encode(content).length>MAX_BYTES)throw Error('Analysis file exceeds the 64 MiB viewer budget.');
   content=content.replace(/^\uFEFF/,'');let result;
+  if(emerge?.candidate(path))return emerge.parse(path,content);
   if(/\.(csv|tsv)$/i.test(path))result=csv(content,path);
   else if(/\.raw$/i.test(path))result=raw(content);
-  else if(/\.(json|wbk)$/i.test(path)){try{result=json(/\.wbk$/i.test(path)?workbook(content):JSON.parse(content),path);}catch(e){if(e instanceof SyntaxError)throw Error('Unsupported or incomplete JSON workbook/report.');throw e;}}
+  else if(/\.(json|wbk)$/i.test(path)){try{const saved=/\.wbk$/i.test(path)?workbook(content):JSON.parse(content);if(/\.json$/i.test(path)&&emerge?.recognizes(saved))return emerge.parse(path,saved);result=json(saved,path);}catch(e){if(e instanceof SyntaxError)throw Error('Unsupported or incomplete JSON workbook/report.');throw e;}}
   else if(/\.html?$/i.test(path)){const saved=htmlReport(content);result={kind:'Saved HTML report',fields:[{path:'Report text',value:saved.text}],tables:saved.tables,plots:[],warnings:['Report scripts and external resources are never executed. HTML is read as plain text and tables; styling and nested table layout are not preserved.'],html:content};}
   else if(/\.txt$/i.test(path))result={kind:'Saved text report',fields:[{path:'Report text',value:content.slice(0,512000)}],tables:[],plots:[],warnings:[]};
   else throw Error('Open a JSON report, KiCad .wbk, CSV/TSV export, HTML report or ASCII SPICE .raw file.');
@@ -280,13 +283,13 @@
    let nearest=null,distance=Infinity,min=Infinity,max=-Infinity;
    for(const p of series.points){if(!Number.isFinite(p.x))continue;min=Math.min(min,p.x);max=Math.max(max,p.x);const d=Math.abs(p.x-x);if(d<distance){nearest=p;distance=d;}}
    if(!nearest||x<min||x>max)return null;
-   return {x:nearest.x,value:numeric(nearest.y),name:series.name,axis:plot.xLabel,method:'Nearest saved sample'};
+   return {x:nearest.x,value:numeric(nearest.y),name:series.name,axis:plot.xLabel,...(series.signal?.quantity==='em'?{unit:series.signal.unit}:{}),method:'Nearest saved sample'};
   }
   if(!Number.isFinite(y))return null;
   if(plot.type==='heatmap'){
    const cell=(axis,value)=>{let best=-1,distance=Infinity;for(let i=0;i<axis.length;i++){const [low,high]=cellBounds(axis,i);if(value>=low&&value<=high&&Math.abs(axis[i]-value)<distance){best=i;distance=Math.abs(axis[i]-value);}}return best;};
    const xi=cell(plot.x,x),yi=cell(plot.y,y);if(xi<0||yi<0)return null;
-   return {x:plot.x[xi],y:plot.y[yi],value:numeric(plot.values[yi][xi]),name:plot.title,unit:plot.unit,method:'Saved cell center'};
+   return {x:plot.x[xi],y:plot.y[yi],value:numeric(plot.values[yi][xi]),name:plot.title,unit:plot.unit,...(plot.xLabel&&plot.yLabel?{xLabel:plot.xLabel,yLabel:plot.yLabel}:{}),method:'Saved cell center'};
   }
   if(plot.type==='mesh-field'){
    for(let i=0;i<plot.triangles.length;i++){

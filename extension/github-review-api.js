@@ -566,7 +566,7 @@ const KiCadGitHubReviewApi = (() => {
   }
 
   const confirmedChat = new Map();
-  async function chatMessageWrite(message) {
+  async function chatMessageWrite(message,expectedLogin=null) {
     invalidateReadCapabilities();
     await globalThis.KiCadManagedPolicy?.assertWrites();
     if(message?.provider!==undefined&&message.provider!=='github'||message?.host!==undefined&&message.host!=='https://github.com')throw fail('Invalid GitHub chat provider.',true);
@@ -578,9 +578,10 @@ const KiCadGitHubReviewApi = (() => {
     if(!note&&message.body.includes('<!-- kicad-review:'))throw fail('Drawing context must use a validated chat annotation.',true);
     if(note&&(action==='edit'||note.id!==mutation||note.text!==message.body||note.anchor.repository!==repository||note.anchor.ref!==ref||note.anchor.file!==file||note.anchor.provider==='gitlab'||note.threadType!==kind))throw fail('Chat annotation does not match its message and drawing.',true);
     const key='github-chat:'+JSON.stringify([repository.toLowerCase(),kind,number,mutation]);
-    if(locks.has(key)){try{await locks.get(key);}catch{}return chatMessageWrite(message);}
+    if(locks.has(key)){try{await locks.get(key);}catch{}return chatMessageWrite(message,expectedLogin);}
     const work=(async()=>{
-      const current=authEpoch,token=await getToken(),policy=await commentPolicyStatus(repository);
+      const current=authEpoch,token=await replyToken(expectedLogin),policy=await commentPolicyStatus(repository);
+      if(expectedLogin)assertReplyAccount(expectedLogin,policy.login);
       if(!policy.allowed||!LOGIN.test(policy.login||''))throw fail('Repository policy or account verification blocked this chat message.',true);
       await assertCurrentToken(token,current);
       const saved=confirmedChat.get(key)||(await chrome.storage.local.get(key))[key];
@@ -615,6 +616,7 @@ const KiCadGitHubReviewApi = (() => {
         }
         const id=kind==='issue'?result?.id:result?.databaseId;
         if(!NUMBER(id)||action==='edit'&&String(id)!==target.id)throw fail('GitHub did not confirm the chat message. Inspect the thread before retrying.');
+        if(kind==='issue'&&expectedLogin)assertReplyReceipt(result,policy.login,body,thread.url+'#issuecomment-'+id);
         const updatedAt=kind==='issue'?result.updated_at:result.updatedAt;
         if(typeof updatedAt!=='string'||!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/.test(updatedAt)||!Number.isFinite(Date.parse(updatedAt)))throw fail('GitHub did not confirm the message revision. Inspect the thread before retrying.');
         const response={provider:'github',kind,number,messageId:String(id),author:policy.login,createdAt:action==='edit'?target.createdAt:updatedAt,url:thread.url+(kind==='issue'?`#issuecomment-${id}`:`#discussioncomment-${id}`),updatedAt,replyTo};
@@ -1140,28 +1142,43 @@ const KiCadGitHubReviewApi = (() => {
     if (matches.length !== 1) throw fail(matches.length ? 'Multiple matching posts were found; inspect GitHub manually.' : 'No exact matching post from the publishing account was found. The uncertain publication remains protected from retry.', true);
     await assertCurrentToken(token, epoch);
     const confirmed = matches[0];
-    await chrome.storage.local.set({[key]:{status:'done',...confirmed}});
+    await chrome.storage.local.set({[key]:{status:'done',...confirmed,author:saved.author}});
     return {...confirmed,recovered:true};
   }
-  async function publish(message) {
+  async function replyToken(expectedLogin) {
+    try{return await getToken();}
+    catch(error){if(expectedLogin)assertReplyAccount(expectedLogin,null);throw error;}
+  }
+  function assertReplyAccount(expectedLogin,login) {
+    if(login?.toLowerCase()!==expectedLogin.toLowerCase())throw fail('Connect the extension to the same GitHub account, or open the issue on GitHub to post. No comment was sent.',true);
+  }
+  function assertReplyReceipt(result,login,body,url) {
+    if(result.user?.login?.toLowerCase()!==login.toLowerCase()||result.body!==body||typeof result.html_url!=='string'||result.html_url.toLowerCase()!==url.toLowerCase())throw fail('GitHub did not confirm the matching reply. Inspect the issue before retrying.');
+  }
+  async function publish(message,expectedLogin=null) {
     invalidateReadCapabilities();
     await globalThis.KiCadManagedPolicy?.assertWrites();
     const args = publishArgs(message), key = operationKey(args);
-    if (locks.has(key)) return locks.get(key);
-    const work = publishLocked(args, key);
+    if (locks.has(key)) {
+      if (!expectedLogin) return locks.get(key);
+      try { await locks.get(key); } catch {}
+      return publish(message,expectedLogin);
+    }
+    const work = publishLocked(args, key, expectedLogin);
     locks.set(key, work);
     try { return await work; } finally { if (locks.get(key) === work) locks.delete(key); }
   }
   const confirmedPublications = new Map();
-  async function publishLocked(args, key) {
+  async function publishLocked(args, key, expectedLogin) {
     const publicationEpoch = authEpoch;
     const saved = confirmedPublications.get(key)||(await chrome.storage.local.get(key))[key];
+    if (expectedLogin&&saved?.status==="done")assertReplyAccount(expectedLogin,saved.author);
     if (saved?.status === "done" && saved.remoteRef) return { remoteRef: saved.remoteRef, ...(saved.attachments ? { attachments: saved.attachments } : {}), duplicate: true };
     if (saved?.status === "pending") {
       throw fail("A previous publication has an unconfirmed outcome. Inspect GitHub before creating another note; this extension will not retry it automatically.");
     }
     const { note, destination, repository, number } = args;
-    const token = await getToken();
+    const token = await replyToken(expectedLogin);
     const [owner, name] = repoParts(repository);
     let preflight;
     if (destination === "new-discussion") {
@@ -1173,7 +1190,12 @@ const KiCadGitHubReviewApi = (() => {
       if (!validId(preflight?.id) || preflight.number !== number) throw fail("GitHub discussion was not found.", true);
     }
     const policy = await commentPolicyStatus(repository);
+    if(expectedLogin)assertReplyAccount(expectedLogin,policy.login);
     if (!policy.allowed) throw fail(`Repository comment policy blocked publication: ${policy.reason}`, true);
+    if(expectedLogin){
+      const issue=await request(`/repos/${owner}/${name}/issues/${number}`,token,undefined,publicationEpoch);
+      if(issue?.number!==number||issue.pull_request||issue.locked)throw fail('This thread cannot accept an issue reply. No comment was sent.',true);
+    }
     if (publicationEpoch !== authEpoch) throw fail("GitHub account changed or signed out. Review and publish again.", true);
     await KiCadReviewComments.reservePublication(chrome.storage.local, JSON.stringify(['github','https://github.com']), Date.now());
     const attachments = note.capture ? [await uploadCapture(note, repository, token, publicationEpoch)] : note.attachments;
@@ -1192,6 +1214,7 @@ const KiCadGitHubReviewApi = (() => {
       } else if (destination === "issue") {
         const result = await request(`${path}/${number}/comments`, token, { body }, publicationEpoch);
         if (!NUMBER(result.id)) throw fail("GitHub did not confirm the new comment.");
+        if(expectedLogin)assertReplyReceipt(result,policy.login,body,`https://github.com/${repository}/issues/${number}#issuecomment-${result.id}`);
         remoteRef = { kind: "issue", repository, number,
           url: `https://github.com/${repository}/issues/${number}#issuecomment-${result.id}`,
           publishedAt: new Date().toISOString(), ...(validId(result.node_id) ? { nodeId: result.node_id } : {}) };
@@ -1214,7 +1237,7 @@ const KiCadGitHubReviewApi = (() => {
           publishedAt: new Date().toISOString() };
       }
       invalidateReadCapabilities();
-      const receipt={status:'done',remoteRef,...(attachments?{attachments}:{})};
+      const receipt={status:'done',remoteRef,author:policy.login,...(attachments?{attachments}:{})};
       try{await chrome.storage.local.set({[key]:receipt});}
       catch{confirmedPublications.set(key,receipt);if(confirmedPublications.size>100)confirmedPublications.delete(confirmedPublications.keys().next().value);return {remoteRef,...(attachments?{attachments}:{}),receiptWarning:'Posted to GitHub; the local publication receipt could not be saved.'};}
       return {remoteRef,...(attachments?{attachments}:{})};

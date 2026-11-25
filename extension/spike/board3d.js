@@ -44,7 +44,7 @@ import {createSelectionAppearance} from "./selectionAppearance.mjs";
 import { createExplodeView } from './explodeView.mjs';
 import { selectionMatcher, selectionNetNames, pickSavedGeometry, selectionGesture, holdGesture } from "./selectionState.mjs";
 import { sphereFitDistance,boxFitDistance } from "./fitPolicy.mjs";
-import { qualityName, qualityViewport, graphicsProfile, boardOcclusion, boardClipRange, configureOcclusionDepth, studioMaterials, padHasMaskOpening, physicalColors, copperDepthPolicy, copperCapMaterials, configureCopperDepth, createLinearCopperMaterials } from "./renderQuality.mjs";
+import { qualityName, qualityViewport, graphicsProfile, boardOcclusion, boardClipRange, configureOcclusionDepth, studioMaterials, padHasMaskOpening, physicalColors, copperDepthPolicy, copperCapMaterials, configureCopperDepth, createLinearCopperMaterials, registerCopperDepthPrecision } from "./renderQuality.mjs";
 import { createResultOverlay } from "./result3d.js";
 import { createSourceZoneIndex,drillLoopInsideBoard,boardRimGeometry } from "./sourceGeometry.mjs";
 import { padSourceDetails } from "./padGeometry.mjs";
@@ -243,6 +243,7 @@ export function mountBoard3D(container, source, options = {}) {
   // thickness axis consistently for orbiting and all fitted camera presets.
   camera.up.set(0,0,1);
   const renderer = new THREE.WebGLRenderer({ antialias: false, logarithmicDepthBuffer: true, alpha: false, powerPreference: "high-performance" });
+  registerCopperDepthPrecision(renderer,scene);
   const gl=renderer.getContext(),graphics=graphicsProfile({maxTextureSize:renderer.capabilities.maxTextureSize,maxRenderbufferSize:gl.getParameter(gl.MAX_RENDERBUFFER_SIZE),deviceMemory:globalThis.navigator?.deviceMemory,hardwareConcurrency:globalThis.navigator?.hardwareConcurrency,floatTargets:renderer.extensions.has('EXT_color_buffer_float'),android:/Android/i.test(globalThis.navigator?.userAgent||'')});
   const zoneBudget=(graphics.constrained?32:64)*1024*1024;
   const zoneStats={budgetBytes:zoneBudget,retainedBytes:0,renderedContours:0,vertices:0,rejected:0};
@@ -494,15 +495,22 @@ export function mountBoard3D(container, source, options = {}) {
   const hiddenMatrix = new THREE.Matrix4().makeScale(0, 0, 0);
   const modelGroups = new Map(), loadedModelIndexes = new Set();
   let stepClient=null;
+  let modelInventoryPending=Boolean(options.boardPath);
+  const pendingModelCounts=new Map();
   let population = board.components.map(() => true);
   function updateComponentVisibility(changedIndex) {
     const matrix=new THREE.Matrix4();
     const indexes=Number.isInteger(changedIndex)?[changedIndex]:board.components.map((_,index)=>index);
     for(const index of indexes){const part=board.components[index];matrix.copy(componentMatrices[index]);matrix.elements[14]+=explode.componentOffset(part.layer?.startsWith('B.')?'back':'front');componentMesh?.setMatrixAt(index,
-      population[index]&&objectVisibility.visible('bodies',part.layer)&&!loadedModelIndexes.has(index)?matrix:hiddenMatrix);}
-    // Loading a real model only hides its stand-in; the existing sphere remains
-    // a conservative bound until a full visibility or explode update.
-    if (componentMesh) { componentMesh.instanceMatrix.needsUpdate = true; if(changedIndex===undefined)componentMesh.computeBoundingSphere(); }
+      population[index]&&objectVisibility.visible('bodies',part.layer)&&!modelInventoryPending&&!pendingModelCounts.has(index)&&!loadedModelIndexes.has(index)?matrix:hiddenMatrix);}
+    // Restoring a fallback after a failed load can expand the instance bounds.
+    if (componentMesh) {
+      componentMesh.instanceMatrix.needsUpdate = true;
+      if(changedIndex===undefined||!loadedModelIndexes.has(changedIndex)){
+        componentMesh.computeBoundingSphere();
+        componentMesh.computeBoundingBox();
+      }
+    }
     const visibleGroup=(index,group)=>{group.visible=population[index]&&objectVisibility.visible('bodies',board.components[index].layer);explode.component(group,board.components[index].layer?.startsWith('B.')?'back':'front');};
     if(changedIndex===undefined){for(const [index,group]of modelGroups)visibleGroup(index,group);}
     else {const group=modelGroups.get(changedIndex);if(group)visibleGroup(changedIndex,group);}
@@ -520,7 +528,15 @@ export function mountBoard3D(container, source, options = {}) {
     const problems = modelDiagnostics.length;
     notice.replaceChildren(document.createTextNode(`Material preview · linked models ${resolved}/${board.components.length}`));
     const details=document.createElement('details'),summary=document.createElement('summary'),list=document.createElement('ul');summary.textContent=problems?`${problems} rendering notes`:'Rendering details';
-    for(const message of ['Mask openings follow saved pad layer flags; this is not a reconstructed solder-mask solid.',`${board.components.length-resolved} footprints have no linked model; bounded stand-ins are used only where usable saved footprint bounds exist.`,...modelDiagnostics]){const row=document.createElement('li');row.textContent=message;list.append(row);}details.append(summary,list);notice.append(details);
+    const waiting=modelInventoryPending?'Checking linked model references.':pendingModelCounts.size?(
+      'Loading linked models for '+pendingModelCounts.size+' footprints.'
+    ):null;
+    const fallbackCount=modelInventoryPending?0:board.components.length-resolved-
+      [...pendingModelCounts.keys()].filter(index=>!loadedModelIndexes.has(index)).length;
+    const fallbackNote=fallbackCount
+      ? `${fallbackCount} footprints have no loaded model; bounded stand-ins use available saved footprint bounds.`
+      : null;
+    for(const message of ['Mask openings follow saved pad layer flags; this is not a reconstructed solder-mask solid.',...[waiting,fallbackNote].filter(Boolean),...modelDiagnostics]){const row=document.createElement('li');row.textContent=message;list.append(row);}details.append(summary,list);notice.append(details);
     notice.title = modelDiagnostics.join("\n");
   }
   function modelWrappers(index){return modelGroups.has(index)?2:3;}
@@ -578,11 +594,19 @@ export function mountBoard3D(container, source, options = {}) {
       inventory = globalThis.KiCadRepoModels.collectParsed(modelSource, options.boardPath, paths);
       modelSource = null;
     }
-    catch (error) { if(!active||captureAbort.signal.aborted)return;modelDiagnostics.push(`Cannot read model references: ${error.message}`); showModelDiagnostics(); return; }
+    catch (error) {
+      if(!active||captureAbort.signal.aborted)return;
+      modelDiagnostics.push(`Cannot read model references: ${error.message}`);
+      modelInventoryPending=false;updateComponentVisibility();refreshFallbackViews();showModelDiagnostics();return;
+    }
     modelDiagnostics.push(...inventory.diagnostics);
-    showModelDiagnostics();
     const cache = createModelTemplateCache(inventory.models);
     const componentIndexes=new Map(board.components.map((component,index)=>[component.id,index]));
+    for(const entry of inventory.models){
+      const index=componentIndexes.get(entry.footprintId);
+      if(index!==undefined)pendingModelCounts.set(index,(pendingModelCounts.get(index)||0)+1);
+    }
+    modelInventoryPending=false;updateComponentVisibility();refreshFallbackViews();showModelDiagnostics();
     let totalBytes = 0, cursor = 0;
     async function one(entry) {
       const index = componentIndexes.get(entry.footprintId);
@@ -637,6 +661,14 @@ export function mountBoard3D(container, source, options = {}) {
         if(active)modelDiagnostics.push(`${entry.reference}: ${entry.path}: ${error?.message || String(error)}`);
       } finally {
         cache.release(entry);
+        if(active){
+          const remaining=pendingModelCounts.get(index)-1;
+          if(remaining)pendingModelCounts.set(index,remaining);
+          else {
+            pendingModelCounts.delete(index);
+            if(!loadedModelIndexes.has(index)){updateComponentVisibility(index);refreshFallbackViews();}
+          }
+        }
       }
       if(active)showModelDiagnostics();
     }
@@ -1122,13 +1154,18 @@ export function mountBoard3D(container, source, options = {}) {
     if(rendered){drawMeasurementLens();notifyView();}
   }
   const onContextLost=event=>{event.preventDefault();contextLost=true;cancelAnimationFrame(frame);frame=0;qualitySelect.disabled=true;graphicsNotice('The graphics context was interrupted. The board and selection are retained while the browser recovers.',true);};
-  const onContextRestored=()=>{if(!active)return;contextLost=false;cameraMoving=false;qualitySelect.disabled=false;disposePipeline();environment?.dispose();environment=createEnvironment();scene.environment=environment?.texture||null;renderer.shadowMap.needsUpdate=true;quality='balanced';qualitySelect.value=quality;host.dataset.quality=quality;applyLighting(lighting,false);graphicsNotice('Graphics restored. Balanced rendering is active; High quality can be selected again.');sizeViewport();invalidate();};
+  const onContextRestored=()=>{if(!active)return;contextLost=false;cameraMoving=false;qualitySelect.disabled=false;disposePipeline();registerCopperDepthPrecision(renderer,scene);environment?.dispose();environment=createEnvironment();scene.environment=environment?.texture||null;renderer.shadowMap.needsUpdate=true;quality='balanced';qualitySelect.value=quality;host.dataset.quality=quality;applyLighting(lighting,false);graphicsNotice('Graphics restored. Balanced rendering is active; High quality can be selected again.');sizeViewport();invalidate();};
   renderer.domElement.addEventListener('webglcontextlost',onContextLost);
   renderer.domElement.addEventListener('webglcontextrestored',onContextRestored);
   const closeVisibility=event=>{const path=event.composedPath();if(!path.includes(displayButton)&&!path.includes(visibilityOptions))setDisplayOpen(false);};
   const escapeVisibility=event=>{if(event.key==='Escape'&&!visibilityOptions.hidden){setDisplayOpen(false,true);event.preventDefault();event.stopImmediatePropagation();}};
   document.addEventListener('pointerdown',closeVisibility);shadow.addEventListener('keydown',escapeVisibility,true);
   applyQuality(initialQuality,false);
+  function refreshFallbackViews(){
+    if(Object.keys(externalSelection).length)setSelection(externalSelection);
+    probeRegistry.forEach(probe=>probe.sourceChanged());
+  }
+  if(modelInventoryPending)updateComponentVisibility();
   const modelReady=loadRepositoryModels(options.boardPath ? globalThis.KiCadRepoModels.modelSource(sourceAST) : null);
   void modelReady.catch(()=>{});
   async function captureMechanicalView(view='top') {

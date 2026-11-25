@@ -96,7 +96,14 @@
      if(tab.status!=='complete'||!matching(tab,message.repository,message.number,newIssue,kind,message.category)){leased.delete(tab.id);throw Error('GitHub requires sign-in, SSO or another action in the review helper. No comment was sent.');}
      await sessions.remember(tab,{provider:'github',host,repository:message.repository});
     }
-    await install(tab.id);await assertWrites();const reply=await send(tab.id,message);if(!reply?.ok)throw Error(reply?.error||'GitHub did not prepare the review draft. Nothing sent.');if(typeof reply.result?.ticket!=='string')throw Error('GitHub did not confirm the review draft. Nothing sent.');tickets.set(reply.result.ticket,{...context,body:reply.result.body||message.body,account:reply.result.account,expires:now()+30000});return reply.result;
+    await install(tab.id);await assertWrites();const reply=await send(tab.id,message);
+    if(!reply?.ok){
+     if(message.action==='prepare'&&kind==='issue'&&reply?.code==='WEBSITE_ISSUE_COMPOSER_MISSING'){
+      await finish(context,true);context=null;
+      throw Object.assign(Error(reply.error),{code:reply.code});
+     }
+     throw Error(reply?.error||'GitHub did not prepare the review draft. Nothing sent.');
+    }if(typeof reply.result?.ticket!=='string')throw Error('GitHub did not confirm the review draft. Nothing sent.');tickets.set(reply.result.ticket,{...context,body:reply.result.body||message.body,account:reply.result.account,expires:now()+30000});return reply.result;
     }catch(error){if(context)await finish(context,false);throw error;}
    }
    let failure;
@@ -111,7 +118,7 @@
   }
   return {invoke};
  }
- function create({call,storage,assertWrites,assertPolicy=async()=>{},reserve,comments,crypto=root.crypto,now=()=>Date.now()}={}){
+ function create({call,storage,assertWrites,assertPolicy=async()=>{},reserve,comments,apiIssueReply,crypto=root.crypto,now=()=>Date.now()}={}){
   const locks=new Map(),cache=new Map(),confirmed=new Map(),catalogs=new Map(),scans=new Map();
   async function commitFailure(error,operation,digest,message){
    if(error?.code==='WEBSITE_REVIEW_UNAVAILABLE'){
@@ -171,7 +178,7 @@
    const updated=await call({repository,number,kind,action:'update-prepared',ticket:prepared.ticket,body});
    if(updated?.updated!==true||updated.account!==prepared.account)throw Error('GitHub did not accept the final screenshot message. Nothing posted.');return {body,attachments};
   }
-  async function send({repository,number,body,clientMutationId,confirmedSend,annotation,kind='issue'}){
+  async function send({repository,number,body,clientMutationId,confirmedSend,annotation,kind='issue'},apiFallback){
    if(!['issue','discussion'].includes(kind))throw Error('Unsupported website conversation type.');
    if(confirmedSend!==true||typeof clientMutationId!=='string'||!/^[A-Za-z0-9_-]{16,100}$/.test(clientMutationId)||typeof body!=='string'||!body.trim()||new TextEncoder().encode(body).length>59000)throw Error('Explicit Send and a valid review message are required.');
    const operation='website-review:'+JSON.stringify(kind==='issue'?[repository.toLowerCase(),number,clientMutationId]:[repository.toLowerCase(),kind,number,clientMutationId]);
@@ -185,6 +192,16 @@
     const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(fingerprint))),n=>n.toString(16).padStart(2,'0')).join('');
     let marked=body.replace(/\r\n?/g,'\n')+'\n\n<!-- pocket-kiview-session:'+clientMutationId+' -->';let attachments;
     const record=confirmed.get(operation)||(await storage.get(operation))[operation];
+    const useApiReply=async()=>{
+     if(!apiFallback)throw Error('This reply uses the connected GitHub account. Open the issue on GitHub to verify it.');
+     const result=await apiFallback(thread.account);
+     cache.delete(key(repository,number,kind));scans.delete(repository.toLowerCase());catalogs.delete(catalogKey(repository,kind));
+     return result;
+    };
+    if(record?.status==='api-reply'){
+     if(record.digest!==digest)throw Error('This send ID belongs to a different message or website account.');
+     return useApiReply();
+    }
     if(record&&record.status!=='not-sent'){
      if(record.digest!==digest)throw Error('This send ID belongs to a different message or website account.');
      if(record.status==='done')return {...record.result,duplicate:true};
@@ -192,8 +209,19 @@
      if(matches.length===1){const item=matches[0],result={provider:'github',kind,number,messageId:item.id,author:item.author,url:item.url,createdAt:item.createdAt,updatedAt:item.updatedAt,replyTo:null,transport:'website-session',recovered:true,...(record.attachments?{attachments:record.attachments}:{})};const receipt={status:'done',digest,result};confirmed.set(operation,receipt);try{await storage.set({[operation]:receipt});}catch{}return result;}
      throw Error('A previous Send has an unconfirmed outcome. Inspect GitHub before retrying; automatic resends are blocked.');
     }
-    await reserve();
-    const prepared=await call({repository,number,kind,action:'prepare',body:marked,...(annotation?.capture?{capture:annotation.capture}:{})});
+    if(!apiFallback)await reserve();
+    let prepared;
+    try{prepared=await call({repository,number,kind,action:'prepare',body:marked,...(annotation?.capture?{capture:annotation.capture}:{})});}
+    catch(error){
+     if(error?.code!=='WEBSITE_ISSUE_COMPOSER_MISSING'||kind!=='issue'||!apiFallback)throw error;
+     await assertPolicy(repository,thread.account);
+     await assertWrites();
+     // Preserve the selected transport for retries, even if the website later
+     // exposes a composer and the API never confirmed the previous submission.
+     await storage.set({[operation]:{status:'api-reply',digest}});
+     return useApiReply();
+    }
+    if(apiFallback)await reserve();
     if(prepared.account!==thread.account||prepared.repository!==repository||prepared.number!==number||typeof prepared.ticket!=='string')throw Error('GitHub website account or draft changed. Nothing sent.');
     const captured=await finalizeCapture(prepared,{repository,number,kind,annotation,clientMutationId,baseBody:body});if(captured){marked=captured.body;attachments=captured.attachments;}
     await assertPolicy(repository,thread.account);
@@ -236,12 +264,13 @@
     catalogs.delete(catalogKey(repository,kind));scans.delete(repository.toLowerCase());const receipt={status:'done',digest,result};confirmed.set(operation,receipt);if(confirmed.size>64)confirmed.delete(confirmed.keys().next().value);try{await storage.set({[operation]:receipt});}catch{result={...result,receiptWarning:'Created on GitHub; the local receipt could not be saved.'};}return result;
    })();locks.set(operation,work);try{return await work;}finally{locks.delete(operation);}
   }
-  async function recoverPublication({repository,kind='issue',clientMutationId,number,recoveryNumber=number,newThread=false}){
+  async function recoverPublication({repository,kind='issue',clientMutationId,number,recoveryNumber=number,newThread=false},recoverApiReply){
    if(typeof repository!=='string'||!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)||repository.split('/').some(part=>part==='.'||part==='..')||!['issue','discussion'].includes(kind)||typeof clientMutationId!=='string'||!/^[A-Za-z0-9_-]{16,100}$/.test(clientMutationId)||typeof newThread!=='boolean'||!Number.isSafeInteger(recoveryNumber)||recoveryNumber<1||!newThread&&number!==recoveryNumber)throw Error('Choose the original website conversation and send ID.');
    const operation=newThread?'website-new-'+kind+':'+JSON.stringify([repository.toLowerCase(),clientMutationId]):'website-review:'+JSON.stringify(kind==='issue'?[repository.toLowerCase(),number,clientMutationId]:[repository.toLowerCase(),kind,number,clientMutationId]);
    if(locks.has(operation))throw Error('This publication is still running. Wait for it to finish.');
    const work=(async()=>{
     const record=confirmed.get(operation)||(await storage.get(operation))[operation];
+    if(record?.status==='api-reply'&&recoverApiReply)return recoverApiReply();
     if(!record||!['pending','done'].includes(record.status)||!/^[0-9a-f]{64}$/.test(record.digest||''))throw Error('No recoverable website publication record exists. Inspect GitHub manually.');
     const account=record.account||record.result?.author;
     if(typeof account!=='string'||!account||record.status==='pending'&&(typeof record.body!=='string'||!record.body.endsWith('<!-- pocket-kiview-session:'+clientMutationId+' -->')||newThread&&typeof record.title!=='string'))throw Error('This older website receipt cannot be verified. Inspect GitHub manually; nothing will be resent.');
@@ -275,7 +304,9 @@
     if(!target)throw Error('Reload the conversation before replying to this message.');
     body='> Reply to ['+(target.author||'message')+']('+target.url+')\n\n'+body;
    }
-   return send({...message,repository:scope.repository,number,kind,body,annotation:message.annotation});
+   const apiFallback=kind==='issue'&&message.action==='reply'&&!message.annotation?.capture&&apiIssueReply?
+    account=>apiIssueReply(message,account):null;
+   return send({...message,repository:scope.repository,number,kind,body,annotation:message.annotation},apiFallback);
   }
   return {read,list,categories,annotations,send,chat,createIssue,recoverPublication};
  }

@@ -5,7 +5,7 @@
   const filePattern = /(?:\.kicad_(?:sch|pcb)|\.(?:sch|brd))$/i;
   const PROJECT_MAX_BYTES = 512 * 1024 * 1024;
   const PROJECT_MAX_FILES = 128, PARENT_MAX_CANDIDATES = 128, READ_CONCURRENCY = 4;
-  const fileByteLimit = (path) => /\.(wbk|raw|csv|tsv|json|html?|txt)$/i.test(path) ? 64 * 1024 * 1024 : (/\.kicad_(pcb|sch)$/i.test(path) ? 256 : 8) * 1024 * 1024;
+  const fileByteLimit = (path) => /\.(wbk|raw|csv|tsv|json|html?|txt|egres|s[1-9][0-9]?p)$/i.test(path) ? 64 * 1024 * 1024 : (/\.kicad_(pcb|sch)$/i.test(path) ? 256 : 8) * 1024 * 1024;
 
   function validRepository(value, provider = "github") {
     return typeof value === 'string' && value.length <= 500 && repositoryPattern.test(value) &&

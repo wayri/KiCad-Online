@@ -554,3 +554,12 @@ body .review-control-popover{
 #objectMenu button{min-height:32px;padding:6px 9px;border-radius:6px;font-size:12px}
 #objectMenu button.viewer-context-divider{border-top:1px solid var(--line);margin-top:4px;border-radius:0 0 6px 6px}
 @media(pointer:coarse){.review-control-popover :is(button,select),#objectMenu button{min-height:44px}}
+
+/* Keep the layer picker compact and allow long stackups to scroll vertically. */
+.floating-layer-selector:has(.compact-layer-toggle).layers-expanded{left:auto;display:grid;justify-items:end;gap:5px;background:var(--panel)}
+.layers-expanded .compact-layer-options{display:grid;grid-template-columns:1fr 1fr;align-items:center;gap:5px;width:min(340px,100%);max-height:min(58dvh,420px);overflow-y:auto}
+.compact-layer-rows,.compact-layer-presets{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:5px}
+.compact-layer-rows .compact-layer-item{flex-direction:row;min-width:0}
+.compact-layer-rows .compact-layer-item>button:first-child{flex:1;min-width:0;justify-content:flex-start}
+.compact-layer-rows .compact-layer-item>button:first-child span:last-child{overflow:hidden;text-overflow:ellipsis}
+.compact-layer-presets{padding-block:5px;border-top:1px solid var(--line)}

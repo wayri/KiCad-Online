@@ -55,7 +55,7 @@ test('denied website reads offer local rendering without requesting account auth
 });
 
 test('project chooser excludes standalone drawings when listing project cards',async()=>{const view=await ui({ok:true,result:{sha:'c'.repeat(40),projects:['root.kicad_pro','sub/child.kicad_pro','elsewhere/sheet.kicad_sch','other/board.kicad_pcb']}});const cards=view.nodes.get('launchProjects').children;assert.equal(cards.length,2);assert.deepEqual(cards.map(c=>new URL(c.href).searchParams.get('file')),['root.kicad_pro','sub/child.kicad_pro']);assert.equal(cards[1].children[1].textContent,'child');assert.equal(cards[1].children[2].textContent,'sub');assert.equal(cards[1].className,'project-choice');});
-test('drawing-only repositories do not mislabel individual drawings as projects',async()=>{const view=await ui({ok:true,result:{sha:'d'.repeat(40),projects:['sheet.kicad_sch','board.kicad_pcb']}});assert.equal(view.nodes.get('launchProjects').children.length,0);assert.equal(view.replaced.length,0);});
+test('drawing-only repositories do not mislabel individual drawings as projects',async()=>{const view=await ui({ok:true,result:{sha:'d'.repeat(40),projects:['sheet.kicad_sch','board.kicad_pcb']}});assert.equal(view.nodes.get('launchProjects').children.length,2);assert.match(view.nodes.get('launchProjects').children[0].children[0].textContent,/Drawing/);assert.equal(view.replaced.length,0);});
 
 test('hundreds of projects remain filterable with a bounded page of cards and pinned folder links',async()=>{
  const sha='e'.repeat(40),items=Array.from({length:600},(_,index)=>'design/Archive '+index+'/Board.'+(index%2?'pro':'kicad_pro'));

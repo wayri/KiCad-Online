@@ -424,7 +424,7 @@ function repositoryEntry(item,prefix='',warnings=[]){
   }
   return {path:prefix+item.path,type:item.type,sha:item.sha.toLowerCase(),mode:item.mode};
 }
-async function repositoryTree(repository,ref,{page=1,directory}={}){
+async function repositoryTree(repository,ref,{page=1,directory,catalogue=false}={}){
   repositoryScope(repository,ref);page=repositoryPage(page);
   if(directory!==undefined&&directory!==''&&!repositoryPath(directory))throw Error('Invalid repository directory.');
   if(directory!==undefined&&directory.split('/').length>32)throw Error('Repository directory exceeds 32 levels.');
@@ -441,10 +441,49 @@ async function repositoryTree(repository,ref,{page=1,directory}={}){
     if(!found)throw Error(listing.truncated?'GitHub truncated this directory; its requested child could not be resolved.':'Repository directory was not found at the pinned revision.');
     treeSha=found.sha;
   }
-  const recursive=directory===undefined,listing=await githubDiscoveryJson(`https://api.github.com/repos/${repository}/git/trees/${treeSha}${recursive?'?recursive=1':''}`,16*1024*1024);
+  const recursive=catalogue||directory===undefined,listing=await githubDiscoveryJson(`https://api.github.com/repos/${repository}/git/trees/${treeSha}${recursive?'?recursive=1':''}`,16*1024*1024);
   if(!Array.isArray(listing.tree)||listing.tree.length>100000||listing.sha?.toLowerCase()!==treeSha.toLowerCase()||typeof listing.truncated!=='boolean')throw Error('Invalid or mismatched GitHub repository tree.');
   const prefix=directory?directory+'/':'';
   const seenPaths=new Set(),clean=listing.tree.map(item=>{if(seenPaths.has(item?.path)){warnings.push('Duplicate repository entry omitted.');return null;}seenPaths.add(item?.path);if(!recursive&&typeof item?.path==='string'&&item.path.includes('/')){warnings.push('Invalid directory entry omitted.');return null;}return repositoryEntry(item,prefix,warnings);}).filter(Boolean);
+  if(catalogue){
+    const entries=new Map();
+    function collect(items){
+      for(const item of items){
+        if(item.type==='tree'&&!item.path.slice(prefix.length).includes('/')||item.type==='blob'&&item.mode!=='120000'&&(/\.(?:kicad_(?:pro|sch|pcb)|pro|sch|brd)$/i.test(item.path)||KiCadGerberRenderer.isFabricationPath(item.path))){
+          if(!entries.has(item.path)&&entries.size>=24000)return false;
+          entries.set(item.path,item);
+        }
+      }
+      return true;
+    }
+    let complete=collect(clean)&&!listing.truncated&&clean.length===listing.tree.length;
+    if(listing.truncated&&entries.size<24000){
+      const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),10000);
+      const pending=[{sha:treeSha,prefix}],pathLimit=12;
+      let read=0;
+      complete=true;
+      try{
+        while(pending.length&&read++<pathLimit){
+          const parent=pending.shift();
+          const branch=await githubDiscoveryJson(`https://api.github.com/repos/${repository}/git/trees/${parent.sha}`,16*1024*1024,controller.signal);
+          if(branch.sha?.toLowerCase()!==parent.sha.toLowerCase()||!Array.isArray(branch.tree)||branch.tree.length>100000||typeof branch.truncated!=='boolean')throw Error('Invalid GitHub catalogue subtree.');
+          if(branch.truncated)complete=false;
+          for(const row of branch.tree){
+            if(typeof row?.path!=='string'||row.path.includes('/')){complete=false;continue;}
+            const item=repositoryEntry(row,parent.prefix,warnings);
+            if(!item||!repositoryPath(item.path)){complete=false;continue;}
+            if(!collect([item])){complete=false;break;}
+            if(item.type==='tree')pending.push({sha:item.sha,prefix:item.path+'/'});
+          }
+          if(entries.size>=24000)break;
+        }
+        if(pending.length)complete=false;
+      }catch{complete=false;}
+      finally{clearTimeout(timer);}
+    }
+    if(!complete)warnings.push('Repository catalogue is partial. Browse its folders to continue at this revision.');
+    return {sha:snapshot.sha,entries:[...entries.values()],truncated:!complete,warnings:[...new Set(warnings)]};
+  }
   const truncated=Boolean(listing.truncated)||clean.length>10000||clean.length!==listing.tree.length;
   if(truncated)warnings.push('Repository tree is incomplete; expand folders to browse their pinned contents.');
   const available=clean.slice(0,10000),start=recursive?0:(page-1)*100,entries=available.slice(start,recursive?10000:start+100),hasMore=!recursive&&start+100<available.length&&page<100;
@@ -824,7 +863,7 @@ async function websiteCommentPolicyStatus(repository,login){
 async function assertWebsiteCommentPolicy(repository,login){
  const result=await websiteCommentPolicyStatus(repository,login);if(!result.allowed)throw Error(result.reason);return result;
 }
-function websiteReviews(){return websiteReviewsInstance||=KiCadGitHubWebsiteReviews.create({call:websiteReviewCall,storage:chrome.storage.local,assertWrites:()=>KiCadManagedPolicy.assertWrites(),assertPolicy:assertWebsiteCommentPolicy,reserve:()=>KiCadReviewComments.reservePublication(chrome.storage.local,JSON.stringify(['github','website-session']),Date.now()),comments:KiCadReviewComments});}
+function websiteReviews(){return websiteReviewsInstance||=KiCadGitHubWebsiteReviews.create({call:websiteReviewCall,storage:chrome.storage.local,assertWrites:()=>KiCadManagedPolicy.assertWrites(),assertPolicy:assertWebsiteCommentPolicy,reserve:()=>KiCadReviewComments.reservePublication(chrome.storage.local,JSON.stringify(['github','website-session']),Date.now()),comments:KiCadReviewComments,apiIssueReply:KiCadGitHubReviewApi.chatMessageWrite});}
 function ownedWebsiteReviewSender(sender,repository){
  if(!sessionReviewSender(sender)&&!viewerSender(sender))return false;
  try{const own=new URL(chrome.runtime.getURL('')),page=new URL(sender.url),parent=new URL(sender.tab?.url||sender.url);return parent.protocol===own.protocol&&parent.host===own.host&&page.searchParams.get('repository')===repository;}catch{return false;}
@@ -1352,6 +1391,29 @@ function catalogueEntries(snapshot){
   })):snapshot.files.map(item=>({path:item.path,type:'blob'}));
 }
 
+const catalogueCache=new Map();
+async function expandGitHubCatalogue(repository,snapshot,directory){
+  const snapshotRef=snapshot.snapshotRef,entries=catalogueEntries(snapshot);
+  const truncated=snapshot.warnings.some(warning=>/incomplete|limited|limit reached/i.test(warning));
+  if(!truncated)return {sha:snapshotRef,entries,warnings:snapshot.warnings,truncated};
+  const key=JSON.stringify([repository,snapshotRef,directory]),cached=catalogueCache.get(key);
+  if(cached?.expires>Date.now())return cached.operation;
+  while(catalogueCache.size>=8)catalogueCache.delete(catalogueCache.keys().next().value);
+  const operation=(async()=>{
+    try{
+      const wide=await repositoryTree(repository,snapshotRef,{catalogue:true,...(directory?{directory}:{})});
+      if(wide.sha!==snapshotRef)throw Error('Catalogue revision changed.');
+      if(!wide.truncated)return wide;
+      const merged=new Map(entries.map(item=>[item.path,item]));
+      for(const item of wide.entries)merged.set(item.path,item);
+      const bounded=[...merged.values()];
+      return {...wide,entries:bounded.slice(0,24000),warnings:[...new Set([...wide.warnings,...snapshot.warnings])]};
+    }catch{return {sha:snapshotRef,entries,warnings:snapshot.warnings,truncated};}
+  })();
+  catalogueCache.set(key,{expires:Date.now()+60000,operation});
+  return operation;
+}
+
 async function repositoryDetection(message,sender){
   const launcher=launcherSender(sender);
   if(launcher&&(sender.frameId??0)>0&&!repositorySessions().frameAllowed(sender))throw Error('Unbound in-page project launcher.');
@@ -1374,9 +1436,10 @@ async function repositoryDetection(message,sender){
     }
     const snapshot=await projectBuffer().inventory(headRepository,head,undefined,{refresh:message.refresh===true,catalogue:true});
     if(snapshot.snapshotRef!==head)throw Error('Revision changed during project discovery.');
-    const entries=catalogueEntries(snapshot);
-    const projects=KiCadGitHub.detectedProjects(entries),fabricationCount=countRepositoryFabrication(entries);
-    return {repository:revision.repository,ref:revision.kind==='commit'?revision.ref:head,sha:head,headRepository,...(pullNumber?{pullNumber,pullRepository:revision.repository}:{}),projects,fabricationCount,folders:catalogueFolders(entries,''),truncated:snapshot.warnings.some(w=>/incomplete|limited|limit reached/i.test(w)),warnings:[...new Set([...warning,...snapshot.warnings])]};
+    const catalogue=await expandGitHubCatalogue(headRepository,snapshot,'');
+    const entries=catalogue.entries;
+    const projects=KiCadGitHub.detectedProjects(entries),fabricationCount=Math.min(1000,countRepositoryFabrication(entries));
+    return {repository:revision.repository,ref:revision.kind==='commit'?revision.ref:head,sha:head,headRepository,...(pullNumber?{pullNumber,pullRepository:revision.repository}:{}),projects,fabricationCount,folders:catalogueFolders(entries,''),truncated:catalogue.truncated,warnings:[...new Set([...warning,...catalogue.warnings])]};
   }
   if(!route||route.repository!==message.repository||(route.provider||'github')!==(message.provider||'github')||(route.host||'https://github.com')!==host)throw Error('Repository discovery does not match the host page.');
   let ref=message.ref,contextSnapshot=null;
@@ -1396,7 +1459,7 @@ async function repositoryDetection(message,sender){
     }
     const treeOptions=folderOnly||directory?{directory}:{},started=Date.now();
     listing=await api.repositoryTree(message.repository,ref,{...treeOptions,page:1});
-    for(let page=2;listing.hasMore&&page<=30&&Date.now()-started<15000;page++){
+    for(let page=2;listing.hasMore&&page<=100&&Date.now()-started<15000;page++){
       const next=await api.repositoryTree(message.repository,listing.sha,{...treeOptions,page});
       if(next.sha!==listing.sha)throw Error('Repository revision changed during discovery.');
       listing.entries.push(...next.entries);listing.hasMore=next.hasMore;listing.warnings.push(...(next.warnings||[]));
@@ -1407,9 +1470,9 @@ async function repositoryDetection(message,sender){
     listing={sha:folder.sha,entries:catalogueEntries({entries:folder.items}),warnings:[]};
   }else{
     const snapshot=await projectBuffer().inventory(message.repository,contextSnapshot||ref,undefined,{directory,scoped:Boolean(directory),refresh:message.refresh===true,catalogue:true});
-    listing={sha:snapshot.snapshotRef,entries:catalogueEntries(snapshot),warnings:snapshot.warnings,truncated:snapshot.warnings.some(warning=>/incomplete|limited|limit reached/i.test(warning))};
+    listing=launcher?await expandGitHubCatalogue(message.repository,snapshot,directory):{sha:snapshot.snapshotRef,entries:catalogueEntries(snapshot),warnings:snapshot.warnings,truncated:snapshot.warnings.some(warning=>/incomplete|limited|limit reached/i.test(warning))};
   }
-  const projects=KiCadGitHub.detectedProjects(listing.entries),fabricationCount=countRepositoryFabrication(listing.entries);
+  const projects=KiCadGitHub.detectedProjects(listing.entries),fabricationCount=Math.min(1000,countRepositoryFabrication(listing.entries));
   return {repository:message.repository,ref,sha:listing.sha,projects,fabricationCount,folders:catalogueFolders(listing.entries,directory),...(directory?{directory}:{}),
     truncated:Boolean(listing.truncated||listing.hasMore),warnings:[...new Set(listing.warnings||[])]};
 }
@@ -1531,11 +1594,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if(args.repository!==repository)throw Error('Review destination does not match this website session.');
       if(!['issue','new-issue','discussion','new-discussion'].includes(args.destination))throw Error('Choose an Issue or Discussion destination.');
       if(message.type==='github-recover-publication'){
-       const kind=args.destination.includes('discussion')?'discussion':'issue',result=await websiteReviews().recoverPublication({repository,kind,clientMutationId:args.note.id,number:args.number,recoveryNumber:message.recoveryNumber,newThread:args.destination.startsWith('new-')});
+       const kind=args.destination.includes('discussion')?'discussion':'issue',result=await websiteReviews().recoverPublication({repository,kind,clientMutationId:args.note.id,number:args.number,recoveryNumber:message.recoveryNumber,newThread:args.destination.startsWith('new-')},args.destination==='issue'?async()=>{
+        const recovered=await KiCadGitHubReviewApi.recoverPublication(message,githubAnnotations),ref=recovered.remoteRef;
+        return {number:ref.number,url:ref.url,createdAt:ref.publishedAt,receiptWarning:recovered.receiptWarning};
+       }:null);
        return {remoteRef:{kind,repository,number:result.number,url:result.url,publishedAt:result.createdAt},recovered:true,...(result.attachments?{attachments:result.attachments}:{}),...(result.receiptWarning?{receiptWarning:result.receiptWarning}:{})};
       }
       const {capture,...metadata}=args.note,body=KiCadReviewComments.toMarkdown(metadata),details={repository,body,clientMutationId:args.note.id,confirmedSend:message.confirmedSend,...(capture?{annotation:args.note}:{})};
-      const kind=args.destination.includes('discussion')?'discussion':'issue',result=args.destination.startsWith('new-')?await websiteReviews().createIssue({...details,kind,title:args.title,categoryId:args.categoryId}):await websiteReviews().send({...details,kind,number:args.number});
+      const kind=args.destination.includes('discussion')?'discussion':'issue';
+      const fallback=args.destination==='issue'&&!capture?async account=>{
+       const published=await KiCadGitHubReviewApi.publish(message,account),ref=published.remoteRef;
+       return {number:ref.number,url:ref.url,createdAt:ref.publishedAt,receiptWarning:published.receiptWarning};
+      }:null;
+      const result=args.destination.startsWith('new-')?await websiteReviews().createIssue({...details,kind,title:args.title,categoryId:args.categoryId}):await websiteReviews().send({...details,kind,number:args.number},fallback);
       return {remoteRef:{kind,repository,number:result.number,url:result.url,publishedAt:result.createdAt},...(result.attachments?{attachments:result.attachments}:{}),...(result.receiptWarning?{receiptWarning:result.receiptWarning}:{})};
     }
     if(KiCadGitHubProjectView.types.has(message.type)){

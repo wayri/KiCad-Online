@@ -51,6 +51,42 @@ test('website reverse reads coalesce briefly and force refresh does not hide fai
  const h=harness();await Promise.all([h.transport.read('owner/repo',1),h.transport.read('owner/repo',1)]);assert.equal(h.calls.length,1);
  await h.transport.read('owner/repo',1,true);assert.equal(h.calls.length,2);
 });
+test('missing Issue composer pins a verified API fallback across retries and worker restarts',async()=>{
+ const data={},calls=[];
+ let missing=true,failReceipt=false,attempts=0;
+ const dependencies={crypto:webcrypto,assertWrites:async()=>{},assertPolicy:async(repository,account)=>{
+   assert.equal(repository,'owner/repo');assert.equal(account,'reviewer');
+  },reserve:async()=>{},storage:{get:async key=>({[key]:data[key]}),set:async entries=>{
+   if(failReceipt)throw Error('storage is full');Object.assign(data,entries);
+  }},call:async request=>{
+   calls.push(request.action);
+   if(request.action==='read')return {account:'reviewer',capabilities:{create:true},comments:[]};
+   if(request.action==='prepare'&&missing)throw Object.assign(Error('No composer'),{code:'WEBSITE_ISSUE_COMPOSER_MISSING'});
+   throw Error('Unexpected website '+request.action);
+  }};
+ const apiReply=async account=>{assert.equal(account,'reviewer');attempts++;throw Error('Unconfirmed API reply');};
+ const adapter=api.create(dependencies);
+ failReceipt=true;await assert.rejects(adapter.send(message,apiReply),/storage is full/);assert.equal(attempts,0);
+ failReceipt=false;await assert.rejects(adapter.send(message,apiReply),/Unconfirmed API/);
+ assert.equal(attempts,1);assert.equal(Object.values(data)[0].status,'api-reply');
+ calls.length=0;missing=false;
+ const restarted=api.create(dependencies);
+ await assert.rejects(restarted.send(message,apiReply),/Unconfirmed API/);
+ assert.deepEqual(calls,['read']);
+ await assert.rejects(restarted.send({...message,body:'Other draft'},apiReply),/different message/);
+ assert.equal(attempts,2);
+ const recovered=await restarted.recoverPublication({...message,kind:'issue'},async()=>({messageId:'123'}));
+ assert.equal(recovered.messageId,'123');
+});
+test('API fallback does not run when website preparation rejects for another reason or commit is uncertain',async()=>{
+ const denied=harness();
+ denied.thread.capabilities.create=false;
+ const unexpected=()=>assert.fail('API fallback must not run');
+ await assert.rejects(denied.transport.send(message,unexpected),/does not allow/);
+ const uncertain=harness({commitFails:true});
+ await assert.rejects(uncertain.transport.send(message,unexpected),/not confirmed/);
+ await assert.rejects(uncertain.transport.send(message,unexpected),/unconfirmed outcome/);
+});
 function tabHarness(){
  const tabs=new Map([[1,{id:1,url:'https://github.com/owner/repo/tree/main',status:'complete'}]]),calls=[],removed=[];let next=2,bound=true,failCommit=false;
  const session={candidates:async()=>bound?[{id:1,bound:true}]:[],remember:async()=>{},recover:async(id)=>{calls.push(['recover',id]);return true;}};

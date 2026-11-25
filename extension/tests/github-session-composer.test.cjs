@@ -21,6 +21,9 @@ test('content composer prepares without posting, dispatches native input events,
 test('content composer preserves other drafts and rejects hidden, duplicate or disabled controls',async()=>{
  const h=harness();h.box.value='Existing personal draft';await assert.rejects(h.reader.dispatch(request),/another draft/);assert.equal(h.box.value,'Existing personal draft');assert.equal(h.state.clicks,0);
  h.box.value='';h.box.hidden=true;await assert.rejects(h.reader.dispatch(request),/composer/);h.box.hidden=false;h.button.disabled=true;await assert.rejects(h.reader.dispatch(request),/enabled/);assert.equal(h.state.clicks,0);
+ const missing=harness();missing.doc.querySelectorAll=()=>[];
+ await assert.rejects(missing.reader.dispatch(request),{code:'WEBSITE_ISSUE_COMPOSER_MISSING'});
+ assert.equal(missing.state.clicks,0);
  const duplicate=harness();duplicate.doc.querySelectorAll=()=>[duplicate.box,duplicate.box];assert.throws(()=>duplicate.api.composer(duplicate.doc),/composer/);
 });
 test('navigation, draft edits, expiry, and website account changes after prepare prevent publication',async()=>{

@@ -36,11 +36,14 @@
   let url;try{url=new URL(form?.getAttribute('action')||'','https://github.com');}catch{}
   if(!form||nodes.some(node=>node.form!==form)||String(form.getAttribute('method')||'get').toLowerCase()!=='post'||!url||url.origin!=='https://github.com'||url.username||url.password||url.search||url.hash||url.pathname.toLowerCase()!==('/'+repository+path).toLowerCase())throw problem('GitHub Discussion form target changed. Nothing was sent.');
  }
- function composer(doc,context={}){
+ function composer(doc,context={},initialPrepare=false){
   const labels=node=>String(node.getAttribute('aria-label')||[...(node.labels||[])].map(n=>n.textContent).join(' ')||(node.getAttribute('aria-labelledby')||'').split(/\s+/).map(id=>doc.getElementById(id)?.textContent||'').join(' ')).trim();
   const visible=n=>n.isConnected!==false&&!n.hidden&&!n.closest('[hidden],[aria-hidden="true"]')&&n.getClientRects().length>0;
-  const boxes=[...doc.querySelectorAll('main textarea')].filter(n=>!n.disabled&&!n.readOnly&&visible(n)&&!n.closest('.markdown-body')&&(labels(n)==='Add a comment'||n.getAttribute('placeholder')==='Use Markdown to format your comment'||n.getAttribute('name')==='comment[body]'&&labels(n)==='Comment'));
-  if(boxes.length!==1)throw problem('Open the issue on GitHub so its comment composer is available.');
+  const candidates=[...doc.querySelectorAll('main textarea')].filter(n=>!n.closest('.markdown-body')&&(labels(n)==='Add a comment'||n.getAttribute('placeholder')==='Use Markdown to format your comment'||n.getAttribute('name')==='comment[body]'&&labels(n)==='Comment'));
+  const boxes=candidates.filter(n=>!n.disabled&&!n.readOnly&&visible(n));
+  if(!candidates.length&&initialPrepare&&context.kind==='issue')throw Object.assign(
+   Error('The GitHub comment composer is unavailable. Open the issue on GitHub to post. No comment was sent.'),{code:'WEBSITE_ISSUE_COMPOSER_MISSING'});
+  if(boxes.length!==1)throw problem('Open the conversation on GitHub to use its comment composer.');
   const box=boxes[0];
   for(let parent=box.parentElement;parent&&parent.tagName!=='MAIN';parent=parent.parentElement){
    const buttons=[...parent.querySelectorAll('button')].filter(n=>visible(n)&&!n.closest('.markdown-body')&&n.textContent.trim()==='Comment'&&n.getAttribute?.('name')!=='comment_and_close');
@@ -193,7 +196,7 @@
    }finally{clearTimeout(timer);}
   }
   async function dispatch(message){
-   const {repository,action,number}=message,kind=message.kind||'issue';scope(repository,location);if(!['issue','discussion'].includes(kind))throw problem('Unsupported website conversation type.');const currentComposer=()=>composer(document,{repository,number,kind});
+   const {repository,action,number}=message,kind=message.kind||'issue';scope(repository,location);if(!['issue','discussion'].includes(kind))throw problem('Unsupported website conversation type.');const currentComposer=initialPrepare=>composer(document,{repository,number,kind},initialPrepare);
    const creating=['prepare-create','verify-create','commit-create'].includes(action);
    const snapshot=(doc)=>kind==='discussion'?discussionData(doc,repository,number):threadData(doc,repository,number);
    if(!['inspect','read','prepare','verify','commit','list','categories','mentions','prepare-create','verify-create','commit-create','update-prepared','lease-inspect'].includes(action)||!['list','categories','mentions','lease-inspect'].includes(action)&&!creating&&action!=='update-prepared'&&!integer(number))throw problem('Unsupported website review operation.');
@@ -324,7 +327,7 @@
     if(typeof message.body!=='string'||!message.body.trim()||new TextEncoder().encode(message.body).length>60000)throw problem('Invalid website review message.');
     exactPage();if(login(document)!==account)throw problem('GitHub account changed. Nothing sent.');
     if(thread.comments.some(n=>n.body===message.body&&n.author===account))throw problem('This exact message is already on GitHub. Refresh the conversation instead of sending it again.');
-    const {box}=currentComposer();if(box.value.trim()&&box.value!==message.body)throw problem('The GitHub composer already contains another draft. Nothing was overwritten.');
+    const {box}=currentComposer(true);if(box.value.trim()&&box.value!==message.body)throw problem('The GitHub composer already contains another draft. Nothing was overwritten.');
     const setter=Object.getOwnPropertyDescriptor(root.HTMLTextAreaElement.prototype,'value').set;
     setter.call(box,message.body);box.dispatchEvent(new Event('input',{bubbles:true}));box.dispatchEvent(new Event('change',{bubbles:true}));await delay(150);
     exactPage();const current=currentComposer();if(current.box!==box||box.value!==message.body||current.button.disabled)throw problem('GitHub has not enabled Send for this draft. Nothing sent.');

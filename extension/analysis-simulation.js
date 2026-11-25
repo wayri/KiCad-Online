@@ -46,8 +46,8 @@
   return {move(point){if(disposed||panel.hidden||!point||!Number.isFinite(point.x)||!Number.isFinite(point.y))return;anchor=point;position();},show({report,selection,anchor:point}){if(disposed)return [];entries=match(report,selection);if(!entries.length){hide();return [];}anchor=point&&Number.isFinite(point.x)&&Number.isFinite(point.y)?point:{x:8,y:8};title.textContent=selection.qualifiedNetName||selection.netName;select.replaceChildren();entries.forEach((entry,i)=>{const option=make('option',entry.series.name+' · '+entry.plot.title);option.value=String(i);select.append(option);});panel.hidden=false;choose();return entries;},hide,dispose(){disposed=true;root.removeEventListener('resize',resize);panel.remove();entries=[];active=null;}};
  }
 
- const librarySources=[['kicad','KiCad internal'],['wayricad','WayriCAD'],['other','Other exports']];
- function openLibrary({document,storage,loadInventory,classify,openReport,linkReport,locateSignal,openFastDrop}){
+ const librarySources=[['kicad','KiCad internal'],['wayricad','WayriCAD'],['emerge','EMerge'],['other','Other exports']];
+ function openLibrary({document,storage,loadInventory,classify,openReport,linkReport,locateSignal,openFastDrop,openLocal}){
   const make=(tag,text)=>{const node=document.createElement(tag);if(text)node.textContent=text;return node;};
   const button=(text,action)=>{const node=make('button',text);node.type='button';node.onclick=action;return node;};
   const dialog=make('dialog');dialog.className='bom-manager saved-reports-dialog';
@@ -58,6 +58,7 @@
   body.className='saved-reports-content';tools.className='saved-reports-tools';
   sources.className='saved-report-segments';sources.setAttribute('aria-label','Result source');
   layout.className='saved-report-segments';layout.setAttribute('role','group');layout.setAttribute('aria-label','Results layout');
+  if(openLocal)heading.insertBefore(button('Open local result',openLocal),heading.lastChild);
   const search=make('input');search.type='search';search.placeholder='Find a workbook or result';search.setAttribute('aria-label','Find saved result');
   const status=make('p');status.className='saved-report-status';status.setAttribute('role','status');
   const list=make('div');list.className='saved-report-list';
@@ -105,7 +106,7 @@
      control.className='quiet-button';actions.append(control);
     }
    }
-   if(linkReport&&/\.(csv|tsv|raw|json)$/i.test(entry.path)){
+   if(linkReport&&entry.family!=='emerge'&&/\.(csv|tsv|raw|json)$/i.test(entry.path)){
     const linked=make('div');linked.className='saved-report-link';
     const control=button('Link net plots',async()=>{
      const ticket=++linkTicket;control.disabled=true;status.textContent='Loading saved samples…';
@@ -165,7 +166,7 @@
   Promise.resolve().then(loadInventory).then(result=>{
    if(disposed)return;
    inventory=result;
-   const paths=[...new Set((result.files||[]).map(file=>file.path).filter(path=>typeof path==='string'&&(/\.(json|csv|tsv|wbk|raw|html?)$/i.test(path)||/\.txt$/i.test(path)&&/(report|analysis|sim|thermal|mechanic)/i.test(path))))];
+   const paths=[...new Set((result.files||[]).map(file=>file.path).filter(path=>typeof path==='string'&&(/\.(json|csv|tsv|wbk|raw|html?|egres|s[1-9][0-9]?p)$/i.test(path)||/\.txt$/i.test(path)&&/(report|analysis|sim|thermal|mechanic)/i.test(path))))];
    entries=paths.map(path=>({path,family:classify(path),workbook:/\.wbk$/i.test(path)}))
     .sort((a,b)=>Number(b.workbook)-Number(a.workbook)||a.path.localeCompare(b.path));
    render();openOnlyWorkbook();

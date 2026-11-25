@@ -36,22 +36,23 @@
   link.append(badge);link.append(name);link.append(folder);
   return link;
  }
- function populate(info,files,standalone,directories,gerbers){
+ function populate(info,files,standalone,directories,gerbers,partial){
   let page=0,folderLimit=pageSize,showDrawings=false;
   filter.value='';drawings.hidden=!standalone.length;drawings.setAttribute('aria-pressed','false');
   folders.open=folderOnly;
-  browse.hidden=files.length<=1&&!standalone.length&&!directories.length&&!folderOnly;
+  browse.hidden=files.length<=1&&!standalone.length&&!directories.length&&!folderOnly&&!partial&&!repositoryProjects;
   folderRoot.hidden=folderOnly||!directories.length;folderRoot.href=KiCadProjectLaunch.folderURL(info,info.directory||'',getURL);
   folderUp.hidden=!folderOnly||!info.directory;
   if(!folderUp.hidden)folderUp.href=KiCadProjectLaunch.folderURL(info,info.directory.split('/').slice(0,-1).join('/'),getURL);
   function render(){
-   const term=filter.value.trim().toLowerCase(),match=path=>path.toLowerCase().includes(term);
-   const matching=(showDrawings?standalone:files).filter(match),linkedFolders=directories.filter(match);
+   const term=filter.value.trim().toLowerCase(),words=term.split(/\s+/).filter(Boolean),match=path=>{const normalized=path.toLowerCase();return words.every(word=>normalized.includes(word));};
+   const matching=(showDrawings?standalone:term?[...files,...standalone]:files.length?files:standalone).filter(match);
+   const matchedFolders=directories.filter(match),linkedFolders=term&&partial&&!matchedFolders.length?directories:matchedFolders;
    const pageCount=Math.ceil(matching.length/pageSize);
    projects.replaceChildren();
    if(!term&&!page&&!showDrawings&&gerbers)projects.append(gerbers);
    for(const file of matching.slice(page*pageSize,(page+1)*pageSize))projects.append(projectCard(info,file));
-   if(term&&!matching.length&&!linkedFolders.length){const empty=document.createElement('p');empty.textContent='No matches in this listing.';projects.append(empty);}
+   if(term&&!matching.length&&!matchedFolders.length){const empty=document.createElement('p');empty.textContent=partial?'No matches in the scanned folders. Browse a folder to search its contents.':'No matching projects or drawings.';projects.append(empty);}
    pages.hidden=pageCount<=1;previous.disabled=page===0;next.disabled=page+1>=pageCount;
    pageStatus.textContent=pageCount?'Page '+(page+1)+' of '+pageCount:'';
    folders.hidden=!linkedFolders.length;if(term)folders.open=true;
@@ -81,7 +82,7 @@
    const reply=await (globalThis.KiCadChunkedReplies?KiCadChunkedReplies.send(chrome.runtime,message):chrome.runtime.sendMessage(message));
    if(!reply?.ok)throw Error(reply?.accessIssue?[reply.accessIssue.title,reply.accessIssue.message,reply.accessIssue.action].join(' '):reply?.error||'Repository discovery failed. Reload the extension and try again.');
    const result=reply.result;
-   if(!/^[a-f0-9]{40}$/i.test(result?.sha||'')||!Array.isArray(result.projects)||result.projects.length>8000||result.folders!==undefined&&(!Array.isArray(result.folders)||result.folders.length>8000))throw Error('Invalid repository discovery response.');
+   if(!/^[a-f0-9]{40}$/i.test(result?.sha||'')||!Array.isArray(result.projects)||result.projects.length>24000||result.folders!==undefined&&(!Array.isArray(result.folders)||result.folders.length>24000))throw Error('Invalid repository discovery response.');
    if(result.headRepository!==undefined&&!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(result.headRepository)||result.base!==undefined&&!/^[a-f0-9]{40}$/i.test(result.base))throw Error('Invalid pull request discovery response.');
    if(context.revisionKind==='commit'&&!result.sha.toLowerCase().startsWith(context.ref.toLowerCase()))throw Error('The discovered commit does not match the requested commit.');
    if(repositoryProjects&&/^[a-f0-9]{40}$/i.test(context.ref||'')&&result.sha.toLowerCase()!==context.ref.toLowerCase())throw Error('The repository listing does not match the open project revision.');
@@ -99,8 +100,8 @@
    if(!Number.isInteger(count)||count<0||count>1000)throw Error('Invalid fabrication discovery response.');
    const gerbers=count?fabricationCard({...info,directory:result.directory||''},count):null;
    if(!repositoryProjects&&files.length===1&&!gerbers&&!result.truncated){location.replace(KiCadProjectLaunch.viewerURL(info,files[0],p=>chrome.runtime.getURL(p)));return;}
-   title.textContent=repositoryProjects?'Repository projects':gerbers?'Open repository files':files.length?'Choose a KiCad project':result.truncated?'Project discovery incomplete':'No KiCad project detected';
-   status.textContent=gerbers&&(!repositoryProjects||!files.length)?(files.length?'Choose a KiCad project or view fabrication files.':'Fabrication files are ready to open.') :files.length?files.length+' KiCad project'+(files.length===1?'':'s')+' found.':result.truncated?'No KiCad project detected in the partial listing. Additional folders may contain projects.':'No KiCad project detected in this repository revision.';
+   title.textContent=repositoryProjects?'Repository projects':gerbers?'Open repository files':files.length?'Choose a KiCad project':result.truncated?'Project discovery incomplete':standalone.length?'Choose a KiCad drawing':'No KiCad project detected';
+   status.textContent=gerbers&&(!repositoryProjects||!files.length)?(files.length?'Choose a KiCad project or view fabrication files.':'Fabrication files are ready to open.') :files.length?files.length+' KiCad project'+(files.length===1?'':'s')+' found.':standalone.length?standalone.length+' standalone drawing'+(standalone.length===1?'':'s')+' found.':result.truncated?'No KiCad project detected in the partial listing. Additional folders may contain projects.':'No KiCad project detected in this repository revision.';
    if(gerbers){
     if(repositoryProjects&&files.length){
      const link=document.createElement('a');link.href=gerbers.href;link.textContent='View Gerbers and drill files';other.append(link);other.hidden=false;
@@ -108,7 +109,7 @@
    }
    if(result.truncated){retry.hidden=false;details.textContent+=' · Partial listing; additional projects may exist.';}
    if(info.directory)details.textContent+=' / '+info.directory;
-   populate(info,files,standalone,directories,repositoryProjects&&files.length?null:gerbers);
+   populate(info,files,standalone,directories,repositoryProjects&&files.length?null:gerbers,Boolean(result.truncated));
   }catch(error){title.textContent='Project discovery unavailable';status.className='error';status.textContent='! '+error.message;localAlternative();retry.hidden=false;}
   finally{busy=false;loading?.hide();}
  }

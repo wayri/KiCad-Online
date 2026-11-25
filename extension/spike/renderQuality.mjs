@@ -69,7 +69,7 @@ export function probeViewportPlan(width,height,deviceRatio=1){
  return {ratio,width:Math.max(1,Math.floor(w*ratio)),height:Math.max(1,Math.floor(h*ratio)),maxPixels:500000};
 }
 
-export {copperDepthPolicy, copperCapMaterials, configureCopperDepth, createLinearCopperMaterials} from './copperDepth.mjs';
+export {copperDepthPolicy, copperCapMaterials, configureCopperDepth, createLinearCopperMaterials, registerCopperDepthPrecision} from './copperDepth.mjs';
 
 /** GTAO and its denoiser reconstruct projection depth from the normal target. */
 export function configureOcclusionDepth(material) {

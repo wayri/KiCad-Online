@@ -255,7 +255,7 @@
       super();this.host=host;this.geometryBounds=new WeakMap();this.frameRequest=null;this.canvas=document.createElement('canvas');this.canvas.className='owned-canvas';this.canvas.tabIndex=0;this.canvas.setAttribute('aria-label','Interactive KiCad drawing; click to select, right-drag to pan, wheel to zoom');host.append(this.canvas);
 
       this.ctx=this.canvas.getContext('2d');if(!this.ctx)throw new Error('Canvas2D rendering is unavailable.');this.viewport={camera:new Camera()};this.primitives=[];this.visibleLayers=new Set();this.dark=Boolean(options.dark);this.pcb=Boolean(options.pcb);this.showPinOneMarkers=options.showPinOneMarkers!==false;this.showTerminalNumbers=options.showTerminalNumbers!==false;this.netNames=new Map();this.grid=false;this.selected=null;this.drag=null;this.netHighlight=null;this.netPrimitives=new Set();this.isolateNet=false;this.paperVisible=options.worksheet!==false;this.worksheetVisible=options.worksheet!==false;this.activeLayer='F.Cu';this.focusedLayer=null;this.layerFocusMode='dim';this.layerSnapshot=null;this.layerPresetName=null;
-      this.acceleration=options.acceleration==='off'?'off':'auto';this.motion=null;this.motionSnapshot=null;this.motionActive=false;this.motionFailed=false;this.motionTimer=null;this.wheelMotion=false;
+      this.acceleration=options.acceleration==='off'?'off':'auto';this.motion=null;this.motionSnapshot=null;this.motionSnapshotState=null;this.motionActive=false;this.motionFailed=false;this.motionTimer=null;this.wheelMotion=false;
 
       this.layers={query_point:at=>this.query(at).map(p=>({bbox:{context:{uuid:p.uuid,reference:p.reference,kind:p.kind,name:p.name,pinNumber:p.pinNumber,pinName:p.pinName,ownerUuid:p.ownerUuid,connectPoint:p.connectPoint,parent:p.ownerUuid?{uuid:p.ownerUuid}:null},primitive:p}}))};
 
@@ -499,7 +499,7 @@
       return !this.disposed&&this.acceleration!=='off'&&!this.motionFailed&&this.primitives.length>=4096&&this.primitives.length<20000&&!this.renderPrimitives&&Boolean(root.KiCadMotionWebGL);
     }
     releaseMotion(){
-      this.motion?.dispose();this.motion=null;this.motionSnapshot=null;
+      this.motion?.dispose();this.motion=null;this.motionSnapshot=null;this.motionSnapshotState=null;
       this.canvas.style.opacity='';this.motionActive=false;
     }
     releaseTransientGeometry(){
@@ -507,23 +507,51 @@
       this.pointCache=new WeakMap();this.pathCache=new WeakMap();this.pathCachePoints=0;this.pathCacheCount=0;
       this.releaseMotion();
     }
+    captureMotionSnapshot(maxSize){
+      const c=this.viewport.camera,w=c.width,h=c.height;
+      if(!(w>0&&h>0))return false;
+      const ratio=Math.min(globalThis.devicePixelRatio||1,Math.sqrt(4000000/(w*h*2.25)),maxSize/(w*1.5),maxSize/(h*1.5));
+      const width=Math.max(1,Math.round(w*1.5*ratio)),height=Math.max(1,Math.round(h*1.5*ratio));
+      const snapshot=this.motionSnapshot||=document.createElement('canvas');
+      if(snapshot.width!==width)snapshot.width=width;
+      if(snapshot.height!==height)snapshot.height=height;
+      const context=snapshot.getContext('2d');
+      if(!context)return false;
+      const originalCanvas=this.canvas,originalContext=this.ctx;
+      this.motionSnapshotState=null;
+      try{
+        this.canvas=snapshot;this.ctx=context;c.width=w*1.5;c.height=h*1.5;
+        this.drawGeometry(!this.pcb,ratio);
+        this.motionSnapshotState=this.cameraState();
+      }finally{
+        this.canvas=originalCanvas;this.ctx=originalContext;c.width=w;c.height=h;
+      }
+      return true;
+    }
     prepareMotion(){
-      // Large scenes avoid synchronous GPU allocation and upload for gesture frames.
+      // Dense scenes avoid GPU allocation/upload for gesture frames.
       if(!this.canUseMotionTexture())return false;
       try{
         if(!this.motion){this.motion=new root.KiCadMotionWebGL.Motion(this.host);this.motion.onLost=()=>{this.motionFailed=true;this.finishMotion();};}
         if(this.motion.saved)return true;
-        const c=this.viewport.camera,w=c.width,h=c.height,max=this.motion.gl.getParameter(this.motion.gl.MAX_TEXTURE_SIZE);
-        const ratio=Math.min(globalThis.devicePixelRatio||1,Math.sqrt(4000000/(w*h*2.25)),max/(w*1.5),max/(h*1.5));
-        const width=Math.round(w*1.5*ratio),height=Math.round(h*1.5*ratio);
-        if(width*height>root.KiCadMotionWebGL.MAX_PIXELS||width>max||height>max)return false;
-        const snapshot=this.motionSnapshot||=document.createElement('canvas');if(snapshot.width!==width)snapshot.width=width;if(snapshot.height!==height)snapshot.height=height;
-        const context=snapshot.getContext('2d');if(!context)return false;
-        const originalCanvas=this.canvas,originalContext=this.ctx;let saved;
-        try{this.canvas=snapshot;this.ctx=context;c.width=w*1.5;c.height=h*1.5;saved=this.cameraState();this.drawGeometry(true,ratio);}
-        finally{this.canvas=originalCanvas;this.ctx=originalContext;c.width=w;c.height=h;}
-        this.motion.upload(snapshot,saved);return true;
+        if(!this.captureMotionSnapshot(this.motion.gl.getParameter(this.motion.gl.MAX_TEXTURE_SIZE)))return false;
+        this.motion.upload(this.motionSnapshot,this.motionSnapshotState);
+        return true;
       }catch{this.motionFailed=true;this.releaseMotion();return false;}
+    }
+    paintMotionSnapshot(){
+      const transform=root.KiCadMotionWebGL?.transform;
+      if(!this.pcb||this.disposed||this.renderPrimitives||this.primitives.length<4096||!transform)return false;
+      const state=this.cameraState();
+      let rect=this.motionSnapshotState&&transform(this.motionSnapshotState,state);
+      if(!rect){
+        if(!this.captureMotionSnapshot(4096))return false;
+        rect=transform(this.motionSnapshotState,state);
+      }
+      if(!rect)return false;
+      this.ctx.setTransform(this.canvas.width/state.width,0,0,this.canvas.height/state.height,0,0);
+      this.ctx.drawImage(this.motionSnapshot,rect.x,rect.y,rect.width,rect.height);
+      return true;
     }
     motionFrame(){
       if(!this.isMoving())return false;
@@ -545,7 +573,7 @@
         if(this.hoverCanvas)this.hoverCanvas.hidden=true;
         if(!this.motionFrame()){
           this.motion?.hide();this.canvas.style.opacity='';this.motionActive=false;
-          this.drawGeometry(true);
+          if(!this.paintMotionSnapshot())this.drawGeometry(!this.pcb);
         }
         this.dispatchEvent(new CustomEvent('kicad:viewframe'));
       });
@@ -613,6 +641,7 @@
     draw(){
       this.setHoverNet(null);
       if(this.motionTimer!==null){clearTimeout(this.motionTimer);this.motionTimer=null;}this.wheelMotion=false;
+      this.motionSnapshotState=null;
       if(!this.canUseMotionTexture())this.releaseMotion();
       this.motion?.hide();if(this.motion)this.motion.saved=null;this.canvas.style.opacity='';this.motionActive=false;
       if(!this.canvas.hidden)this.drawGeometry();
