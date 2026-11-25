@@ -797,7 +797,7 @@
         return;
       }
       if(event.key==='Escape'&&floatingToggle?.getAttribute('aria-expanded')==='true'){event.preventDefault();closeFloatingLayers();return;}
-      if(event.key==='Escape'&&canvas.focusedLayer){canvas.restoreLayers();layers();canvas.draw();}else if(['[',']'].includes(event.key)&&pcb){event.preventDefault();stepCopper(event.key===']'?1:-1);}else if(event.shiftKey&&event.key.toLowerCase()==='f'&&canvas.focusedLayer){event.preventDefault();$('fitLayer').click();}else if(['+','='].includes(event.key)){event.preventDefault();zoom(1.25);}else if(['-','_'].includes(event.key)){event.preventDefault();zoom(1/1.25);}else if(event.key.toLowerCase()==='f'){event.preventDefault();fit('drawing');}else if(event.key==='Home'){event.preventDefault();fit('page');}else if(event.key.toLowerCase()==='t'){event.preventDefault();preferences.drawingTheme=dark?'light':'dark';applyTheme();savePreferences();}
+      if(event.key==='Escape'&&canvas.focusedLayer){event.preventDefault();canvas.restoreLayers();layers();canvas.draw();}else if(['[',']'].includes(event.key)&&pcb){event.preventDefault();stepCopper(event.key===']'?1:-1);}else if(event.shiftKey&&event.key.toLowerCase()==='f'&&canvas.focusedLayer){event.preventDefault();$('fitLayer').click();}else if(['+','='].includes(event.key)){event.preventDefault();zoom(1.25);}else if(['-','_'].includes(event.key)){event.preventDefault();zoom(1/1.25);}else if(event.key.toLowerCase()==='f'){event.preventDefault();fit('drawing');}else if(event.key==='Home'){event.preventDefault();fit('page');}else if(event.key.toLowerCase()==='t'){event.preventDefault();preferences.drawingTheme=dark?'light':'dark';applyTheme();savePreferences();}
 
     });
 

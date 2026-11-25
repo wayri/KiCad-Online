@@ -5,7 +5,7 @@ const tick=()=>new Promise(resolve=>setImmediate(resolve)),plain=value=>JSON.par
 async function revision(query='',extraFiles=[],options={}){
  const captureFits=options.captureFits;
  const listeners=new Map(),canvasListeners=new Map(),controls=new Map(),reports=[],calls={board:0,page:0,draw:0,disposed:0,attach:0};
- class Element{constructor(){this.attributes={};this.children=[];this.listeners=new Map();this.hidden=false;this.dataset={viewer:'auto'};this.isConnected=true;const classes=new Set();this.classList={add:n=>classes.add(n),remove:n=>classes.delete(n),contains:n=>classes.has(n),toggle(n,on){const next=on??!classes.has(n);if(next)classes.add(n);else classes.delete(n);return next;}};this.style={};}setAttribute(k,v){this.attributes[k]=String(v);}getAttribute(k){return this.attributes[k]??null;}append(...children){this.children.push(...children);}addEventListener(type,fn){if(!this.listeners.has(type))this.listeners.set(type,new Set());this.listeners.get(type).add(fn);}removeEventListener(type,fn){this.listeners.get(type)?.delete(fn);}remove(){}replaceChildren(...children){this.children=[...children];}click(){const result=this.onclick?.();for(const listener of this.listeners.get('click')||[])listener();return result;}}
+ class Element{constructor(){this.attributes={};this.children=[];this.listeners=new Map();this.hidden=false;this.dataset={viewer:'auto'};this.isConnected=true;const classes=new Set();this.classList={add:n=>classes.add(n),remove:n=>classes.delete(n),contains:n=>classes.has(n),toggle(n,on){const next=on??!classes.has(n);if(next)classes.add(n);else classes.delete(n);return next;}};this.style={};}setAttribute(k,v){this.attributes[k]=String(v);}getAttribute(k){return this.attributes[k]??null;}append(...children){this.children.push(...children);}contains(node){return node===this||this.children.some(child=>child===node||child.contains?.(node));}addEventListener(type,fn){if(!this.listeners.has(type))this.listeners.set(type,new Set());this.listeners.get(type).add(fn);}removeEventListener(type,fn){this.listeners.get(type)?.delete(fn);}remove(){}replaceChildren(...children){this.children=[...children];}click(){const result=this.onclick?.();for(const listener of this.listeners.get('click')||[])listener();return result;}}
  Element.prototype.insertBefore=function(child,before){const index=this.children.indexOf(before);if(index<0)this.children.push(child);else this.children.splice(index,0,child);};
  const get=id=>{if(!controls.has(id)){const element=new Element();if(id==='viewerSettings')element.hidden=true;controls.set(id,element);}return controls.get(id);};
  const camera=new core.Camera(800,600),parent={postMessage:(data,origin)=>reports.push({data,origin})};
@@ -153,7 +153,7 @@ test('remote viewer pins branch before loading drawings and passes the same comm
 test('floating layer selector highlights with visible context, optionally isolates and restores the previous view',async()=>{
  const v=await revision('',[],{pcb:true,layers:['F.Cu','In1.Cu','In2.Cu','B.Cu','Edge.Cuts']});
  const bar=v.get('drawingHost').children.find(child=>child.id==='floatingLayerSelector');
- assert.ok(bar);assert.equal(bar.hidden,false);const toggle=bar.children[0],mode=bar.children[1].children[0],buttons=bar.children[1].children.slice(1).filter(node=>node.className!=='pin-one-toggle').map(node=>node.className==='compact-layer-item'?node.children[0]:node);assert.equal(toggle.attributes['aria-expanded'],'false');toggle.click();assert.equal(toggle.attributes['aria-expanded'],'true');assert.deepEqual(buttons.map(button=>button.dataset.layer),['F.Cu','In1.Cu','In2.Cu','B.Cu','Edge.Cuts','All','Overview','Filled copper','Zone outlines','Worksheet','Numbers','Net names']);
+ assert.ok(bar);assert.equal(bar.hidden,false);const toggle=bar.children[0],mode=bar.children[1].children[0],options=bar.children[1],rows=options.children.find(node=>node.className==='compact-layer-rows'),presets=options.children.find(node=>node.className==='compact-layer-presets'),buttons=[...rows.children.map(row=>row.children[0]),...presets.children,...options.children.filter(node=>node.dataset.layer)];assert.equal(toggle.attributes['aria-expanded'],'false');toggle.click();assert.equal(toggle.attributes['aria-expanded'],'true');assert.deepEqual(buttons.map(button=>button.dataset.layer),['F.Cu','In1.Cu','In2.Cu','B.Cu','Edge.Cuts','All','Overview','Filled copper','Zone outlines','Worksheet','Numbers','Net names']);
  v.canvas.visibleLayers=new Set(['F.Cu','Edge.Cuts']);
  buttons[1].click();assert.equal(toggle.attributes['aria-expanded'],'true');assert.equal(toggle.textContent,'In1.Cu');assert.equal(v.canvas.focusedLayer,'In1.Cu');assert.equal(v.canvas.layerFocusMode,'dim');assert.equal(buttons[1].attributes['aria-pressed'],'true');assert.ok(v.canvas.visibleLayers.has('F.Cu'));assert.equal(mode.value,'dim');mode.value='isolate';mode.onchange();assert.equal(v.canvas.layerFocusMode,'isolate');mode.value='dim';mode.onchange();assert.equal(v.canvas.layerFocusMode,'dim');
  buttons.find(button=>button.dataset.layer==='All').click();assert.deepEqual([...v.canvas.visibleLayers],v.canvas.design.layers);assert.equal(v.canvas.focusedLayer,null);
@@ -169,26 +169,28 @@ test('floating layer selector highlights with visible context, optionally isolat
 });
 
 
-test('layer eyes toggle visibility independently and the expanded bar survives clicks until pointer departure',async()=>{
+test('layer eyes toggle visibility independently and the picker stays open until dismissal',async()=>{
  const v=await revision('',[],{pcb:true,layers:['F.Cu','In1.Cu','B.Cu','Edge.Cuts','F.SilkS']});
- const bar=v.get('drawingHost').children.find(child=>child.id==='floatingLayerSelector'),toggle=bar.children[0],items=bar.children[1].children.filter(node=>node.className==='compact-layer-item');
+ const bar=v.get('drawingHost').children.find(child=>child.id==='floatingLayerSelector'),toggle=bar.children[0],items=bar.children[1].children.find(node=>node.className==='compact-layer-rows').children;
  assert.deepEqual(items.map(item=>item.children[1].dataset.layerVisibility),v.canvas.design.layers);
  v.canvas.visibleLayers=new Set(v.canvas.design.layers);v.canvas.draw();toggle.click();const eye=items[1].children[1];eye.click();assert.equal(v.canvas.visibleLayers.has('In1.Cu'),false);assert.equal(eye.attributes['aria-label'],'Show In1.Cu');assert.equal(eye.attributes['aria-pressed'],'false');assert.equal(toggle.attributes['aria-expanded'],'true');
  eye.click();assert.equal(v.canvas.visibleLayers.has('In1.Cu'),true);assert.equal(eye.attributes['aria-label'],'Hide In1.Cu');assert.equal(toggle.attributes['aria-expanded'],'true');
- for(const listener of bar.listeners.get('pointerleave'))listener({});assert.equal(toggle.attributes['aria-expanded'],'false');
- toggle.click();for(const listener of bar.listeners.get('keydown'))listener({key:'Tab'});for(const listener of bar.listeners.get('pointerleave'))listener({});assert.equal(toggle.attributes['aria-expanded'],'true','keyboard navigation is not dismissed by pointer departure');
- for(const listener of bar.listeners.get('keydown'))listener({key:'Escape',preventDefault(){},stopPropagation(){}});assert.equal(toggle.attributes['aria-expanded'],'false');
+ for(const listener of bar.listeners.get('focusout'))listener({relatedTarget:eye});assert.equal(toggle.attributes['aria-expanded'],'true');
+ for(const listener of bar.listeners.get('focusout'))listener({relatedTarget:v.get('fitButton')});assert.equal(toggle.attributes['aria-expanded'],'false');
+ toggle.click();for(const listener of bar.listeners.get('keydown'))listener({key:'Escape',preventDefault(){},stopPropagation(){}});assert.equal(toggle.attributes['aria-expanded'],'false');
 });
 
-test('layer selector opens on mouse hover, remains open through layer clicks and ignores touch hover',async()=>{
- const v=await revision('',[],{pcb:true,layers:['F.Cu','B.Cu']});
+test('layer picker shortcuts open the controls, cycle copper and switch isolation',async()=>{
+ const v=await revision('',[],{pcb:true,layers:['F.Cu','In1.Cu','B.Cu','Edge.Cuts']});
  const bar=v.get('drawingHost').children.find(child=>child.id==='floatingLayerSelector'),toggle=bar.children[0];
- for(const listener of bar.listeners.get('pointerenter'))listener({pointerType:'touch'});assert.equal(toggle.attributes['aria-expanded'],'false');
- const host=v.get('drawingHost');host.getBoundingClientRect=()=>({left:0,top:0,right:800,bottom:600,width:800,height:600});const navigator=v.get('designNavigator');navigator.hidden=false;navigator.getClientRects=()=>[{}];navigator.getBoundingClientRect=()=>({left:0,top:0,right:250,bottom:600,width:250,height:600});
- for(const listener of bar.listeners.get('pointerenter'))listener({pointerType:'mouse'});assert.equal(toggle.attributes['aria-expanded'],'true');assert.equal(bar.style.left,'258px');
- toggle.click();assert.equal(toggle.attributes['aria-expanded'],'true');
- const eye=bar.children[1].children.find(node=>node.className==='compact-layer-item').children[1];eye.click();assert.equal(toggle.attributes['aria-expanded'],'true');
- for(const listener of bar.listeners.get('pointerleave'))listener({});assert.equal(toggle.attributes['aria-expanded'],'false');
+ assert.equal(toggle.attributes['aria-expanded'],'false');
+ assert.equal(v.key('l'),true);assert.equal(toggle.attributes['aria-expanded'],'true');
+ assert.equal(v.key(']'),true);assert.equal(v.canvas.focusedLayer,'F.Cu');
+ assert.equal(v.key(']'),true);assert.equal(v.canvas.focusedLayer,'In1.Cu');
+ assert.equal(v.key('['),true);assert.equal(v.canvas.focusedLayer,'F.Cu');
+ assert.equal(v.key('L',[],{shiftKey:true}),true);assert.equal(v.canvas.layerFocusMode,'isolate');
+ assert.equal(v.key('Escape'),true);assert.equal(toggle.attributes['aria-expanded'],'false');
+ assert.equal(v.key('Escape'),true);assert.equal(v.canvas.focusedLayer,null);
 });
 
 test('sheet tree floats below the drawing, minimizes, closes, reopens from settings and focuses a page',async()=>{
