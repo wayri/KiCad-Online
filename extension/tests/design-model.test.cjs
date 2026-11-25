@@ -3,6 +3,18 @@ const assert = require("node:assert/strict");
 const { buildProject, applyVariant, parseVariantConfig } = require("../design-model.js");
 
 const file = (path, content) => ({ path, content });
+test("saved component classes and rule area selection retain their native source", () => {
+  const board = file("classes.kicad_pcb", '(kicad_pcb (footprint "Fixture:J" (uuid "fp") (at 10 10) (component_classes (class "Drive") (class "Control") (class "Drive"))))');
+  const path = "schematic-rule-areas.kicad_sch";
+  const fixture = require("node:fs").readFileSync(require("node:path").join(__dirname, "fixtures", path), "utf8");
+  const design = buildProject([board,file(path,fixture)]);
+  assert.deepEqual(design.objects.find(item => item.kind === "footprint").savedComponentClasses, ["Control","Drive"]);
+  assert.deepEqual(design.objects.find(item => item.kind === "symbol").savedComponentClasses, ["Explicit"]);
+  const area = design.objects.find(item => item.kind === "rule_area");
+  assert.equal(area.uuid, "7785290c-7d47-47b9-ac4b-d408c6ad807a");
+  assert.deepEqual(area.position, {x:50,y:50});
+  assert.equal(area.saved.tree[1][0], "polyline");
+});
 const part = (ref, uuid, unit, extra = "") => `(symbol (lib_id "74xx:7400") (at ${unit * 10} 20)
   (unit ${unit}) (in_bom yes) (on_board yes) (dnp no)
   (property "Reference" "${ref}") (property "Value" "7400")

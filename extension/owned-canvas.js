@@ -295,10 +295,46 @@
 
     cancelBoundsFit(){if(this.pendingFit&&typeof this.pendingFit==='object')this.pendingFit=null;}
 
-    setDocument(design,path){this.pendingFit=null;this.resize();this.design=design;this.document={filename:path};this.primitives=design.primitives;this.visibleLayers=new Set(design.layers||[]);this.selected=null;this.focusedLayer=null;this.layerSnapshot=null;this.layerPresetName=null;this.setNetHighlight(null);this.zoom_to_board();this.draw();}
+    setDocument(design,path,inheritedFonts){
+      this.pendingFit=null;this.resize();this.design=design;this.document={filename:path};this.primitives=design.primitives;this.visibleLayers=new Set(design.layers||[]);this.selected=null;this.focusedLayer=null;this.layerSnapshot=null;this.layerPresetName=null;this.setNetHighlight(null);
+      const ownFonts=design.embeddedFonts;
+      const assets=ownFonts||inheritedFonts,faces=new Set();
+      if(assets?.length&&root.KiCadEmbeddedFonts){
+        for(const p of design.primitives)if(typeof p.fontFace==='string')faces.add(p.fontFace.trim().toLowerCase());
+      }
+      if(this.embeddedFontSet&&this.fontSource===assets&&this.inheritedFonts===inheritedFonts&&faces.size&&
+         [...faces].every(face=>this.fontFaces.has(face))){this.zoom_to_board();this.draw();return;}
+      this.embeddedFontSet?.dispose();
+      this.embeddedFontSet=null;
+      this.fontSource=assets;
+      this.inheritedFonts=inheritedFonts;
+      this.fontFaces=faces;
+      this.zoom_to_board();
+      this.draw();
+      if(!faces.size)return;
+      const localNames=new Set(ownFonts?.map(asset=>asset.name));
+      const candidates=ownFonts&&inheritedFonts&&ownFonts!==inheritedFonts
+        ? [...ownFonts,...inheritedFonts.filter(asset=>!localNames.has(asset.name))]
+        : assets;
+      this.embeddedFontSet=root.KiCadEmbeddedFonts.mount(candidates,faces,()=>{
+        this.geometryBounds=new WeakMap();
+        this.textBoundsCache=new WeakMap();
+        this.spatialIndex=null;
+        this.releaseMotion();
+        this.draw();
+      },(name,error)=>{
+        const message='Embedded font '+name+': '+error;
+        if(design.warnings&&!design.warnings.includes(message))design.warnings.push(message);
+      });
+    }
 
     get primitives(){return this._primitives;}
-    set primitives(value){this.releaseImages();this._primitives=value;this.spatialIndex=null;this.geometryBounds=new WeakMap();this.textBoundsCache=new WeakMap();this.pointCache=new WeakMap();this.pathCache=new WeakMap();this.pathCachePoints=0;this.pathCacheCount=0;this.ownedGeometry=new Map();for(const p of value||[])if(p.ownerUuid&&p.kind!=='footprint-hit'){const list=this.ownedGeometry.get(p.ownerUuid)||[];list.push(p);this.ownedGeometry.set(p.ownerUuid,list);}}
+    set primitives(value){this.hoverNet=null;this.hoverParts=null;if(this.hoverCanvas)this.hoverCanvas.hidden=true;this.releaseImages();this._primitives=value;this.spatialIndex=null;this.geometryBounds=new WeakMap();this.textBoundsCache=new WeakMap();this.pointCache=new WeakMap();this.pathCache=new WeakMap();this.pathCachePoints=0;this.pathCacheCount=0;this.ownedGeometry=new Map();for(const p of value||[]){
+      const owner=p.ownerUuid||(p.kind==='symbol'&&p.reference?p.uuid:null);
+      if(!owner||p.kind==='footprint-hit')continue;
+      const list=this.ownedGeometry.get(owner)||[];
+      list.push(p);this.ownedGeometry.set(owner,list);
+    }}
     releaseImages(){for(const entry of this.images?.values()||[]){if(!entry.image)continue;entry.image.onload=entry.image.onerror=null;entry.image.src='';}this.images=new Map();this.imagePixels=0;}
     imageResource(p){
       if(this.images.has(p))return this.images.get(p);
@@ -344,11 +380,11 @@
         (!this.focusedLayer||this.layerFocusMode!=='isolate'||p.layer===this.focusedLayer||p.layer==='Edge.Cuts')&&
         (!this.isolateNet||this.netPrimitives.has(p)||p.layer==='Edge.Cuts');
     }
-    query(at,pixels=5,accept){
+    query(at,pixels=5,accept,{ignoreSelectionMode=false}={}){
       const camera=this.viewport.camera,tolerance=pixels/camera.zoom,ranked=this.primitives.slice(0,0);
       for(const p of this.candidates({x:at.x-tolerance,y:at.y-tolerance,w:2*tolerance,h:2*tolerance})){
         if(p.pick===false||!(p.uuid||p.reference)||accept&&!accept(p)||!this.pickVisible(p))continue;
-        if(this.selectionMode==='pin'&&!['pad','pin','pin-marker','pin-name','pin-number'].includes(p.kind))continue;
+        if(!ignoreSelectionMode&&this.selectionMode==='pin'&&!['pad','pin','pin-marker','pin-name','pin-number'].includes(p.kind))continue;
         const distance=this.pickDistance(p,at);
         if(distance>pixels)continue;
         const kind=p.electricalKind||p.kind;
@@ -363,7 +399,17 @@
     setHoverNet(net){
       if(this.hoverNet===net||!net&&!this.hoverNet)return;
       this.hoverNet=net;
-      if(!net){if(this.hoverCanvas)this.hoverCanvas.hidden=true;return;}
+      this.paintHover();
+    }
+
+    setHoverParts(parts){
+      if(this.hoverParts===parts||!parts&&!this.hoverParts)return;
+      this.hoverParts=parts;
+      this.paintHover();
+    }
+
+    paintHover(){
+      if(!this.hoverNet&&!this.hoverParts?.length){if(this.hoverCanvas)this.hoverCanvas.hidden=true;return;}
       if(!this.hoverCanvas){
         this.hoverCanvas=document.createElement('canvas');
         this.hoverCanvas.setAttribute('aria-hidden','true');
@@ -386,9 +432,15 @@
         // Let PCB primitives use the same layer palette as the drawing.
         const color=this.pcb?undefined:(this.dark?'#82defa':'#00769f');
         let painted=0;
-        for(const p of net.primitives||[]){
+        for(const p of this.hoverNet?.primitives||[]){
           if(p.kind==='zone'||this.netPrimitives.has(p)||!this.pickVisible(p)||!this.inView(p,view))continue;
           this.paint(p,{color,opacity:p.fill ? .66 : 1,hover:true});
+          if(++painted===1800)break;
+        }
+        painted=0;
+        for(const p of this.hoverParts||[]){
+          if(!this.geometryVisible(p)||p.layer&&!this.visibleLayers.has(p.layer)||p.kind==='footprint-hit'||p.hole||!this.inView(p,view))continue;
+          this.paint(p,{color:this.dark?'#ffbf52':'#a45600',opacity:p.fill ? .65 : 1,hover:true});
           if(++painted===1800)break;
         }
       }finally{this.ctx=previous;}
@@ -490,6 +542,7 @@
         if(this.disposed)return;
         if(!this.isMoving()){this.draw();return;}
         this.setHoverNet(null);
+        if(this.hoverCanvas)this.hoverCanvas.hidden=true;
         if(!this.motionFrame()){
           this.motion?.hide();this.canvas.style.opacity='';this.motionActive=false;
           this.drawGeometry(true);
@@ -551,7 +604,11 @@
       }
       return Number.isFinite(left)?{x:left,y:top,w:right-left,h:bottom-top}:null;
     }
-    textFont(p){return `${p.bold?'bold ':''}${p.italic?'italic ':''}${Math.max(1,p.minPixelSize||1,(p.fontHeight||p.size||1.27)*this.viewport.camera.zoom*4/3)}px ${p.fontFace?'sans-serif':'"Arial",sans-serif'}`;}
+    textFont(p){
+      const embedded=this.embeddedFontSet?.family(p.fontFace);
+      const font=embedded?embedded+',sans-serif':p.fontFace?'sans-serif':'"Arial",sans-serif';
+      return `${p.italic?'italic ':''}${p.bold?'bold ':''}${Math.max(1,p.minPixelSize||1,(p.fontHeight||p.size||1.27)*this.viewport.camera.zoom*4/3)}px ${font}`;
+    }
     inView(p,view){let box;if(p.type==='text')box=this.textBounds(p);else{box=this.geometryBounds.get(p);if(box===undefined){box=spatialBounds(p);this.geometryBounds.set(p,box||null);}}if(!box)return true;const margin=3/this.viewport.camera.zoom;return box.x+box.w>=view.x-margin&&box.x<=view.x+view.w+margin&&box.y+box.h>=view.y-margin&&box.y<=view.y+view.h+margin;}
     draw(){
       this.setHoverNet(null);
@@ -559,6 +616,7 @@
       if(!this.canUseMotionTexture())this.releaseMotion();
       this.motion?.hide();if(this.motion)this.motion.saved=null;this.canvas.style.opacity='';this.motionActive=false;
       if(!this.canvas.hidden)this.drawGeometry();
+      if(this.hoverParts?.length)this.paintHover();
     }
     drawGrid(){
       if(!this.grid)return;
@@ -694,7 +752,7 @@
 
     }
 
-    dispose(){this.disposed=true;this.hoverCanvas?.remove();this.hoverCanvas=null;this.motionSnapshot=null;this.hatchPatterns?.clear();this.releaseImages();if(this.frameRequest!==null&&typeof cancelAnimationFrame==='function')cancelAnimationFrame(this.frameRequest);this.frameRequest=null;if(this.motionTimer!==null)clearTimeout(this.motionTimer);this.motionTimer=null;this.releaseTransientGeometry();this.observer.disconnect();for(const stop of this.handlers)stop();this.canvas.remove();}
+    dispose(){this.disposed=true;this.embeddedFontSet?.dispose();this.embeddedFontSet=null;this.hoverCanvas?.remove();this.hoverCanvas=null;this.motionSnapshot=null;this.hatchPatterns?.clear();this.releaseImages();if(this.frameRequest!==null&&typeof cancelAnimationFrame==='function')cancelAnimationFrame(this.frameRequest);this.frameRequest=null;if(this.motionTimer!==null)clearTimeout(this.motionTimer);this.motionTimer=null;this.releaseTransientGeometry();this.observer.disconnect();for(const stop of this.handlers)stop();this.canvas.remove();}
 
   }
 

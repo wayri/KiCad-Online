@@ -6,8 +6,12 @@ Run the simulation in KiCad, then review its saved waveforms in KiCad Online. Us
 
 1. In KiCad Schematic Editor, choose **Inspect → Simulator**. Open or create an analysis tab and run it.
 2. In the simulator, select the signals you want to share. Choose **File → Save Workbook** to save the **.wbk** file. On each plot tab, choose **File → Export Current Plot as CSV**. Give each result a distinct name. KiCad Online also reads supported ngspice ASCII **.raw** and TSV files.
-3. Add the workbook and exports to the same repository revision or imported project folder. Open **Simulation** from the project bar. In **Reports & analysis**, select the workbook in **Result file**.
+3. Add the workbook and exports to the same repository revision or imported project folder. From the project bar, open **Simulation** and choose **KiCad internal**. If there is one matching workbook, it opens directly. If there are several, search for the one you want and open it from the list or cards. **WayriCAD** shows saved WayriCAD exports, and **Other exports** shows files without a recognized source.
 4. Choose an analysis tab. Under **Saved result**, choose the export from that run. Repeat for each tab. A workbook without an attached result shows the saved setup. You can also open an ASCII RAW result directly.
+
+The workbench inherits the drawing workspace's light or dark theme. Use **Browse results** to switch files, and **Axes and display** for scale, sweep, and complex trace controls.
+
+Use **+ Plot row** to stack charts in the active workbook tab. Drag a trace from **Traces** or a colored legend onto another row. You can also select a trace and use **Move here** on the destination. Plot rows share the horizontal axis and scale their vertical axes independently. The viewer saves each tab’s rows, trace assignments, waveform binding, and cursors in this browser profile. Reopen the same workbook at the same project revision to restore them.
 
 ![A KiCad workbook open in Reports and analysis, waiting for a saved result](images/simulation-workbook/open-workbook.jpg)
 
@@ -32,7 +36,9 @@ The transient cursor pair reads 500 µs and −0.199967 V apart. The viewer snap
 
 ### Cross-probe a saved schematic voltage
 
-From the schematic, open **Simulation → Saved KiCad / wayriCAD results** and choose **Link net plots** beside a waveform export. Pick a signal to locate its wire, or select a linked net in the schematic to show its waveform. Use **Saved sample** to step through the saved voltage and time. KERO's **ST01_OUT** links on the root, bank 1, and decoder sheets through their exact qualified names. [KERO schematic cross-probe example](https://github.com/wayri/KERO/blob/aab26d9b461297fe7346345e706824c0b0dc6482/encoder/simulation/README.md#probe-the-schematic)
+From the schematic, open **Simulation** and choose **Link net plots** beside a waveform export. Pick a signal to locate its wire, or select a linked net in the schematic to show its waveform. Use **Saved sample** to step through the saved voltage and time. KERO's **ST01_OUT** links on the root, bank 1, and decoder sheets through their exact qualified names. [KERO schematic cross-probe example](https://github.com/wayri/KERO/blob/aab26d9b461297fe7346345e706824c0b0dc6482/encoder/simulation/README.md#probe-the-schematic)
+
+From a waveform plot, select a trace name and choose **Probe drawing** to locate its voltage net. The workbench defaults to the drawing you opened it from when that drawing belongs to the saved project. Select **A** or **B** to place a cursor at a saved sample. In **Pan** mode, drag either cursor line to move it along its own trace. Hover to inspect a sample without moving the cursors.
 
 ## 3. Try the example circuits
 

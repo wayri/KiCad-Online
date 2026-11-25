@@ -11,7 +11,7 @@ onmessage=event=>{
       result=KiCadWorkspaceSearch.buildRecords(payload);
     }else if(job==='drawing'){
       postMessage({stage:'Indexing saved project objects…'});
-      const {files,rootFile,pcb}=payload,snapshot=KiCadDesignDiff.prepareProject(files,{forConnectivity:true,compactCopper:pcb}),model=KiCadDesignModel.buildProject(files,null,snapshot,{forConnectivity:true}),file=files.find(f=>f.path===rootFile);
+      const {files,rootFile,pcb,projectRootFile=rootFile}=payload,snapshot=KiCadDesignDiff.prepareProject(files,{forConnectivity:true,compactCopper:pcb}),model=KiCadDesignModel.buildProject(files,null,snapshot,{forConnectivity:true}),file=files.find(f=>f.path===rootFile);
       if(!file)throw Error('The requested drawing is absent.');
       postMessage({stage:'Building drawing geometry…'});
       const sheets=files.filter(f=>/\.(kicad_sch|sch)$/i.test(f.path));
@@ -19,7 +19,9 @@ onmessage=event=>{
       postMessage({stage:'Resolving saved connectivity…'});
       const nets=KiCadNetModel.build(files,new Map([[rootFile,design]]),snapshot);
       if(design.packedZones)transfers=[...new Set(design.primitives.flatMap(primitive=>primitive.zoneCoordinates?[primitive.zoneCoordinates.buffer]:[]))];
-      result={model,rules:[...model._rules],design,nets};
+      const rootAst=projectRootFile!==rootFile&&KiCadDesignDiff.preparedFile(snapshot,projectRootFile);
+      const projectFonts=rootAst?KiCadFileCompatibility.embeddedFonts(rootAst):design.embeddedFonts;
+      result={model,rules:[...model._rules],design,nets,projectFonts};
     }else throw Error('Unknown preparation job.');
     postMessage({ok:true,result},transfers);
   }catch(error){postMessage({ok:false,error:error.message||'KiCad preparation failed.'});}

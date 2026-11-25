@@ -13,6 +13,7 @@
    if(/(?:wayricad|quick[_. -]?(?:pi|si|therm)|mechanical[_. -]?check)/i.test(producer)||source.quick_therm||source.thermal_network||source.mesh?.triangles&&Array.isArray(source.result?.potential_V))return 'wayricad';
   }
   if(/\.(wbk|raw)$/i.test(path))return 'kicad';
+  if(/\.pocket-kivi\.json$/i.test(path))return 'wayricad';
   if(/(?:^|[/_. -])(?:wayricad|quick[_. -]?(?:pi|si|therm)|mechanical[_. -]?check)(?:[/_. -]|$)/i.test(path))return 'wayricad';
   // CSV alone cannot identify its producer; a user can open it explicitly.
   return 'other';

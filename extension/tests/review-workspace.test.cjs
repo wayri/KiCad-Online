@@ -62,7 +62,7 @@ function workspaceRuntime(respond=async()=>[], hooks={}){
   const keyHandlers=new Set();
   const resizeCallbacks=new Set();
   const context={URL,URLSearchParams,innerWidth:hooks.width||800,innerHeight:hooks.frameHeight||600,EventTarget,CustomEvent,TextEncoder,Map,Set,console,crypto:require('node:crypto').webcrypto,localStorage,document:{hidden:hooks.hidden===true,body,addEventListener(){},removeEventListener(){},querySelectorAll:selector=>{const found=[];const visit=n=>{if(selector==='dialog[open]'&&n.tagName==='DIALOG'&&n.open)found.push(n);for(const c of n.children)visit(c);};visit(body);return found;},getElementById:id=>{const node=elements.get(id);return node&&body.contains(node)?node:null;},createElement:tag=>new Element(tag),createElementNS:(_,tag)=>new Element(tag)},addEventListener:(type,fn)=>{if(type==='keydown')keyHandlers.add(fn);if(type==='resize')resizeCallbacks.add(fn);},removeEventListener:(type,fn)=>{if(type==='keydown')keyHandlers.delete(fn);},matchMedia:()=>({matches:true}),
-    KiCadWorkspaceSearch:hooks.workspaceSearchAPI,KiCadFileCompatibility:require('../file-compatibility.js'),KiCadDesignDiff:diff,KiCadCommentFocus:require('../comment-focus.js'),KiCadAnalysisData:require('../analysis-data.js'),KiCadViewState:require('../view-state.js'),KiCadBomManager:require('../bom-manager.js'),KiCadReviewHandoff:hooks.handoff,KiCadEngineeringLauncher:hooks.engineeringLauncher,KiCadCommentCompose:{...require('../comment-compose.js'),...(hooks.compose||{})},KiCadReviewTools:require('../review-tools.js'),KiCadDesignModel:require('../design-model.js'),KiCadNetModel:hooks.netModelAPI||require('../net-model.js'),KiCadReviewComments:require('../review-comments.js'),KiCadBrowserData:require('../browser-data.js'),KiCadOwnedCanvas:require('../owned-canvas.js'),
+    KiCadWorkspaceSearch:hooks.workspaceSearchAPI,KiCadFileCompatibility:require('../file-compatibility.js'),KiCadDesignDiff:diff,KiCadCommentFocus:require('../comment-focus.js'),KiCadAnalysisData:require('../analysis-data.js'),KiCadSimulationResults:{mount:()=>null,openLibrary:require('../analysis-simulation.js').openLibrary},KiCadViewState:require('../view-state.js'),KiCadBomManager:require('../bom-manager.js'),KiCadReviewHandoff:hooks.handoff,KiCadEngineeringLauncher:hooks.engineeringLauncher,KiCadCommentCompose:{...require('../comment-compose.js'),...(hooks.compose||{})},KiCadReviewTools:require('../review-tools.js'),KiCadDesignModel:require('../design-model.js'),KiCadNetModel:hooks.netModelAPI||require('../net-model.js'),KiCadReviewComments:require('../review-comments.js'),KiCadBrowserData:require('../browser-data.js'),KiCadOwnedCanvas:require('../owned-canvas.js'),
     top:hooks.top||{},KiCadRevisionActions:require('../revision-actions.js'),KiCadRepositoryExplorer:hooks.repositoryExplorer,KiCadRatsnest:require('../ratsnest.js'),KiCadTestpointTools:hooks.testpointTools,KiCadPhotoReview:hooks.photoReview,KiCadComponentLinks:require('../component-links.js'),KiCadPairedReview:require('../paired-review.js'),KiCadBomAnalytics:require('../bom-analytics.js'),
     chrome:{storage:{local:hooks.chromeStorage||{get:async()=>({}),set:async()=>{}}},runtime:{sendMessage:async message=>({ok:true,result:await respond(message)})}},setTimeout,clearTimeout,URL,Blob};
   if(hooks.android){context.KiCadAndroidRuntime=true;context.KiCadAndroidOnline=hooks.androidOnline!==false;}
@@ -405,19 +405,39 @@ test('fork UI separates the destination review branch and sends no write before 
  assert.equal(messages.filter(m=>m.type==='repository-fork-revision').length,0);const dialog=view.document.body.querySelector('.revision-action-dialog');assert.match(dialog.textContent,/account\/source/);const buttons=dialog.children.filter(n=>n.tagName==='BUTTON'),create=buttons.find(n=>n.textContent==='Create remote fork');await create.click();
  const request=messages.find(m=>m.type==='repository-fork-revision');assert.equal(request.sha,sha);assert.equal(request.ref,'main');assert.equal(request.name,'source-review');assert.equal(request.branch,'review/'+sha.slice(0,12));assert.equal(request.confirmed,true);
 });
-test('saved report picker uses project inventory and opens an explicit report without publishing',async()=>{
- const opened=[],view=workspaceRuntime(async message=>message.type==='project-inventory'?{files:[{path:'reports/design.json'},{path:'results/ac.raw'},{path:'board.kicad_pcb'}]}:[],{engineeringLauncher:{open:(page,source)=>{opened.push({page,source});}}});view.load();view.get('openSavedReports').click();await new Promise(setImmediate);
- const dialog=view.document.body.querySelector('.saved-reports-dialog'),list=dialog.querySelector('.saved-report-list');assert.equal(list.children.length,2);await list.children[0].querySelector('button').click();assert.equal(opened[0].page,'analysis-viewer.html');assert.equal(opened[0].source.file,'reports/design.json');assert.equal(dialog.open,false);
+test('simulation browser groups results and opens the only matching workbook directly',async()=>{
+ const opened=[],view=workspaceRuntime(async message=>message.type==='project-inventory'?{snapshotRef:'f'.repeat(40),files:[{path:'reports/design.json'},{path:'sim/ac.raw'},{path:'sim/Encoder.wbk'},{path:'quickpi/field.json'}]}:[],{engineeringLauncher:{open:(page,source)=>{opened.push({page,source});}}});
+ view.load();view.get('openSavedReports').click();await new Promise(setImmediate);
+ const dialog=view.document.body.querySelector('.saved-reports-dialog'),list=dialog.querySelector('.saved-report-list');
+ assert.equal(list.children.length,3);
+ assert.match(list.children[0].textContent,/KiCad internal.*Encoder\.wbk/);
+ const source=dialog.querySelector('nav').children.find(node=>node.textContent==='KiCad internal');
+ await source.click();await new Promise(setImmediate);
+ assert.equal(opened[0].page,'analysis-viewer.html');
+ assert.equal(opened[0].source.file,'sim/Encoder.wbk');
+ assert.equal(opened[0].source.ref,'f'.repeat(40));
+ assert.equal(dialog.open,false);
 });
 
-test('saved report sources separate KiCad setup from wayriCAD plugin fields and unclassified exports',async()=>{
- const opened=[],view=workspaceRuntime(async message=>message.type==='project-inventory'?{files:[{path:'sim.wbk'},{path:'quickpi/field.json'},{path:'unknown.csv'}]}:[],{engineeringLauncher:{open:(page,source)=>{opened.push({page,source});}}});view.load();view.get('openSavedReports').click();await new Promise(setImmediate);
- const dialog=view.document.body.querySelector('.saved-reports-dialog'),list=dialog.querySelector('.saved-report-list'),source=dialog.querySelector('select');assert.equal(list.children.length,3);
- source.value='kicad';source.onchange();assert.equal(list.children.length,1);assert.equal(list.children[0].querySelector('button').textContent,'sim.wbk');
- source.value='other';source.onchange();assert.equal(list.children.length,1);assert.equal(list.children[0].querySelector('button').textContent,'unknown.csv');
- source.value='wayricad';source.onchange();assert.equal(list.children.length,1);const buttons=list.children[0].children.filter(node=>node.tagName==='BUTTON');assert.deepEqual(buttons.map(node=>node.textContent),['quickpi/field.json','2D + probe','3D + probe']);await buttons[2].click();assert.equal(opened[0].source.resultView,'3d');assert.equal(opened[0].source.file,'quickpi/field.json');assert.equal(dialog.open,false);
+test('multiple workbooks stay browsable; cards and WayriCAD actions share the same inventory',async()=>{
+ const opened=[],view=workspaceRuntime(async message=>message.type==='project-inventory'?{files:[{path:'sim/A.wbk'},{path:'sim/B.wbk'},{path:'field.pocket-kivi.json'},{path:'unknown.csv'}]}:[],{engineeringLauncher:{open:(page,source)=>{opened.push({page,source});}}});
+ view.load();view.get('openSavedReports').click();await new Promise(setImmediate);
+ const dialog=view.document.body.querySelector('.saved-reports-dialog'),list=dialog.querySelector('.saved-report-list'),sources=dialog.querySelector('nav').children;
+ sources.find(node=>node.textContent==='KiCad internal').click();
+ assert.equal(opened.length,0);
+ assert.equal(list.children[0].children[1].children.length,2);
+ const layout=dialog.querySelector('.saved-reports-tools').children[1];
+ layout.children.find(node=>node.textContent==='Cards').click();
+ assert.equal(list.getAttribute('data-layout'),'cards');
+ sources.find(node=>node.textContent==='WayriCAD').click();
+ assert.equal(list.children.length,1);
+ const row=list.children[0].children[1].children[0];
+ const overlay=row.querySelector('.saved-report-actions').children.find(node=>node.textContent==='3D + probe');
+ await overlay.click();
+ assert.equal(opened[0].source.resultView,'3d');
+ assert.equal(opened[0].source.file,'field.pocket-kivi.json');
+ assert.equal(dialog.open,false);
 });
-
 
 const {matchesSearch,sheetTarget}=require('../review-workspace.js');
 test('advanced search combines fields, quoted values, custom properties and exclusions literally',()=>{
@@ -465,6 +485,20 @@ test('overlapping selected net classes retain shared nets when one class is remo
  assert.equal(view.canvas.highlightNets.length,1);assert.match(view.get('netClassStatus').textContent,/Power, Shared/);
  view.get('netClassSelect').value='Power';view.get('highlightNetClass').click();assert.equal(view.canvas.highlightNets.length,1);assert.match(view.get('netClassStatus').textContent,/Highlighted classes: Shared/);
  view.get('netClassSelect').value='Shared';view.get('highlightNetClass').click();assert.equal(view.canvas.highlightNets.length,0);
+});
+
+test('active schematic offers saved directive classes without importing project settings',()=>{
+ const name='schematic-rule-areas.kicad_sch',content=fs.readFileSync(path.join(__dirname,'fixtures',name),'utf8');
+ const other='(kicad_sch (wire (pts (xy 0 0) (xy 10 0)) (uuid "wire")) (netclass_flag "" (at 0 0 0) (property "Netclass" "Other") (uuid "other")))';
+ const view=workspaceRuntime(async()=>[],{pcb:false,files:[{path:name,content},{path:'child.kicad_sch',content:other}]});
+ view.load();
+ const select=view.get('netClassSelect');
+ assert.deepEqual(select.children.map(option=>option.value),['Direct','Plane']);
+ assert.equal(view.get('highlightNetClass').disabled,false);
+ select.value='Plane';view.get('highlightNetClass').click();
+ assert.deepEqual(Array.from(view.canvas.highlightNets,net=>net.name),['SIGNAL']);
+ view.get('highlightNetClass').click();
+ assert.equal(view.canvas.highlightNets.length,0);
 });
 
 
@@ -2418,5 +2452,29 @@ test('view options groups live controls and hides actions until a highlight can 
  assert.equal(view.canvas.netHighlight.name,'SIGNAL');
  view.get('clearHighlights').click();
  assert.equal(fit.parentElement.hidden,true);
+ view.workspace.dispose();
+});
+
+test('BoM companion previews the component owning a hovered pad and clears on leave',()=>{
+ const messages=[],view=workspaceRuntime(undefined,{onBomHover:selection=>messages.push(selection)});
+ view.load();
+ const pad=view.canvas.primitives.find(primitive=>primitive.kind==='pad');
+ assert(pad);
+ view.canvas.setHoverParts=parts=>view.canvas.bomPreview=parts;
+ view.canvas.query=(_point,_tolerance,accept)=>[pad].filter(accept);
+ const move=uiEvent('pointermove',{clientX:400,clientY:300,buttons:0,pointerType:'mouse'});
+ view.canvas.canvas.dispatchEvent(move);
+ assert.equal(messages.length,1);
+ assert.equal(messages[0].kind,'part');
+ assert.equal(messages[0].reference,'R1');
+ assert.equal(messages[0].uuid,pad.ownerUuid);
+ assert(view.canvas.bomPreview.includes(pad));
+ view.canvas.canvas.dispatchEvent(uiEvent('pointerleave'));
+ assert.equal(view.canvas.bomPreview,null);
+ assert.equal(messages.at(-1),null);
+ view.workspace.hoverBomPart(messages[0]);
+ assert(view.canvas.bomPreview.includes(pad));
+ view.workspace.hoverBomPart(null);
+ assert.equal(view.canvas.bomPreview,null);
  view.workspace.dispose();
 });

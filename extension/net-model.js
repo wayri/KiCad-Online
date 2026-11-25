@@ -16,6 +16,8 @@
   const distance = (a, b) => Math.hypot(b.x-a.x, b.y-a.y);
   const EPS = 1e-7; // Sub-nanometre serialization tolerance, not a proximity connection.
   const LABELS = new Set(["label", "global_label", "hierarchical_label"]);
+  const DIRECTIVES = new Set(["netclass_flag", "directive_label"]);
+  const RULE_AREA_BORDER_MM = 0.000005; // KiCad tests directive attachments within 5 schematic internal units.
   const fresh = (path, code, name, type) => ({ id:`${path}/net:${code}`, path, code, name, displayName:name, kind:type,
     objectIds:[], uuids:[], primitives:[], stats:{ pads:0, tracks:0, vias:0, zones:0, lengthMm:0 }, members:[] });
   function displayName(net) {
@@ -116,12 +118,12 @@
     }
     return [...nets.values()];
   }
-  function onSegment(p, edge) {
+  function onSegment(p, edge, tolerance = EPS) {
     const {a,b}=edge, dx=b.x-a.x, dy=b.y-a.y, length=Math.hypot(dx,dy);
-    if (!length) return distance(a,p)<=EPS;
-    return Math.abs((p.x-a.x)*dy-(p.y-a.y)*dx)<=EPS*length &&
-      p.x>=Math.min(a.x,b.x)-EPS && p.x<=Math.max(a.x,b.x)+EPS &&
-      p.y>=Math.min(a.y,b.y)-EPS && p.y<=Math.max(a.y,b.y)+EPS;
+    if (!length) return distance(a,p)<=tolerance;
+    return Math.abs((p.x-a.x)*dy-(p.y-a.y)*dx)<=tolerance*length &&
+      p.x>=Math.min(a.x,b.x)-tolerance && p.x<=Math.max(a.x,b.x)+tolerance &&
+      p.y>=Math.min(a.y,b.y)-tolerance && p.y<=Math.max(a.y,b.y)+tolerance;
   }
   // Balanced bounding-box index: attachment queries avoid scanning every wire.
   function spatialIndex(edges, depth=0) {
@@ -134,12 +136,163 @@
     const middle=Math.floor(edges.length/2);
     return {minX,maxX,minY,maxY,left:spatialIndex(edges.slice(0,middle),depth+1),right:spatialIndex(edges.slice(middle),depth+1)};
   }
-  function schematic(path, ast, records, primitives, warn) {
+  function pointInArea(p, edges) {
+    let inside = false;
+    for (const edge of edges) {
+      const {a,b} = edge;
+      if (onSegment(p, edge)) return true;
+      if ((a.y > p.y) !== (b.y > p.y) && p.x < a.x + (b.x - a.x) * (p.y - a.y) / (b.y - a.y)) inside = !inside;
+    }
+    return inside;
+  }
+  const sideOf = (p, a, b) => (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+  function segmentsIntersect(first, second) {
+    const oppositeSides = (line, {a,b}) => {
+      const sideA = sideOf(a, line.a, line.b), sideB = sideOf(b, line.a, line.b);
+      return (sideA < 0 && sideB > 0) || (sideA > 0 && sideB < 0);
+    };
+    return oppositeSides(first, second) && oppositeSides(second, first) ||
+      onSegment(first.a, second) || onSegment(first.b, second) ||
+      onSegment(second.a, first) || onSegment(second.b, first);
+  }
+  function ruleClassEvidence(path, areas, directives, entries, edges, symbols, find, exact, coordinate, queryWires, warn) {
+    const netClasses = new Map(), objectClasses = new Map();
+    if (!directives.length) return {netClasses, objectClasses};
+    if (directives.length > 10000 || areas.length > 10000) {
+      warn(`${path}: schematic class assignments exceeded the rule area or directive limit and were omitted.`);
+      return {netClasses, objectClasses};
+    }
+    let work = 0, links = 0;
+    const check = (cost = 1) => {
+      if ((work += cost) > 2000000) throw new Error("Rule geometry limit");
+    };
+    const add = (map, id, assignment) => {
+      let row = map.get(id);
+      if (!row) map.set(id, row = new Set());
+      if (row.has(assignment)) return;
+      if (++links > 100000) throw new Error("Class assignment link limit");
+      row.add(assignment);
+    };
+    const areaItems = [];
+    let vertices = 0;
+    for (const record of areas) {
+      const points = diff.ruleAreaPoints(record.form);
+      if (!points) { warn(`${path}: a schematic rule area has invalid or oversized geometry.`); continue; }
+      if ((vertices += points.length) > 50000) {
+        warn(`${path}: schematic class assignments exceeded the rule area vertex limit and were omitted.`);
+        return {netClasses, objectClasses};
+      }
+      const border = points.map((a,i) => ({a,b:points[(i + 1) % points.length]}));
+      const a = {x:Math.min(...points.map(p => p.x)),y:Math.min(...points.map(p => p.y))};
+      const b = {x:Math.max(...points.map(p => p.x)),y:Math.max(...points.map(p => p.y))};
+      areaItems.push({a,b,border,record,net:[],component:[]});
+    }
+    const areaIndex = spatialIndex(areaItems);
+    const forAreas = (edge, visit) => {
+      const minX = Math.min(edge.a.x, edge.b.x), maxX = Math.max(edge.a.x, edge.b.x);
+      const minY = Math.min(edge.a.y, edge.b.y), maxY = Math.max(edge.a.y, edge.b.y);
+      function lookup(node) {
+        if (!node || minX > node.maxX + RULE_AREA_BORDER_MM || maxX < node.minX - RULE_AREA_BORDER_MM ||
+            minY > node.maxY + RULE_AREA_BORDER_MM || maxY < node.minY - RULE_AREA_BORDER_MM) return;
+        if (!node.edges) { lookup(node.left); lookup(node.right); return; }
+        for (const area of node.edges) {
+          check();
+          if (minX > area.b.x + RULE_AREA_BORDER_MM || maxX < area.a.x - RULE_AREA_BORDER_MM ||
+              minY > area.b.y + RULE_AREA_BORDER_MM || maxY < area.a.y - RULE_AREA_BORDER_MM) continue;
+          visit(area);
+        }
+      }
+      lookup(areaIndex);
+    };
+    const assignmentsFor = (record) => {
+      const seen = new Set(), assignments = [];
+      for (const property of children(record.form, "property")) {
+        const fieldName = value(property[1]), name = value(property[2]);
+        const type = fieldName === "Component Class" ? "component" :
+          ["Netclass", "Net Class"].includes(fieldName) ? "net" : null;
+        if (!type || typeof name !== "string" || !name || name.length > 4096) continue;
+        if (name.includes("${")) {
+          warn(`${path}: schematic class fields with text variables require KiCad instance resolution.`);
+          continue;
+        }
+        const key = JSON.stringify([type,name]);
+        if (seen.has(key)) continue;
+        if (assignments.length >= 512) throw new Error("Directive class field limit");
+        seen.add(key);
+        assignments.push(Object.freeze({name,type,directiveId:record.id,directiveUuid:record.metadata.uuid}));
+      }
+      return assignments;
+    };
+    try {
+      for (const record of directives) {
+        const p = point(record.form,"at");
+        if (!p) continue;
+        const assignments = assignmentsFor(record);
+        if (!assignments.length) continue;
+        forAreas({a:p,b:p}, (area) => {
+          check(area.border.length);
+          if (!area.border.some(edge => onSegment(p,edge,RULE_AREA_BORDER_MM))) return;
+          for (const assignment of assignments) {
+            const member = Object.freeze({...assignment,ruleAreaId:area.record.id,ruleAreaUuid:area.record.metadata.uuid});
+            add(objectClasses,area.record.id,member);
+            area[assignment.type].push(member);
+          }
+        });
+        if (!assignments.some(assignment => assignment.type === "net")) continue;
+        const hits = new Set();
+        queryWires(p,hits);
+        if (exact.has(coordinate(p))) hits.add(exact.get(coordinate(p)));
+        const groups = new Set();
+        for (const hit of hits) groups.add(find(hit));
+        if (groups.size === 1) {
+          for (const assignment of assignments) {
+            if (assignment.type === "net") add(netClasses,groups.values().next().value,assignment);
+          }
+        } else if (groups.size > 1) warn(`${path}: a directive at an ambiguous electrical crossing has no direct net assignment.`);
+      }
+      // Account for repeat visits to existing assignments, not just entries retained.
+      const apply = (map, id, assignments) => {
+        check(assignments.length);
+        for (const assignment of assignments) add(map,id,assignment);
+      };
+      const attach = (p, visit) => forAreas({a:p,b:p}, (area) => {
+        if (!area.net.length && !area.component.length) return;
+        check(area.border.length);
+        if (pointInArea(p,area.border)) visit(area);
+      });
+      for (const entry of entries) {
+        if (!LABELS.has(entry.kind) && entry.kind !== "pin") continue;
+        attach(entry.position, (area) => {
+          apply(netClasses,find(entry.index),area.net);
+          if (entry.kind === "pin") apply(objectClasses,entry.record.id,area.component);
+        });
+      }
+      for (const edge of edges) forAreas(edge, (area) => {
+        if (!area.net.length) return;
+        check(2 * area.border.length);
+        if (pointInArea(edge.a,area.border) || area.border.some(border => segmentsIntersect(edge,border))) {
+          apply(netClasses,find(edge.index),area.net);
+        }
+      });
+      for (const record of symbols.values()) {
+        if (!validPoint(record.metadata.position)) continue;
+        attach(record.metadata.position, (area) => apply(objectClasses,record.id,area.component));
+      }
+    } catch {
+      warn(`${path}: schematic class assignments exceeded the geometry or assignment limit and were omitted.`);
+      netClasses.clear();
+      objectClasses.clear();
+    }
+    return {netClasses,objectClasses};
+  }
+  function schematic(path, ast, records, primitives, warn, objectClasses) {
     warn(`${path}: schematic nets show per-file source connectivity only; cross-sheet hierarchy, implicit hidden power pins and bus expansion are not resolved. This is not a KiCad netlist.`);
-    const entries=[], edges=[], anchors=[];
+    const entries=[], edges=[], anchors=[], areas=[], directives=[];
     const add=(entry)=> {entry.index=entries.length; entries.push(entry); return entry;};
     for (const record of records) {
-      if (record.kind === "wire") {
+      if (record.kind === "rule_area") areas.push(record);
+      else if (DIRECTIVES.has(record.kind)) directives.push(record);
+      else if (record.kind === "wire") {
         const pts=children(child(record.form,"pts"),"xy").map((xy)=>({x:value(xy[1]),y:value(xy[2])}));
         if (pts.length<2 || !pts.every(validPoint)) {warn(`${path}: wire with invalid geometry was excluded.`); continue;}
         const entry=add({record,kind:"wire",position:pts[0],length:0});
@@ -237,17 +390,21 @@
     for (const entry of entries) if (entry.name) {
       if (labels.has(entry.name)) join(entry.index,labels.get(entry.name));else labels.set(entry.name,entry.index);
     }
+    const rules = ruleClassEvidence(path, areas, directives, entries, edges, symbols, find, exact, coordinate,
+      (p,hits) => query(index,p,hits), warn);
+    for (const [id, assignments] of rules.objectClasses) objectClasses.set(id, Object.freeze([...assignments]));
     const groups=new Map();
     for (const entry of entries) {const key=find(entry.index);if(!groups.has(key))groups.set(key,[]);groups.get(key).push(entry);}
     const byUuid=new Map();
     for (const p of primitives) for(const id of new Set([p.uuid,p.pinUuid].filter(Boolean))) {if(!byUuid.has(id))byUuid.set(id,[]);byUuid.get(id).push(p);}
     const nets=[];
-    for (const group of groups.values()) {
+    for (const [groupId, group] of groups) {
       if (!group.some((e)=>e.kind === "wire" || e.name || e.sheetPin)) continue; // Isolated pins/junctions are not inferred nets.
       const names=[...new Set(group.map((e)=>e.name).filter(Boolean))].sort();
       const preferred=group.filter((e)=>e.name).sort((a,b)=>(a.namePriority ?? 4)-(b.namePriority ?? 4)||a.name.localeCompare(b.name))[0]?.name;
       const first=group.filter((e)=>e.kind === "wire" || e.sheetPin).map((e)=>e.record.id || e.record.key).sort()[0], code=names.length ? `label:${names[0]}` : `source:${first}`;
       const net=fresh(path,code,preferred || `Unnamed network (${group.find((e)=>e.kind === "wire")?.record.metadata.uuid || "wire"})`,"schematic");
+      if (rules.netClasses.has(groupId)) net.classAssignments = Object.freeze([...rules.netClasses.get(groupId)]);
       // Sheet-pin text is useful for display but is not a global/local label:
       // never merge different child-sheet ports solely because their names match.
       const sheetNames=[...new Set(group.map(e=>e.sheetPin?.name).filter(Boolean))].sort();
@@ -282,18 +439,18 @@
       recordsByPath.get(record.path).push(record);
       const count=(counts.get(record.key)||0)+1;counts.set(record.key,count);record.id=count===1 ? record.key : `${record.key}#${count}`;}
     counts.clear();
-    const nets=[], warnings=[], seenWarnings=new Set();
+    const nets=[], warnings=[], seenWarnings=new Set(), objectClasses=new Map();
     const warn=(message)=> {if(warnings.length<1000 && !seenWarnings.has(message)){seenWarnings.add(message);warnings.push(message);}};
     for (const file of files) {
       const ast=parsedFiles.get(file.path), records=recordsByPath.get(file.path) || [];
       const design=designs instanceof Map ? designs.get(file.path) : designs?.[file.path];
       const primitives=Array.isArray(design?.primitives) ? design.primitives : [];
       if (primitives.length>diff.MAX_RENDER_PRIMITIVES) throw new Error("Too many render primitives for net selection.");
-      nets.push(...(kind(ast)==="kicad_pcb" ? pcb(file.path,ast,records,primitives,warn) : schematic(file.path,ast,records,primitives,warn)));
+      nets.push(...(kind(ast)==="kicad_pcb" ? pcb(file.path,ast,records,primitives,warn) : schematic(file.path,ast,records,primitives,warn,objectClasses)));
     }
     for (const net of nets) {net.objectIds=[...new Set(net.objectIds)];net.uuids=[...new Set(net.uuids)];net.primitives=[...new Set(net.primitives)];}
     nets.sort((a,b)=>a.path.localeCompare(b.path)||a.name.localeCompare(b.name)||a.code.localeCompare(b.code));
-    return {nets,warnings};
+    return {nets,warnings,...(objectClasses.size ? {objectClasses} : {})};
   }
   // Only loaded files from one schematic project should be supplied. Local
   // names are never cross-sheet evidence, even when a global name matches them.
@@ -392,7 +549,7 @@
         inputs.push({file,sourceBytes:size,primitives,design});
       }
       for(const path of cache.keys())if(!paths.has(path))cache.delete(path);
-      const nets=[],warnings=[],seenWarnings=new Set();let retainedBytes=0;
+      const nets=[],warnings=[],seenWarnings=new Set(),objectClasses=new Map();let retainedBytes=0;
       for(const input of inputs) {
         const {file,primitives,design}=input,signature=primitiveSignature(primitives),previous=cache.get(file.path);
         let snapshot;
@@ -403,10 +560,11 @@
           cache.set(file.path,{content:file.content,sourceBytes:input.sourceBytes,signature,snapshot});retainedBytes+=bytes;
         }else cache.delete(file.path);
         nets.push(...snapshot.nets.map(cloneNet));
+        for (const [id, assignments] of snapshot.objectClasses || []) objectClasses.set(id, assignments);
         for(const warning of snapshot.warnings)if(warnings.length<1000&&!seenWarnings.has(warning)){seenWarnings.add(warning);warnings.push(warning);}
       }
       nets.sort((a,b)=>a.path.localeCompare(b.path)||a.name.localeCompare(b.name)||a.code.localeCompare(b.code));
-      return {nets,warnings};
+      return {nets,warnings,...(objectClasses.size ? {objectClasses} : {})};
     }
     function clear(){cache.clear();primitiveIds=new WeakMap();nextPrimitiveId=0;}
     return {build:cachedBuild,clear};

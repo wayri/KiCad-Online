@@ -64,6 +64,18 @@
   const files=normalizeFiles(input),workbooks=files.filter(f=>/\.wbk$/i.test(f.path));if(workbooks.length>1)throw Error('Open one workbook at a time.');
   const workbook=workbooks.length?readWorkbook(workbooks[0].path,workbooks[0].content):null,results=files.filter(f=>! /\.wbk$/i.test(f.path)),byPath=new Map(results.map(f=>[f.path,f])),cache=new Map();
   const warnings=[...(workbook?.warnings||[])],availableResults=[];let tabs=workbook?.tabs||[],activeTabId=tabs[0]?.id||null;
+  let inputBytes;
+  function addResult(file){
+   if(!workbook||files.length>=limits.maxFiles)throw Error('Simulation file limit reached.');
+   const [entry]=normalizeFiles([file]);if(/\.wbk$/i.test(entry.path)||byPath.has(entry.path))throw Error('Choose a new waveform result.');
+   const encoder=new TextEncoder();inputBytes??=files.reduce((total,item)=>total+encoder.encode(item.content).length,0);
+   const size=encoder.encode(entry.content).length;if(inputBytes+size>limits.maxTotalBytes)throw Error('Simulation input exceeds the total byte budget.');
+   const parsed=data().parse(entry.path,entry.content);
+   if(!parsed.plots.length||parsed.plots.some(plot=>plot.type))throw Error('This file has no supported circuit waveforms.');
+   for(const [plotIndex,plot]of parsed.plots.entries())availableResults.push({path:entry.path,plotIndex,title:plot.title,analysis:kind(plot.xLabel+' '+plot.title)});
+   files.push(entry);results.push(entry);byPath.set(entry.path,entry);inputBytes+=size;
+   cache.set(entry.path,parsed);if(cache.size>2)cache.delete(cache.keys().next().value);
+  }
   function report(path){if(cache.has(path)){const r=cache.get(path);cache.delete(path);cache.set(path,r);return r;}const f=byPath.get(path);if(!f)throw Error('Saved result is not loaded: '+path);const r=data().parse(path,f.content);if(!r.plots.length||r.plots.some(p=>p.type))throw Error('This file has no supported circuit waveforms.');cache.set(path,r);if(cache.size>2)cache.delete(cache.keys().next().value);return r;}
   // Preflight every result. Retain at most two parsed datasets, not all plot copies.
   for(const f of results){const r=report(f.path);for(const [plotIndex,p]of r.plots.entries())availableResults.push({path:f.path,plotIndex,title:p.title,analysis:kind(p.xLabel+' '+p.title)});if(!workbook)for(const [index,p]of r.plots.entries()){if(tabs.length>=limits.maxTabs)throw Error('Too many simulation plots.');tabs.push({id:'tab-'+tabs.length,title:p.title||f.path,analysis:kind(p.xLabel+' '+p.title),commands:[],saved:{traces:[]},binding:{path:f.path,plotIndex:index},selected:null,selectionEdited:false,cursorsEdited:false,cursorsRestored:false,xScale:kind(p.xLabel)==='AC'?'log':'linear',yScale:'linear',view:'auto',showGrid:true,sweepIndex:-1,range:null,cursors:{A:null,B:null}});}}
@@ -99,7 +111,7 @@
    return {path:workbook.path,content:JSON.stringify(document,null,2)+'\n',warnings:exportWarnings};
   }
 
-  active();return {files,workbook,results,availableResults,warnings,tabs,active,selectTab,bindResult,getState,exportWorkbook,dispose(){cache.clear();files.length=0;results.length=0;byPath.clear();tabs.length=0;activeTabId=null;}};
+  active();return {files,workbook,results,availableResults,warnings,tabs,active,selectTab,bindResult,addResult,getState,exportWorkbook,dispose(){cache.clear();files.length=0;results.length=0;byPath.clear();tabs.length=0;activeTabId=null;}};
  }
  const segmentCache=new WeakMap();
  function segments(trace){

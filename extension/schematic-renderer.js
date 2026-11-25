@@ -2,6 +2,7 @@
 ((root) => {
   "use strict";
   const Compatibility=root.KiCadFileCompatibility||(typeof module==="object"&&module.exports?require("./file-compatibility.js"):null);
+  const Diff = root.KiCadDesignDiff || (typeof module === "object" && module.exports ? require("./design-diff.js") : null);
   const COLOR = { page: "#a0a0a0", symbol: "#840000", pin: "#840000",
     wire: "#008400", bus: "#000080", label: "#008400", text: "#0000c2" };
   const PAPERS = { A0: [1189, 841], A1: [841, 594], A2: [594, 420], A3: [420, 297],
@@ -27,7 +28,7 @@
   function textWidth(string, width) {
     return Array.from(overbarText(string).text).reduce((total, c) => total + (TEXT_ADVANCES[c.charCodeAt(0) - 32] ?? 21) * width / 21, 0) + width * 0.16;
   }
-  const MAX_PRIMITIVES = root.KiCadDesignDiff?.MAX_RENDER_PRIMITIVES || (typeof require==='function'?require('./design-diff.js').MAX_RENDER_PRIMITIVES:1500000);
+  const MAX_PRIMITIVES = Diff?.MAX_RENDER_PRIMITIVES || 1500000;
   const value = (item) => item && typeof item === "object" && !Array.isArray(item) ? item.quoted : item;
   const typeOf = (form) => Array.isArray(form) ? String(value(form[0])) : "";
   const forms = (node, type) => Array.isArray(node) ? node.filter((item) => Array.isArray(item) && typeOf(item) === type) : [];
@@ -617,6 +618,35 @@
         renderLabel(pin, { ...owner, pinUuid: ownId(pin) }, "sheet-pin");
       }
     }
+    function renderDirective(node, owner) {
+      const at = point(node, "at"), angle = value(form(node, "at")?.[3]);
+      const length = scalar(node, "length") ?? 2.54, shape = scalar(node, "shape") ?? "round";
+      if (!at || ![0, 90, 180, 270].includes(angle) || !finite(length) || length < 0 ||
+          !["dot", "round", "diamond", "rectangle"].includes(shape)) {
+        warn("Directive label with invalid position, orientation, length or shape was skipped.");
+        return;
+      }
+      // KiCad normalizes saved label angles to upright before setting the spin.
+      const map = transform(at, angle % 180 === 0 ? 180 : 270), color = "#484848", width = 0.1524;
+      const radius = shape === "dot" ? 0.3556 : shape === "rectangle" ? 0.4064 : 0.508;
+      const style = { ...owner, connectPoint: at };
+      line(at, map({ x:0, y:length - radius }), color, width, style);
+      if (shape === "round" || shape === "dot") {
+        const center = map({ x:0, y:length });
+        emit({ type:"circle", ...center, r:radius, color, width, ...(shape === "dot" ? { fill:"outline" } : {}), ...style });
+      } else {
+        const corners = shape === "diamond" ? [{ x:0, y:length - radius }, { x:-2 * radius, y:length },
+          { x:0, y:length + radius }, { x:2 * radius, y:length }] :
+          [{ x:-2 * radius, y:length - radius }, { x:-2 * radius, y:length + radius },
+            { x:2 * radius, y:length + radius }, { x:2 * radius, y:length - radius }];
+        emit({ type:"polygon", points:corners.map(map), color, width, ...style });
+      }
+      for (const property of forms(node, "property")) {
+        if (isHidden(property)) continue;
+        text(point(property, "at"), value(property[2]), fontSize(property), -(value(form(property, "at")?.[3]) || 0),
+          "#840084", { ...style, ...fontStyle(property), property:value(property[1]) });
+      }
+    }
     const identity = (position) => position;
     for (const node of rootAST) {
       if (!Array.isArray(node)) continue;
@@ -624,6 +654,17 @@
       if (kind === "symbol") renderSymbol(node);
       else if (kind === "sheet") renderSheet(node);
       else if (kind === "table") renderTable(node,owner);
+      else if (kind === "directive_label" || kind === "netclass_flag") renderDirective(node, owner);
+      else if (kind === "rule_area") {
+        const points = Diff?.ruleAreaPoints(node);
+        if (!points) { warn("Rule area without a valid polygon was skipped."); continue; }
+        const polygon = form(node, "polyline"), style = graphicStyle(polygon);
+        const fill = fillType(polygon);
+        const savedStyle = scalar(form(polygon, "stroke"), "type");
+        emit({ type:"polygon", points, color:"#ff0000", width:lineWidth(polygon, 0.1524),
+          ...(savedStyle !== "solid" ? { lineStyle:"dash" } : {}),
+          ...(fill ? { fill } : {}), ...owner, ...style, uuid:owner.uuid ?? ownId(polygon) });
+      }
       else if (kind === "wire" || kind === "bus") drawGraphic(node, identity, owner,
         kind === "bus" ? COLOR.bus : COLOR.wire);
       else if (["polyline", "rectangle", "circle", "arc", "bezier", "text_box"].includes(kind)) drawGraphic(node, identity, owner, "#0000c2");
@@ -657,11 +698,11 @@
           const width=bitmap.pixelWidth*25.4/bitmap.ppi*scale,height=bitmap.pixelHeight*25.4/bitmap.ppi*scale;if(!finite(width)||!finite(height)||width>100000||height>100000)throw Error("Embedded bitmap physical size exceeds the preview limit.");
           const map=transform(at,rotation);emit({type:"image",dataUrl:bitmap.dataUrl,pixelWidth:bitmap.pixelWidth,pixelHeight:bitmap.pixelHeight,points:[{x:-width/2,y:-height/2},{x:width/2,y:-height/2},{x:width/2,y:height/2},{x:-width/2,y:height/2}].map(map),opacity,...owner});imageBytes+=bitmap.bytes;imagePixels+=pixels;imageCount++;
         }catch(error){warn("Schematic image was not rendered: "+error.message);}
-      } else if (["embedded_files", "rule_area"].includes(kind)) {
+      } else if (kind === "embedded_files") {
         warn(`Schematic construct ${kind} is not rendered.`);
       }
     }
-    return { primitives, page, warnings, compatibility, pinFunctions };
+    return { primitives, page, warnings, compatibility, pinFunctions, embeddedFonts:Compatibility?.embeddedFonts?.(rootAST) };
   }
   root.KiCadSchematicRenderer = { build, pageSettings };
   if (typeof module === "object" && module.exports) module.exports = root.KiCadSchematicRenderer;

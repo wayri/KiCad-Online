@@ -64,7 +64,7 @@
     // Offer standalone drawings only in directories without a saved project.
     const directory=file=>file.includes('/')?file.slice(0,file.lastIndexOf('/')):'';
     const projectDirs=new Set(projects.map(directory));
-    return [...projects,...files.filter(file=>!/(?:\.kicad_pro|\.pro)$/i.test(file)&&!projectDirs.has(directory(file)))].sort((a,b)=>Number(/(?:\.kicad_pro|\.pro)$/i.test(b))-Number(/(?:\.kicad_pro|\.pro)$/i.test(a))||a.split('/').length-b.split('/').length||a.localeCompare(b)).slice(0,100);
+    return [...projects,...files.filter(file=>!/(?:\.kicad_pro|\.pro)$/i.test(file)&&!projectDirs.has(directory(file)))].sort((a,b)=>Number(/(?:\.kicad_pro|\.pro)$/i.test(b))-Number(/(?:\.kicad_pro|\.pro)$/i.test(a))||a.split('/').length-b.split('/').length||a.localeCompare(b));
   }
 
   function route(url, {gitlabHosts = []} = {}) {

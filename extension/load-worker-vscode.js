@@ -122,9 +122,11 @@
   const MAX_RENDER_PRIMITIVES = 1500000;
   const MAX_DEPTH = 96;
   const MAX_NODES = 1000000;
+  const MAX_PACKED_FILL_POINTS = 8000000;
   const SCHEMATIC = new Set(["symbol", "sheet", "wire", "bus", "bus_entry", "label",
     "global_label", "hierarchical_label", "junction", "no_connect", "text", "text_box",
-    "polyline", "rectangle", "circle", "arc", "bezier", "image"]);
+    "polyline", "rectangle", "circle", "arc", "bezier", "image", "rule_area",
+    "netclass_flag", "directive_label"]);
   const BOARD = new Set(["module", "footprint", "segment", "arc", "via", "zone", "gr_line",
     "gr_rect", "gr_circle", "gr_arc", "gr_poly", "gr_curve", "gr_text", "gr_text_box",
     "gr_bitmap", "dimension", "target"]);
@@ -150,13 +152,54 @@
   const spaceCode=code=>code===32||(code>=9&&code<=13)||(code>127&&/\s/.test(String.fromCharCode(code)));
   const METADATA_FIELDS=new Set(["version","generator","generator_version","uuid","paper","title_block","property","sheet","symbol","footprint","module","sheet_instances","legacy_source","legacy_diagnostic"]);
   const METADATA_OBJECT_FIELDS=new Set(["property","uuid","path","instances"]);
+  // Scan common saved contours directly into bounded numeric batches. Let the
+  // ordinary parser handle unfamiliar forms without dropping their fields.
+  function readPackedFill(source, start, point, remaining) {
+    let i = start, count = 0, batch;
+    const batches = [], batchSize = 4096;
+    while (i < source.length) {
+      const ch = source[i];
+      if (spaceCode(source.charCodeAt(i))) { i++; continue; }
+      if (ch === ';') { const end = source.indexOf('\n', i); i = end < 0 ? source.length : end + 1; continue; }
+      if (ch === ')') {
+        if (count < 3) return null;
+        const points = new Float64Array(count * 2);
+        for (const [index, values] of batches.entries()) {
+          const offset = index * batchSize * 2;
+          points.set(values.subarray(0, points.length - offset), offset);
+        }
+        return {points, end:i + 1, count};
+      }
+      point.lastIndex = i;
+      const match = point.exec(source);
+      if (!match) return null;
+      const x = Number(match[1]), y = Number(match[2]);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error("Invalid numeric KiCad value.");
+      if (count >= remaining) throw new Error("KiCad board exceeds the saved copper limit of 8 million vertices.");
+      const offset = count % batchSize;
+      if (!offset) {
+        batch = new Float64Array(Math.min(32, remaining - count) * 2);
+        batches.push(batch);
+      } else if (offset * 2 === batch.length) {
+        const next = new Float64Array(Math.min(batch.length * 2, batchSize * 2, (remaining - count + offset) * 2));
+        next.set(batch);
+        batch = next;
+        batches[batches.length - 1] = batch;
+      }
+      batch[offset * 2] = x;
+      batch[offset * 2 + 1] = y;
+      count++;
+      i = point.lastIndex;
+    }
+    return null;
+  }
   // Packed points are private to prepared viewer trees. Comparison keeps the saved AST shape.
   function packSavedFill(form) {
-    if (form.length < 4) return;
+    if (form.length < 4) return 0;
     for (let i = 1; i < form.length; i++) {
       const point = form[i];
       if (!Array.isArray(point) || point.length !== 3 || point[0] !== 'xy' ||
-          !Number.isFinite(point[1]) || !Number.isFinite(point[2])) return;
+          !Number.isFinite(point[1]) || !Number.isFinite(point[2])) return 0;
     }
     const coordinates = new Float64Array((form.length - 1) * 2);
     for (let i = 1; i < form.length; i++) {
@@ -165,6 +208,7 @@
     }
     form.length = 1;
     form.push(coordinates);
+    return coordinates.length / 2;
   }
   function parse(source, options = {}) {
     if (typeof source !== "string") throw new TypeError("KiCad source must be a string.");
@@ -182,12 +226,15 @@
     if(source.length>byteLimit||source.length>byteLimit/3&&sourceByteLength(source)>byteLimit)throw new Error("KiCad file exceeds browser parser size limits.");
     const nodeLimit = modern ? 12000000 : MAX_NODES;
     const stack = [], roots = [];
-    // Saved copper vertices can bypass temporary growable parser frames.
-    const coordinate = /\(xy[ \t]+([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)[ \t]+([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)[ \t]*\)/y;
-    let i = 0, nodes = 0, skippedDepth=0;
+    const coordinate = /\(\s*xy\s+([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)\s+([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)\s*\)/y;
+    const pointsHeader = /\(\s*pts(?=\s|\(|\)|;)/y;
+    let i = 0, nodes = 0, packedPoints = 0, skippedDepth=0;
+    const isSavedZoneFill = () => board && options.compactCopper && !options.metadataOnly &&
+      stack.length === 3 && stack[1][0] === 'zone' && stack[2][0] === 'filled_polygon';
     const append = (item) => {
+      if(skippedDepth)return;
       if (++nodes > nodeLimit) throw new Error("KiCad file has too many S-expression nodes.");
-      if(!skippedDepth)(stack.at(-1) || roots).push(item);
+      (stack.at(-1) || roots).push(item);
     };
     while (i < source.length) {
       const ch = source[i];
@@ -196,6 +243,19 @@
       if (ch === ";") { while (i < source.length && source[i] !== "\n") i++; continue; }
       if (ch === "(") {
         if (stack.length >= MAX_DEPTH) throw new Error("KiCad S-expression is too deep.");
+        if (isSavedZoneFill()) {
+          pointsHeader.lastIndex = i;
+          if (pointsHeader.test(source)) {
+            const fill = readPackedFill(source, pointsHeader.lastIndex, coordinate, MAX_PACKED_FILL_POINTS - packedPoints);
+            if (fill) {
+              packedPoints += fill.count;
+              nodes++; // The pts head plus the retained form.
+              append(['pts', fill.points]);
+              i = fill.end;
+              continue;
+            }
+          }
+        }
         if (!options.metadataOnly && stack.length && source.startsWith('(xy', i)) {
           coordinate.lastIndex = i;
           const match = coordinate.exec(source);
@@ -220,8 +280,10 @@
       if (ch === ")") {
         if (!stack.length) throw new Error("Unexpected closing parenthesis in KiCad file.");
         const node=stack.pop();
-        if(!options.metadataOnly&&options.compactCopper&&node[0]==='pts'&&stack.length===3&&
-          stack[0][0]==='kicad_pcb'&&stack[1][0]==='zone'&&stack[2][0]==='filled_polygon')packSavedFill(node);
+        if(node[0]==='pts'&&isSavedZoneFill()) {
+          packedPoints += packSavedFill(node);
+          if(packedPoints > MAX_PACKED_FILL_POINTS)throw new Error("KiCad board exceeds the saved copper limit of 8 million vertices.");
+        }
         // Fixed-size small forms avoid retaining the spare capacity of millions
         // of growable coordinate/attribute arrays. The public tree shape stays
         // identical; replace only a completed child, never a live stack frame.
@@ -282,6 +344,27 @@
   const children = (form, kind) => form.filter((item) => Array.isArray(item) && kindOf(item) === kind);
   const child = (form, kind) => form.find(item => Array.isArray(item) && kindOf(item) === kind);
   const second = (form, kind) => value(child(form, kind)?.[1]);
+  function ruleAreaPoints(form) {
+    const polygon = child(form, "polyline");
+    const coordinates = polygon && child(polygon, "pts");
+    if (!coordinates || coordinates.length < 4 || coordinates.length > 4097) return null;
+    const points = [];
+    for (const item of coordinates.slice(1)) {
+      const x = value(item?.[1]), y = value(item?.[2]);
+      if (!Array.isArray(item) || kindOf(item) !== "xy" || !Number.isFinite(x) || !Number.isFinite(y)) return null;
+      const last = points.at(-1);
+      if (last?.x !== x || last.y !== y) points.push({ x, y });
+    }
+    if (points[0].x === points.at(-1).x && points[0].y === points.at(-1).y) points.pop();
+    if (points.length < 3) return null;
+    const origin = points[0];
+    let area = 0;
+    for (let i = 1; i < points.length - 1; i++) {
+      const a = points[i], b = points[i + 1];
+      area += (a.x - origin.x) * (b.y - origin.y) - (a.y - origin.y) * (b.x - origin.x);
+    }
+    return Number.isFinite(area) && area !== 0 ? points : null;
+  }
   function point(form) {
     for (const name of ["at", "start", "center", "end", "xy"]) {
       const item = child(form, name);
@@ -337,7 +420,8 @@
     return (h >>> 0).toString(16).padStart(8, "0");
   }
   function identity(form, kind, props, signature) {
-    const uuid = second(form, "uuid") ?? second(form, "tstamp");
+    const uuid = second(form, "uuid") ?? second(form, "tstamp") ??
+      (kind === "rule_area" && child(form, "polyline") ? second(child(form, "polyline"), "uuid") : undefined);
     if (uuid !== undefined && uuid !== null && String(uuid)) return { key: `uuid:${uuid}`, uuid: String(uuid) };
     const anchor = kind === "pad" ? props.Number :
       kind === "sheet" ? props.Sheetfile :
@@ -348,7 +432,9 @@
     if (kind === "pad") return `${parentLabel || "Footprint"} pad ${props.Number || ""}`.trim();
     return props.Reference || props.Sheetname || props['Sheet name'] || props.Text ||
       (kind === "footprint" ? String(value(form[1] ?? "Footprint")) :
-        kind === "symbol" ? props.lib_id || "symbol" : kind.replace(/_/g, " "));
+        kind === "symbol" ? props.lib_id || "symbol" :
+        kind === "netclass_flag" || kind === "directive_label" ? "Directive label" :
+        kind === "rule_area" ? "Rule area" : kind.replace(/_/g, " "));
   }
   function padPosition(local, placement) {
     if (!local || !placement?.position) return null;
@@ -363,7 +449,7 @@
   function objectRecord(path, form, parent = null, librarySignature = null, forConnectivity = false) {
     const kind = kindOf(form);
     const props = properties(form, kind);
-    const local = point(form);
+    const local = point(kind === "rule_area" ? child(form, "polyline") || form : form);
     const position = kind === "pad" ? padPosition(local, parent) : local;
     let retainedSignature;
     const signature = () => retainedSignature ??= JSON.stringify([
@@ -455,12 +541,13 @@
       const size = sourceByteLength(file.content);
       total += size;
       if (size > sourceByteLimit(file.path) || total > MAX_PROJECT) throw new Error("KiCad project exceeds browser comparison size limits.");
-      for (const object of collect(file.path, file.content, ast => onParsed?.(file, ast), {libraries:file.legacyLibraries, forConnectivity, parseOnly, compactCopper: forConnectivity&&compactCopper})) objects.push(object);
+      for (const object of collect(file.path, file.content, ast => onParsed?.(file, ast), {libraries:file.legacyLibraries, forConnectivity, parseOnly, compactCopper})) objects.push(object);
     }
     return objects;
   }
   function compareProjects(baseFiles, headFiles) {
-    const base = projectObjects(baseFiles), head = projectObjects(headFiles);
+    const options = {compactCopper:true};
+    const base = projectObjects(baseFiles,null,null,options), head = projectObjects(headFiles,null,null,options);
     const grouped = new Map();
     for (const record of base) {
       if (!grouped.has(record.key)) grouped.set(record.key, { before: [], after: [] });
@@ -495,7 +582,7 @@
     changes.sort((a, b) => a.path.localeCompare(b.path) || a.id.localeCompare(b.id) || a.status.localeCompare(b.status));
     return { changes, counts };
   }
-  root.KiCadDesignDiff = { compareProjects, projectObjects, parse, parseMetadata, prepareProject, preparedFile, MAX_FILES, MAX_PROJECT, MAX_RENDER_PRIMITIVES, sourceByteLimit, sourceByteLength };
+  root.KiCadDesignDiff = { compareProjects, projectObjects, parse, parseMetadata, prepareProject, preparedFile, MAX_FILES, MAX_PROJECT, MAX_RENDER_PRIMITIVES, sourceByteLimit, sourceByteLength, ruleAreaPoints };
   if (typeof module === "object" && module.exports) module.exports = root.KiCadDesignDiff;
 })(typeof globalThis === "object" ? globalThis : this);
 
@@ -664,6 +751,23 @@
       }
     }
     return frozenTree(saved);
+  }
+  function componentClasses(form, kind) {
+    const names = new Set();
+    const add = (name) => {
+      const text = textValue(name);
+      if (safeText(text, MAX_SAVED_PROPERTY_VALUE_CHARS) && names.size < MAX_SAVED_PROPERTIES) names.add(text);
+    };
+    if (kind === "footprint") {
+      for (const group of children(form, "component_classes")) {
+        for (const entry of children(group, "class")) add(entry[1]);
+      }
+    } else if (kind === "symbol") {
+      for (const property of children(form, "property")) {
+        if (textValue(property[1]) === "Component Class") add(property[2]);
+      }
+    }
+    return [...names].sort();
   }
   function validPropertyName(name) {
     return safeText(name, 100) && !["__proto__", "constructor", "prototype"].includes(name.toLowerCase()) &&
@@ -881,7 +985,11 @@
         populated: part ? flags.populated : parent ? parent.populated : null,
         populationReason: part ? flags.populationReason : parent?.populationReason || null,
         excludeFromBom: part ? flags.excludeFromBom : parent ? parent.excludeFromBom : null };
-      if (part) record.association = sourceAssociation(item.form, rootUuids.get(item.path));
+      if (part) {
+        record.association = sourceAssociation(item.form, rootUuids.get(item.path));
+        const names = componentClasses(item.form, item.kind);
+        if (names.length) record.savedComponentClasses = Object.freeze(names);
+      }
       objects.push(record);
       if (!byRawKey.has(item.key)) byRawKey.set(item.key, record);
     }
@@ -943,8 +1051,32 @@
 /* Saved-format capability disclosure; never upgrades or rewrites a design. */
 ((root)=>{'use strict';
  const value=x=>x&&typeof x==='object'&&!Array.isArray(x)?x.quoted:x;
+ // Keep only compressed font data. Decode during viewport use, after the drawing is visible.
+ function embeddedFonts(ast){
+  const entries=ast.find(node=>Array.isArray(node)&&node[0]==='embedded_files');
+  if(!entries)return undefined;
+  const fonts=new Map();let encodedBytes=0;
+  for(const entry of entries){
+   if(!Array.isArray(entry)||entry[0]!=='file')continue;
+   const field=key=>entry.find(node=>Array.isArray(node)&&node[0]===key);
+   const name=value(field('name')?.[1]);
+   if(value(field('type')?.[1])!=='font'||typeof name!=='string'||name.length>255||!/[.](ttf|otf)$/i.test(name))continue;
+   if(fonts.has(name)){fonts.set(name,null);continue;}
+   const data=field('data');
+   if(!data)continue;
+   let length=0;
+   for(let i=1;i<data.length&&length<=3000000;i++)length+=String(value(data[i])).length;
+   if(length>3000000||encodedBytes+length>8000000||fonts.size>=16)continue;
+   const encoded=data.slice(1).map(value).join('');
+   if(!encoded.startsWith('|')||!encoded.endsWith('|'))continue;
+   encodedBytes+=length;
+   fonts.set(name,{name,base64:encoded.slice(1,-1),checksum:value(field('checksum')?.[1])});
+  }
+  const assets=[...fonts.values()].filter(Boolean);
+  return assets.length?assets:undefined;
+ }
  const common='version generator generator_version uuid paper title_block embedded_fonts embedded_files legacy_source legacy_diagnostic'.split(' ');
- const known={kicad_pcb:new Set([...common,...'general layers setup net footprint module host page net_class segment arc via zone gr_line gr_arc gr_rect gr_circle gr_poly gr_text gr_curve gr_text_box gr_bitmap dimension target property group image'.split(' ')]),kicad_sch:new Set([...common,...'lib_symbols symbol sheet wire bus bus_entry junction no_connect label global_label hierarchical_label netclass_flag text text_box table image rule_area polyline rectangle circle arc bezier sheet_instances symbol_instances group'.split(' ')])};
+ const known={kicad_pcb:new Set([...common,...'general layers setup net footprint module host page net_class segment arc via zone gr_line gr_arc gr_rect gr_circle gr_poly gr_text gr_curve gr_text_box gr_bitmap dimension target property group image'.split(' ')]),kicad_sch:new Set([...common,...'lib_symbols symbol sheet wire bus bus_entry junction no_connect label global_label hierarchical_label netclass_flag directive_label text text_box table image rule_area polyline rectangle circle arc bezier sheet_instances symbol_instances group'.split(' ')])};
  // Deliberately bounded numeric subset of KiCad 10 text expressions. See
  // https://docs.kicad.org/10.0/en/eeschema/eeschema.html#text-expressions
  // Units, strings, logical/time/random functions and unknown syntax stay literal.
@@ -1133,9 +1265,9 @@
   {id:'hierarchy',label:'Sheet navigation and cross-sheet highlighting',since:4,implemented:true},
   {id:'copper',label:'Saved copper fills and zone outlines',since:4,implemented:true},
   {id:'models',label:'Repository-linked 3D models',since:4,implemented:true},
-  {id:'embeddedAssets',label:'Embedded fonts and 3D assets',since:9,implemented:false},
-  {id:'componentClasses',label:'Component-class rules',since:9,implemented:false},
-  {id:'netclassRuleAreas',label:'Schematic net-class rule areas',since:9,implemented:false},
+  {id:'embeddedAssets',label:'Embedded fonts and 3D assets',since:9,implemented:true,limitation:'Uses saved TrueType or OpenType faces and supported embedded PCB models. Invalid or oversized assets are skipped.'},
+  {id:'componentClasses',label:'Component classes',since:9,implemented:true,limitation:'Shows saved PCB and schematic classes and rule-area matches supported by drawing geometry. Dynamic PCB conditions and custom DRC expressions require native KiCad.'},
+  {id:'netclassRuleAreas',label:'Schematic net-class rule areas',since:9,implemented:true,limitation:'Shows saved directives, rule areas and sheet-local net assignments. Bus expansion and cross-sheet rule resolution require native KiCad.'},
   {id:'schematicTables',label:'Native schematic tables (horizontal)',since:9,implemented:true,limitation:'Horizontal tables with saved cell geometry are rendered. Rotated tables are omitted with a drawing diagnostic; table-cell contextual variables are not implemented.'}
  ]);
  function capability(info,id){
@@ -1169,7 +1301,7 @@
   const refresh=()=>{const info=read();button.textContent=info?.restrictedPreview?'Legacy · Restricted':info?.majorVersion?`KiCad ${info.majorVersion} · Features`:'File features';if(dialog.open)dialog.close();};refresh();
   return {refresh,check(id){const feature=features.find(f=>f.id===id);return feature?explain(feature):false;},dispose(){dialog.remove();button.remove();}};
  }
- root.KiCadFileCompatibility={textResolver,textContext,textExpressions,textLinks,inspect,features,capability,mountStatus};if(typeof module==='object'&&module.exports)module.exports=root.KiCadFileCompatibility;
+ root.KiCadFileCompatibility={embeddedFonts,textResolver,textContext,textExpressions,textLinks,inspect,features,capability,mountStatus};if(typeof module==='object'&&module.exports)module.exports=root.KiCadFileCompatibility;
 })(typeof globalThis==='object'?globalThis:this);
 
 ;
@@ -1235,6 +1367,7 @@
 ((root) => {
   "use strict";
   const Compatibility=root.KiCadFileCompatibility||(typeof module==="object"&&module.exports?require("./file-compatibility.js"):null);
+  const Diff = root.KiCadDesignDiff || (typeof module === "object" && module.exports ? require("./design-diff.js") : null);
   const COLOR = { page: "#a0a0a0", symbol: "#840000", pin: "#840000",
     wire: "#008400", bus: "#000080", label: "#008400", text: "#0000c2" };
   const PAPERS = { A0: [1189, 841], A1: [841, 594], A2: [594, 420], A3: [420, 297],
@@ -1260,7 +1393,7 @@
   function textWidth(string, width) {
     return Array.from(overbarText(string).text).reduce((total, c) => total + (TEXT_ADVANCES[c.charCodeAt(0) - 32] ?? 21) * width / 21, 0) + width * 0.16;
   }
-  const MAX_PRIMITIVES = root.KiCadDesignDiff?.MAX_RENDER_PRIMITIVES || (typeof require==='function'?require('./design-diff.js').MAX_RENDER_PRIMITIVES:1500000);
+  const MAX_PRIMITIVES = Diff?.MAX_RENDER_PRIMITIVES || 1500000;
   const value = (item) => item && typeof item === "object" && !Array.isArray(item) ? item.quoted : item;
   const typeOf = (form) => Array.isArray(form) ? String(value(form[0])) : "";
   const forms = (node, type) => Array.isArray(node) ? node.filter((item) => Array.isArray(item) && typeOf(item) === type) : [];
@@ -1850,6 +1983,35 @@
         renderLabel(pin, { ...owner, pinUuid: ownId(pin) }, "sheet-pin");
       }
     }
+    function renderDirective(node, owner) {
+      const at = point(node, "at"), angle = value(form(node, "at")?.[3]);
+      const length = scalar(node, "length") ?? 2.54, shape = scalar(node, "shape") ?? "round";
+      if (!at || ![0, 90, 180, 270].includes(angle) || !finite(length) || length < 0 ||
+          !["dot", "round", "diamond", "rectangle"].includes(shape)) {
+        warn("Directive label with invalid position, orientation, length or shape was skipped.");
+        return;
+      }
+      // KiCad normalizes saved label angles to upright before setting the spin.
+      const map = transform(at, angle % 180 === 0 ? 180 : 270), color = "#484848", width = 0.1524;
+      const radius = shape === "dot" ? 0.3556 : shape === "rectangle" ? 0.4064 : 0.508;
+      const style = { ...owner, connectPoint: at };
+      line(at, map({ x:0, y:length - radius }), color, width, style);
+      if (shape === "round" || shape === "dot") {
+        const center = map({ x:0, y:length });
+        emit({ type:"circle", ...center, r:radius, color, width, ...(shape === "dot" ? { fill:"outline" } : {}), ...style });
+      } else {
+        const corners = shape === "diamond" ? [{ x:0, y:length - radius }, { x:-2 * radius, y:length },
+          { x:0, y:length + radius }, { x:2 * radius, y:length }] :
+          [{ x:-2 * radius, y:length - radius }, { x:-2 * radius, y:length + radius },
+            { x:2 * radius, y:length + radius }, { x:2 * radius, y:length - radius }];
+        emit({ type:"polygon", points:corners.map(map), color, width, ...style });
+      }
+      for (const property of forms(node, "property")) {
+        if (isHidden(property)) continue;
+        text(point(property, "at"), value(property[2]), fontSize(property), -(value(form(property, "at")?.[3]) || 0),
+          "#840084", { ...style, ...fontStyle(property), property:value(property[1]) });
+      }
+    }
     const identity = (position) => position;
     for (const node of rootAST) {
       if (!Array.isArray(node)) continue;
@@ -1857,6 +2019,17 @@
       if (kind === "symbol") renderSymbol(node);
       else if (kind === "sheet") renderSheet(node);
       else if (kind === "table") renderTable(node,owner);
+      else if (kind === "directive_label" || kind === "netclass_flag") renderDirective(node, owner);
+      else if (kind === "rule_area") {
+        const points = Diff?.ruleAreaPoints(node);
+        if (!points) { warn("Rule area without a valid polygon was skipped."); continue; }
+        const polygon = form(node, "polyline"), style = graphicStyle(polygon);
+        const fill = fillType(polygon);
+        const savedStyle = scalar(form(polygon, "stroke"), "type");
+        emit({ type:"polygon", points, color:"#ff0000", width:lineWidth(polygon, 0.1524),
+          ...(savedStyle !== "solid" ? { lineStyle:"dash" } : {}),
+          ...(fill ? { fill } : {}), ...owner, ...style, uuid:owner.uuid ?? ownId(polygon) });
+      }
       else if (kind === "wire" || kind === "bus") drawGraphic(node, identity, owner,
         kind === "bus" ? COLOR.bus : COLOR.wire);
       else if (["polyline", "rectangle", "circle", "arc", "bezier", "text_box"].includes(kind)) drawGraphic(node, identity, owner, "#0000c2");
@@ -1890,11 +2063,11 @@
           const width=bitmap.pixelWidth*25.4/bitmap.ppi*scale,height=bitmap.pixelHeight*25.4/bitmap.ppi*scale;if(!finite(width)||!finite(height)||width>100000||height>100000)throw Error("Embedded bitmap physical size exceeds the preview limit.");
           const map=transform(at,rotation);emit({type:"image",dataUrl:bitmap.dataUrl,pixelWidth:bitmap.pixelWidth,pixelHeight:bitmap.pixelHeight,points:[{x:-width/2,y:-height/2},{x:width/2,y:-height/2},{x:width/2,y:height/2},{x:-width/2,y:height/2}].map(map),opacity,...owner});imageBytes+=bitmap.bytes;imagePixels+=pixels;imageCount++;
         }catch(error){warn("Schematic image was not rendered: "+error.message);}
-      } else if (["embedded_files", "rule_area"].includes(kind)) {
+      } else if (kind === "embedded_files") {
         warn(`Schematic construct ${kind} is not rendered.`);
       }
     }
-    return { primitives, page, warnings, compatibility, pinFunctions };
+    return { primitives, page, warnings, compatibility, pinFunctions, embeddedFonts:Compatibility?.embeddedFonts?.(rootAST) };
   }
   root.KiCadSchematicRenderer = { build, pageSettings };
   if (typeof module === "object" && module.exports) module.exports = root.KiCadSchematicRenderer;
@@ -2144,6 +2317,7 @@
           size:num(fontSize?.[2],1), angle:-rotation(node), width:.15,
           property:type==="property"?String(value(node[1])):type==="fp_text"&&value(node[1])==="reference"?"Reference":type==="fp_text"&&value(node[1])==="value"?"Value":undefined,
           ...(justification.includes("mirror")?{mirror:true}:{}),
+          fontFace:field(font,"face"),
           bold:hasAtom(font,"bold") || !!child(font,"bold"),
           italic:hasAtom(font,"italic") || !!child(font,"italic"),
           align:justification.includes("left") ? "left" : justification.includes("right") ? "right" : "center",
@@ -2305,7 +2479,7 @@
       item.kind === "track" ? 0 : item.kind === "via" ? 1 : item.kind === "pad" ? 2 :
       item.kind === "drill" ? 3 : 0;
     primitives.sort((a,b) => priority(a)-priority(b));
-    return { primitives, page, warnings, compatibility, layers:layerNames.length ? layerNames : [...new Set(primitives.map((item) => item.layer))], path,
+    return { primitives, page, warnings, compatibility, embeddedFonts:Compatibility?.embeddedFonts?.(ast), layers:layerNames.length ? layerNames : [...new Set(primitives.map((item) => item.layer))], path,
       ...(options.packedZones&&primitives.some(primitive=>primitive.zoneCoordinates)?{packedZones:true}:{}) };
   }
   root.KiCadPCBRenderer = { build, colorFor, firstCopperPadNumber, pinOneColor, hydrateZonePoints };
@@ -2331,6 +2505,8 @@
   const distance = (a, b) => Math.hypot(b.x-a.x, b.y-a.y);
   const EPS = 1e-7; // Sub-nanometre serialization tolerance, not a proximity connection.
   const LABELS = new Set(["label", "global_label", "hierarchical_label"]);
+  const DIRECTIVES = new Set(["netclass_flag", "directive_label"]);
+  const RULE_AREA_BORDER_MM = 0.000005; // KiCad tests directive attachments within 5 schematic internal units.
   const fresh = (path, code, name, type) => ({ id:`${path}/net:${code}`, path, code, name, displayName:name, kind:type,
     objectIds:[], uuids:[], primitives:[], stats:{ pads:0, tracks:0, vias:0, zones:0, lengthMm:0 }, members:[] });
   function displayName(net) {
@@ -2431,12 +2607,12 @@
     }
     return [...nets.values()];
   }
-  function onSegment(p, edge) {
+  function onSegment(p, edge, tolerance = EPS) {
     const {a,b}=edge, dx=b.x-a.x, dy=b.y-a.y, length=Math.hypot(dx,dy);
-    if (!length) return distance(a,p)<=EPS;
-    return Math.abs((p.x-a.x)*dy-(p.y-a.y)*dx)<=EPS*length &&
-      p.x>=Math.min(a.x,b.x)-EPS && p.x<=Math.max(a.x,b.x)+EPS &&
-      p.y>=Math.min(a.y,b.y)-EPS && p.y<=Math.max(a.y,b.y)+EPS;
+    if (!length) return distance(a,p)<=tolerance;
+    return Math.abs((p.x-a.x)*dy-(p.y-a.y)*dx)<=tolerance*length &&
+      p.x>=Math.min(a.x,b.x)-tolerance && p.x<=Math.max(a.x,b.x)+tolerance &&
+      p.y>=Math.min(a.y,b.y)-tolerance && p.y<=Math.max(a.y,b.y)+tolerance;
   }
   // Balanced bounding-box index: attachment queries avoid scanning every wire.
   function spatialIndex(edges, depth=0) {
@@ -2449,12 +2625,163 @@
     const middle=Math.floor(edges.length/2);
     return {minX,maxX,minY,maxY,left:spatialIndex(edges.slice(0,middle),depth+1),right:spatialIndex(edges.slice(middle),depth+1)};
   }
-  function schematic(path, ast, records, primitives, warn) {
+  function pointInArea(p, edges) {
+    let inside = false;
+    for (const edge of edges) {
+      const {a,b} = edge;
+      if (onSegment(p, edge)) return true;
+      if ((a.y > p.y) !== (b.y > p.y) && p.x < a.x + (b.x - a.x) * (p.y - a.y) / (b.y - a.y)) inside = !inside;
+    }
+    return inside;
+  }
+  const sideOf = (p, a, b) => (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+  function segmentsIntersect(first, second) {
+    const oppositeSides = (line, {a,b}) => {
+      const sideA = sideOf(a, line.a, line.b), sideB = sideOf(b, line.a, line.b);
+      return (sideA < 0 && sideB > 0) || (sideA > 0 && sideB < 0);
+    };
+    return oppositeSides(first, second) && oppositeSides(second, first) ||
+      onSegment(first.a, second) || onSegment(first.b, second) ||
+      onSegment(second.a, first) || onSegment(second.b, first);
+  }
+  function ruleClassEvidence(path, areas, directives, entries, edges, symbols, find, exact, coordinate, queryWires, warn) {
+    const netClasses = new Map(), objectClasses = new Map();
+    if (!directives.length) return {netClasses, objectClasses};
+    if (directives.length > 10000 || areas.length > 10000) {
+      warn(`${path}: schematic class assignments exceeded the rule area or directive limit and were omitted.`);
+      return {netClasses, objectClasses};
+    }
+    let work = 0, links = 0;
+    const check = (cost = 1) => {
+      if ((work += cost) > 2000000) throw new Error("Rule geometry limit");
+    };
+    const add = (map, id, assignment) => {
+      let row = map.get(id);
+      if (!row) map.set(id, row = new Set());
+      if (row.has(assignment)) return;
+      if (++links > 100000) throw new Error("Class assignment link limit");
+      row.add(assignment);
+    };
+    const areaItems = [];
+    let vertices = 0;
+    for (const record of areas) {
+      const points = diff.ruleAreaPoints(record.form);
+      if (!points) { warn(`${path}: a schematic rule area has invalid or oversized geometry.`); continue; }
+      if ((vertices += points.length) > 50000) {
+        warn(`${path}: schematic class assignments exceeded the rule area vertex limit and were omitted.`);
+        return {netClasses, objectClasses};
+      }
+      const border = points.map((a,i) => ({a,b:points[(i + 1) % points.length]}));
+      const a = {x:Math.min(...points.map(p => p.x)),y:Math.min(...points.map(p => p.y))};
+      const b = {x:Math.max(...points.map(p => p.x)),y:Math.max(...points.map(p => p.y))};
+      areaItems.push({a,b,border,record,net:[],component:[]});
+    }
+    const areaIndex = spatialIndex(areaItems);
+    const forAreas = (edge, visit) => {
+      const minX = Math.min(edge.a.x, edge.b.x), maxX = Math.max(edge.a.x, edge.b.x);
+      const minY = Math.min(edge.a.y, edge.b.y), maxY = Math.max(edge.a.y, edge.b.y);
+      function lookup(node) {
+        if (!node || minX > node.maxX + RULE_AREA_BORDER_MM || maxX < node.minX - RULE_AREA_BORDER_MM ||
+            minY > node.maxY + RULE_AREA_BORDER_MM || maxY < node.minY - RULE_AREA_BORDER_MM) return;
+        if (!node.edges) { lookup(node.left); lookup(node.right); return; }
+        for (const area of node.edges) {
+          check();
+          if (minX > area.b.x + RULE_AREA_BORDER_MM || maxX < area.a.x - RULE_AREA_BORDER_MM ||
+              minY > area.b.y + RULE_AREA_BORDER_MM || maxY < area.a.y - RULE_AREA_BORDER_MM) continue;
+          visit(area);
+        }
+      }
+      lookup(areaIndex);
+    };
+    const assignmentsFor = (record) => {
+      const seen = new Set(), assignments = [];
+      for (const property of children(record.form, "property")) {
+        const fieldName = value(property[1]), name = value(property[2]);
+        const type = fieldName === "Component Class" ? "component" :
+          ["Netclass", "Net Class"].includes(fieldName) ? "net" : null;
+        if (!type || typeof name !== "string" || !name || name.length > 4096) continue;
+        if (name.includes("${")) {
+          warn(`${path}: schematic class fields with text variables require KiCad instance resolution.`);
+          continue;
+        }
+        const key = JSON.stringify([type,name]);
+        if (seen.has(key)) continue;
+        if (assignments.length >= 512) throw new Error("Directive class field limit");
+        seen.add(key);
+        assignments.push(Object.freeze({name,type,directiveId:record.id,directiveUuid:record.metadata.uuid}));
+      }
+      return assignments;
+    };
+    try {
+      for (const record of directives) {
+        const p = point(record.form,"at");
+        if (!p) continue;
+        const assignments = assignmentsFor(record);
+        if (!assignments.length) continue;
+        forAreas({a:p,b:p}, (area) => {
+          check(area.border.length);
+          if (!area.border.some(edge => onSegment(p,edge,RULE_AREA_BORDER_MM))) return;
+          for (const assignment of assignments) {
+            const member = Object.freeze({...assignment,ruleAreaId:area.record.id,ruleAreaUuid:area.record.metadata.uuid});
+            add(objectClasses,area.record.id,member);
+            area[assignment.type].push(member);
+          }
+        });
+        if (!assignments.some(assignment => assignment.type === "net")) continue;
+        const hits = new Set();
+        queryWires(p,hits);
+        if (exact.has(coordinate(p))) hits.add(exact.get(coordinate(p)));
+        const groups = new Set();
+        for (const hit of hits) groups.add(find(hit));
+        if (groups.size === 1) {
+          for (const assignment of assignments) {
+            if (assignment.type === "net") add(netClasses,groups.values().next().value,assignment);
+          }
+        } else if (groups.size > 1) warn(`${path}: a directive at an ambiguous electrical crossing has no direct net assignment.`);
+      }
+      // Account for repeat visits to existing assignments, not just entries retained.
+      const apply = (map, id, assignments) => {
+        check(assignments.length);
+        for (const assignment of assignments) add(map,id,assignment);
+      };
+      const attach = (p, visit) => forAreas({a:p,b:p}, (area) => {
+        if (!area.net.length && !area.component.length) return;
+        check(area.border.length);
+        if (pointInArea(p,area.border)) visit(area);
+      });
+      for (const entry of entries) {
+        if (!LABELS.has(entry.kind) && entry.kind !== "pin") continue;
+        attach(entry.position, (area) => {
+          apply(netClasses,find(entry.index),area.net);
+          if (entry.kind === "pin") apply(objectClasses,entry.record.id,area.component);
+        });
+      }
+      for (const edge of edges) forAreas(edge, (area) => {
+        if (!area.net.length) return;
+        check(2 * area.border.length);
+        if (pointInArea(edge.a,area.border) || area.border.some(border => segmentsIntersect(edge,border))) {
+          apply(netClasses,find(edge.index),area.net);
+        }
+      });
+      for (const record of symbols.values()) {
+        if (!validPoint(record.metadata.position)) continue;
+        attach(record.metadata.position, (area) => apply(objectClasses,record.id,area.component));
+      }
+    } catch {
+      warn(`${path}: schematic class assignments exceeded the geometry or assignment limit and were omitted.`);
+      netClasses.clear();
+      objectClasses.clear();
+    }
+    return {netClasses,objectClasses};
+  }
+  function schematic(path, ast, records, primitives, warn, objectClasses) {
     warn(`${path}: schematic nets show per-file source connectivity only; cross-sheet hierarchy, implicit hidden power pins and bus expansion are not resolved. This is not a KiCad netlist.`);
-    const entries=[], edges=[], anchors=[];
+    const entries=[], edges=[], anchors=[], areas=[], directives=[];
     const add=(entry)=> {entry.index=entries.length; entries.push(entry); return entry;};
     for (const record of records) {
-      if (record.kind === "wire") {
+      if (record.kind === "rule_area") areas.push(record);
+      else if (DIRECTIVES.has(record.kind)) directives.push(record);
+      else if (record.kind === "wire") {
         const pts=children(child(record.form,"pts"),"xy").map((xy)=>({x:value(xy[1]),y:value(xy[2])}));
         if (pts.length<2 || !pts.every(validPoint)) {warn(`${path}: wire with invalid geometry was excluded.`); continue;}
         const entry=add({record,kind:"wire",position:pts[0],length:0});
@@ -2552,17 +2879,21 @@
     for (const entry of entries) if (entry.name) {
       if (labels.has(entry.name)) join(entry.index,labels.get(entry.name));else labels.set(entry.name,entry.index);
     }
+    const rules = ruleClassEvidence(path, areas, directives, entries, edges, symbols, find, exact, coordinate,
+      (p,hits) => query(index,p,hits), warn);
+    for (const [id, assignments] of rules.objectClasses) objectClasses.set(id, Object.freeze([...assignments]));
     const groups=new Map();
     for (const entry of entries) {const key=find(entry.index);if(!groups.has(key))groups.set(key,[]);groups.get(key).push(entry);}
     const byUuid=new Map();
     for (const p of primitives) for(const id of new Set([p.uuid,p.pinUuid].filter(Boolean))) {if(!byUuid.has(id))byUuid.set(id,[]);byUuid.get(id).push(p);}
     const nets=[];
-    for (const group of groups.values()) {
+    for (const [groupId, group] of groups) {
       if (!group.some((e)=>e.kind === "wire" || e.name || e.sheetPin)) continue; // Isolated pins/junctions are not inferred nets.
       const names=[...new Set(group.map((e)=>e.name).filter(Boolean))].sort();
       const preferred=group.filter((e)=>e.name).sort((a,b)=>(a.namePriority ?? 4)-(b.namePriority ?? 4)||a.name.localeCompare(b.name))[0]?.name;
       const first=group.filter((e)=>e.kind === "wire" || e.sheetPin).map((e)=>e.record.id || e.record.key).sort()[0], code=names.length ? `label:${names[0]}` : `source:${first}`;
       const net=fresh(path,code,preferred || `Unnamed network (${group.find((e)=>e.kind === "wire")?.record.metadata.uuid || "wire"})`,"schematic");
+      if (rules.netClasses.has(groupId)) net.classAssignments = Object.freeze([...rules.netClasses.get(groupId)]);
       // Sheet-pin text is useful for display but is not a global/local label:
       // never merge different child-sheet ports solely because their names match.
       const sheetNames=[...new Set(group.map(e=>e.sheetPin?.name).filter(Boolean))].sort();
@@ -2597,18 +2928,18 @@
       recordsByPath.get(record.path).push(record);
       const count=(counts.get(record.key)||0)+1;counts.set(record.key,count);record.id=count===1 ? record.key : `${record.key}#${count}`;}
     counts.clear();
-    const nets=[], warnings=[], seenWarnings=new Set();
+    const nets=[], warnings=[], seenWarnings=new Set(), objectClasses=new Map();
     const warn=(message)=> {if(warnings.length<1000 && !seenWarnings.has(message)){seenWarnings.add(message);warnings.push(message);}};
     for (const file of files) {
       const ast=parsedFiles.get(file.path), records=recordsByPath.get(file.path) || [];
       const design=designs instanceof Map ? designs.get(file.path) : designs?.[file.path];
       const primitives=Array.isArray(design?.primitives) ? design.primitives : [];
       if (primitives.length>diff.MAX_RENDER_PRIMITIVES) throw new Error("Too many render primitives for net selection.");
-      nets.push(...(kind(ast)==="kicad_pcb" ? pcb(file.path,ast,records,primitives,warn) : schematic(file.path,ast,records,primitives,warn)));
+      nets.push(...(kind(ast)==="kicad_pcb" ? pcb(file.path,ast,records,primitives,warn) : schematic(file.path,ast,records,primitives,warn,objectClasses)));
     }
     for (const net of nets) {net.objectIds=[...new Set(net.objectIds)];net.uuids=[...new Set(net.uuids)];net.primitives=[...new Set(net.primitives)];}
     nets.sort((a,b)=>a.path.localeCompare(b.path)||a.name.localeCompare(b.name)||a.code.localeCompare(b.code));
-    return {nets,warnings};
+    return {nets,warnings,...(objectClasses.size ? {objectClasses} : {})};
   }
   // Only loaded files from one schematic project should be supplied. Local
   // names are never cross-sheet evidence, even when a global name matches them.
@@ -2707,7 +3038,7 @@
         inputs.push({file,sourceBytes:size,primitives,design});
       }
       for(const path of cache.keys())if(!paths.has(path))cache.delete(path);
-      const nets=[],warnings=[],seenWarnings=new Set();let retainedBytes=0;
+      const nets=[],warnings=[],seenWarnings=new Set(),objectClasses=new Map();let retainedBytes=0;
       for(const input of inputs) {
         const {file,primitives,design}=input,signature=primitiveSignature(primitives),previous=cache.get(file.path);
         let snapshot;
@@ -2718,10 +3049,11 @@
           cache.set(file.path,{content:file.content,sourceBytes:input.sourceBytes,signature,snapshot});retainedBytes+=bytes;
         }else cache.delete(file.path);
         nets.push(...snapshot.nets.map(cloneNet));
+        for (const [id, assignments] of snapshot.objectClasses || []) objectClasses.set(id, assignments);
         for(const warning of snapshot.warnings)if(warnings.length<1000&&!seenWarnings.has(warning)){seenWarnings.add(warning);warnings.push(warning);}
       }
       nets.sort((a,b)=>a.path.localeCompare(b.path)||a.name.localeCompare(b.name)||a.code.localeCompare(b.code));
-      return {nets,warnings};
+      return {nets,warnings,...(objectClasses.size ? {objectClasses} : {})};
     }
     function clear(){cache.clear();primitiveIds=new WeakMap();nextPrimitiveId=0;}
     return {build:cachedBuild,clear};
@@ -2755,9 +3087,10 @@
     if(typeof text!=='string')throw new TypeError('KiCad settings source must be text.');
     if(text.length>maxBytes||new TextEncoder().encode(text).byteLength>maxBytes)throw new Error('Settings file exceeds '+maxBytes/(1024*1024)+' MiB.');
   }
-  function copyTree(input){
+  function copyTree(input,boardGeometrySlots=false){
     let nodes=0;
     function copy(v,depth){
+      if(boardGeometrySlots&&depth===1&&v===null)return null;
       if(++nodes>LIMITS.nodes)throw new Error('Settings contain too many values.');
       if(depth>LIMITS.depth)throw new Error('Settings nesting exceeds 64 levels.');
       if(v===null||typeof v!=='object'){
@@ -2783,7 +3116,7 @@
     }
     visit(tree,base);return entries;
   }
-  const sectionLabel={board:'Board setup',schematic:'Schematic setup',erc:'Electrical rules (ERC)',net_settings:'Net classes and assignments',text_variables:'Text variables',pcbnew:'PCB editor settings',eeschema:'Schematic editor settings',libraries:'Libraries',meta:'File metadata',boards:'Board files',cvpcb:'Footprint assignment','3dviewports':'Saved 3D views'};
+  const sectionLabel={board:'Board setup',schematic:'Schematic setup',erc:'Electrical rules (ERC)',net_settings:'Net classes and assignments',component_class_settings:'Component class rules',text_variables:'Text variables',pcbnew:'PCB editor settings',eeschema:'Schematic editor settings',libraries:'Libraries',meta:'File metadata',boards:'Board files',cvpcb:'Footprint assignment','3dviewports':'Saved 3D views'};
   function jsonSections(tree){
     const sections=[];
     for(const key of Object.keys(tree)){
@@ -2795,19 +3128,22 @@
   }
   const GEOMETRY=new Set(['footprint','segment','arc','via','zone','net','group','target','dimension','image','embedded_files']);
   const isGeometry=form=>GEOMETRY.has(tag(form))||tag(form).startsWith('gr_');
-  // Validate every token, but allocate only saved settings. Skipped drawing
-  // forms still consume parser depth/node budgets and preserve their root slot.
+  // Validate geometry without charging its skipped tokens to the settings budget.
+  // Keep a null slot for each skipped root form to preserve source pointers.
   function boardSettingsTree(source){
     const stack=[],roots=[],number=/^[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?$/;
     let i=0,nodes=0;
     function append(value){
-      if(++nodes>6000000)throw new Error('KiCad file has too many S-expression nodes.');
       const frame=stack.at(-1);
       if(!frame){roots.push(value);return;}
       if(frame.keep){
         if(stack.length===2&&frame.tree.length===0&&isGeometry([value])){
           frame.keep=false;frame.parent[frame.index]=null;frame.tree=null;
-        }else frame.tree.push(value);
+        }else {
+          if(stack.length===1&&frame.tree.length>=1500000)throw new Error('KiCad board has too many top-level forms.');
+          if(stack.length>1&&++nodes>LIMITS.nodes)throw new Error('Settings contain too many values.');
+          frame.tree.push(value);
+        }
       }
     }
     while(i<source.length){
@@ -2845,7 +3181,7 @@
       append(value);
     }
     if(stack.length||roots.length!==1||!Array.isArray(roots[0]))throw new Error('Incomplete KiCad S-expression.');
-    return copyTree(roots[0]);
+    return copyTree(roots[0],true);
   }
   function sexpr(text,multiple=false,boardSettings=false){
     if(boardSettings)return boardSettingsTree(text);
@@ -3812,7 +4148,7 @@ onmessage=event=>{
       result=KiCadWorkspaceSearch.buildRecords(payload);
     }else if(job==='drawing'){
       postMessage({stage:'Indexing saved project objects…'});
-      const {files,rootFile,pcb}=payload,snapshot=KiCadDesignDiff.prepareProject(files,{forConnectivity:true,compactCopper:pcb}),model=KiCadDesignModel.buildProject(files,null,snapshot,{forConnectivity:true}),file=files.find(f=>f.path===rootFile);
+      const {files,rootFile,pcb,projectRootFile=rootFile}=payload,snapshot=KiCadDesignDiff.prepareProject(files,{forConnectivity:true,compactCopper:pcb}),model=KiCadDesignModel.buildProject(files,null,snapshot,{forConnectivity:true}),file=files.find(f=>f.path===rootFile);
       if(!file)throw Error('The requested drawing is absent.');
       postMessage({stage:'Building drawing geometry…'});
       const sheets=files.filter(f=>/\.(kicad_sch|sch)$/i.test(f.path));
@@ -3820,7 +4156,9 @@ onmessage=event=>{
       postMessage({stage:'Resolving saved connectivity…'});
       const nets=KiCadNetModel.build(files,new Map([[rootFile,design]]),snapshot);
       if(design.packedZones)transfers=[...new Set(design.primitives.flatMap(primitive=>primitive.zoneCoordinates?[primitive.zoneCoordinates.buffer]:[]))];
-      result={model,rules:[...model._rules],design,nets};
+      const rootAst=projectRootFile!==rootFile&&KiCadDesignDiff.preparedFile(snapshot,projectRootFile);
+      const projectFonts=rootAst?KiCadFileCompatibility.embeddedFonts(rootAst):design.embeddedFonts;
+      result={model,rules:[...model._rules],design,nets,projectFonts};
     }else throw Error('Unknown preparation job.');
     postMessage({ok:true,result},transfers);
   }catch(error){postMessage({ok:false,error:error.message||'KiCad preparation failed.'});}

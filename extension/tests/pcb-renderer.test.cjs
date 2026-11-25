@@ -248,7 +248,9 @@ test('compact saved fills survive worker cloning without changing copper or comp
  const parser=require('../design-diff.js'),renderer=require('../pcb-renderer.js'),nets=require('../net-model.js');
  const path='ring.kicad_pcb',content=`(kicad_pcb (net 1 "GND") (zone (net 1) (layer "F.Cu") (uuid "zone")
    (polygon (pts (xy 0 0) (xy 30 0) (xy 30 30)))
-   (filled_polygon (layer "F.Cu") (pts (xy 0 0) (xy 30 0) (xy 30 30) (xy 0 0) (xy 4 4) (xy 5 4) (xy 5 5) (xy 4 4) (xy 0 0)))
+   (filled_polygon (layer "F.Cu") (pts (xy 0 0) ; contour comment
+     (xy 30
+      0) (xy 30 30) (xy 0 0) (xy 4 4) (xy 5 4) (xy 5 5) (xy 4 4) (xy 0 0)))
    (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 1 0) (xy 1 1 extra)))))`;
  const files=[{path,content}],plain=parser.parse(content),snapshot=parser.prepareProject(files,{forConnectivity:true,compactCopper:true}),packed=parser.preparedFile(snapshot,path);
  const zone=packed.find(form=>form[0]==='zone'),filled=zone.filter(form=>Array.isArray(form)&&form[0]==='filled_polygon');
@@ -266,4 +268,22 @@ test('compact saved fills survive worker cloning without changing copper or comp
  const first=front.points;rendered.releaseZonePoints();
  assert.notEqual(front.points,first);assert.deepEqual(front.points,first);
  assert.deepEqual(require('../owned-canvas.js').bounds([front]),{x:0,y:0,w:30,h:30});
+});
+
+test('drawing preparation accepts a zone with more than twelve million S-expression tokens',()=>{
+ const {readFileSync}=require('node:fs'),{runInNewContext}=require('node:vm'),path=require('node:path');
+ const file='dense.kicad_pcb',cells=1000001;
+ const content='(kicad_pcb (zone (layer "F.Cu") (filled_polygon (layer "F.Cu") (pts '+
+   '(xy 0 0)(xy 30 0)(xy 30 30)'.repeat(cells)+'))))';
+ let reply;
+ const scope={postMessage(message){if(!message.stage)reply=message;}};
+ scope.importScripts=(...files)=>{for(const name of files)runInNewContext(readFileSync(path.join(__dirname,'..',name),'utf8'),scope);};
+ runInNewContext(readFileSync(path.join(__dirname,'../load-worker.js'),'utf8'),scope);
+ scope.onmessage({data:{job:'drawing',payload:{files:[{path:file,content}],rootFile:file,pcb:true}}});
+ assert.equal(reply.ok,true,reply.error);
+ const zone=reply.result.design.primitives.find(item=>item.kind==='zone');
+ assert.equal(zone.layer,'F.Cu');
+ assert.equal(zone.zoneCoordinates.length,cells*6);
+ assert.deepEqual(Array.from(zone.zoneCoordinates.subarray(-6)),[0,0,30,0,30,30]);
+ assert.deepEqual({...zone.zoneBounds},{x:0,y:0,w:30,h:30});
 });

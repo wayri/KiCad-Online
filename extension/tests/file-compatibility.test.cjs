@@ -44,7 +44,8 @@ test('official KiCad 8 release corpus remains byte-identical and preserves tstam
 test('only unavailable features produce an upgrade recommendation for KiCad 8',()=>{
  const eight=inspect(parse('(kicad_pcb (generator_version "8.0.9"))'));
  for(const id of ['drawing','review','hierarchy','copper','models'])assert.equal(compatibility.capability(eight,id).available,true);
- for(const id of ['embeddedAssets','componentClasses','netclassRuleAreas']){const result=compatibility.capability(eight,id);assert.equal(result.available,false);assert.equal(result.upgrade,true);assert.match(result.reason,/latest stable KiCad/);assert.match(result.reason,/upgrading the project alone will not enable/);}
+ for(const id of ['embeddedAssets','componentClasses','netclassRuleAreas']){const result=compatibility.capability(eight,id);assert.equal(result.available,false);assert.equal(result.upgrade,true);assert.match(result.reason,/latest stable KiCad/);assert.doesNotMatch(result.reason,/upgrading the project alone will not enable/);
+  assert.equal(compatibility.capability({majorVersion:10},id).available,true);}
  const tables=compatibility.capability(eight,'schematicTables');assert.equal(tables.available,false);assert.equal(tables.upgrade,true);assert.doesNotMatch(tables.reason,/upgrading the project alone will not enable/);
  const nativeTables=compatibility.capability({majorVersion:10},'schematicTables');assert.equal(nativeTables.available,true);assert.match(nativeTables.reason,/Horizontal tables/);assert.match(nativeTables.reason,/Rotated tables are omitted/);
  assert.deepEqual(inspect(parse('(kicad_sch (table))')).unknown,[]);
@@ -61,6 +62,6 @@ test('compatibility popup refreshes across sheets and unavailable access opens a
  assert.equal(control.check('embeddedAssets'),false);assert.equal(dialog.open,true);assert.ok(dialog.children.some(p=>p.textContent?.includes('latest stable KiCad')));
  assert.equal(dialog.children.find(p=>p.tag==='a').href,'https://www.kicad.org/download/');
  current={majorVersion:10,generatorVersion:'10.0',unknown:[]};control.refresh();assert.equal(dialog.open,false);assert.equal(host.children[0].textContent,'KiCad 10 · Features');
- control.check('embeddedAssets');assert.equal(dialog.children.some(p=>p.tag==='a'),false);assert.ok(dialog.children.some(p=>p.textContent?.includes('not implemented in this viewer')));
+ assert.equal(control.check('embeddedAssets'),true);assert.equal(dialog.open,false);
  control.dispose();assert.equal(dialog.removed,true);
 });

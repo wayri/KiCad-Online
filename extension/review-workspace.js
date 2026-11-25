@@ -415,7 +415,7 @@
     try{const saved=root.localStorage?.getItem(netHighlightColorKey);if(saved==='layer'||saved==='accent')netHighlightColor=saved;}catch{}
     const highlightMode=()=>keepContextColors?'bright':($('highlightStyle').value==='bright'?'dim':$('highlightStyle').value||'dim');
     let simulationReport=null,simulationSource=null,simulationTicket=0,simulationNet=null;
-    const simulationView=root.KiCadSimulationResults?.mount({container:document.body,onOpen:()=>{if(simulationSource)root.KiCadEngineeringLauncher.open('analysis-viewer.html',{repository,ref:simulationSource.ref,file:simulationSource.path,...providerContext});}});
+    const simulationView=root.KiCadSimulationResults?.mount({container:document.body,onOpen:()=>{if(simulationSource)root.KiCadEngineeringLauncher.open('analysis-viewer.html',{repository,ref:simulationSource.ref,file:simulationSource.path,drawingFile:currentFile(),...providerContext});}});
     function showSimulation(net){
       simulationNet=net;if(!net||!simulationReport){simulationView?.hide();scene?.setAnchor?.(null);return;}
       const qualifiedNetName=root.KiCadPairedReview?.qualifiedNetName(net,objects),canvas=getCanvas(),point=pointerWorld||net.members?.find(m=>m.position)?.position;
@@ -956,6 +956,11 @@
         chip(`${selectedNet.stats.pads||selectedNet.members.filter(m=>m.kind==="pin").length} ${selectedNet.kind==="pcb"?"pads":"pins"}`);
         if(matchingSheets){const count=matchingSheets.size;chip(`${count} matching sheet${count===1?'':'s'}`);}
         propertySection("Electrical",{"Net name":netDisplayName(selectedNet),"Saved code":selectedNet.kind==="pcb"?selectedNet.code:undefined,"Scope":selectedNet.kind==="pcb"?"This PCB":"This sheet only"});
+        if(selectedNet.classAssignments?.length){
+          const namesFor=area=>[...new Set(selectedNet.classAssignments.filter(entry=>Boolean(entry.ruleAreaId)===area).map(entry=>entry.name))].sort().join(", ");
+          propertySection("Schematic net classes",{"Rule area directives":namesFor(true),"Direct labels":namesFor(false),
+            "Scope":"Sheet-local assignment evidence from saved geometry."});
+        }
         const stats=selectedNet.stats;propertySection(selectedNet.kind==="pcb"?"Copper":"Wiring",selectedNet.kind==="pcb"?{"Pads":stats.pads,"Track segments":stats.tracks,"Vias":stats.vias,"Zones":stats.zones,"Routed length":stats.lengthMm.toFixed(3)+" mm"}:{"Wire length":stats.lengthMm.toFixed(3)+" mm"});
         $("netMembers").hidden=false;const members=selectedNet.members.filter(m=>m.kind==="pad"||m.kind==="pin");
         for(const member of members.slice(0,300)){const node=button("",()=>{activeConnection=member;if(member.position)focus(member.position);$("selectionStatus").textContent=`${netDisplayName(selectedNet)} · ${member.reference||"Component"} · ${member.pin||member.pad||""}`;});node.append(make("span",`${member.reference||"Component"} · ${member.kind==="pin"?"pin "+member.pin:"pad "+member.pad}`));$("netMemberList").append(node);}
@@ -966,6 +971,14 @@
       }
       if(!selected)return;
       const resolved=variableResolver(selected.path).resolver?.properties(selected.properties),fields={...(resolved?.values||selected.properties)};delete fields['Source fingerprint'];nativePropertyTable(fields,resolved?.provenance);
+      const classEvidence=netModel.objectClasses?.get(selected.id)||[];
+      const classNames=type=>[...new Set(classEvidence.filter(entry=>entry.type===type).map(entry=>entry.name))].sort().join(", ");
+      if(selected.kind==="rule_area"&&classEvidence.length){
+        propertySection("Attached directives",{"Net classes":classNames("net"),"Component classes":classNames("component")});
+      }else if(selected.savedComponentClasses?.length||classEvidence.length){
+        propertySection("Component classes",{"Saved names":selected.savedComponentClasses?.join(", "),"From rule areas":classNames("component"),
+          "Scope":classEvidence.length?"Placement and pin anchors within this sheet.":undefined});
+      }
       if(terminalName){const primitive=terminal.primitives.find(p=>['pad','pin'].includes(p.kind))||terminal.primitives[0],position=primitive?.padCenter||primitive?.start,net=netModel.nets.find(n=>n.path===selected.path&&terminal.primitives.some(p=>n.primitives.includes(p)));
         propertySection(pcb?'Selected pad':'Selected pin',{'Selection':terminalName,'Component':terminalReference,'Number':String(terminal.pinNumber),'Name':primitive?.pinName||'','Net':primitive?.netName||net&&netDisplayName(net)||'','Layer':primitive?.layer||'',...(position?{'X position':position.x.toFixed(3)+' mm','Y position':position.y.toFixed(3)+' mm'}:{})});}
 
@@ -1083,16 +1096,22 @@
       localNetCache={graph,path,nativePath,nets};
       return nets;
     }
+    const projectNetClasses=net=>classConfig?root.KiCadProjectSearch?.netClasses?.(net.name,classConfig)||[]:[];
+    let localClassCache=null,classOptionsCache=null;
     function localClassNets(){
-      if(!classConfig||!pinnedClasses.size)return [];
-      const path=currentFile(),classes=[...pinnedClasses.values()].filter(c=>c.path===path).map(c=>c.name);
-      if(!classes.length)return [];
-      const result=[];
+      if(!pinnedClasses.size){localClassCache=null;return [];}
+      const path=currentFile(),names=[...pinnedClasses.values()].filter(c=>c.path===path).map(c=>c.name);
+      if(!names.length){localClassCache=null;return [];}
+      const selection=JSON.stringify(names);
+      if(localClassCache?.model===netModel&&localClassCache.path===path&&localClassCache.config===classConfig&&localClassCache.selection===selection)return localClassCache.nets;
+      const classes=new Set(names),nets=[];
       for(const net of netModel.nets){
-        if(net.path===path&&root.KiCadProjectSearch.netClasses(net.name,classConfig).some(name=>classes.includes(name)))result.push(net);
-        if(result.length===200)break;
+        if(net.path!==path)continue;
+        if(net.classAssignments?.some(entry=>classes.has(entry.name))||projectNetClasses(net).some(name=>classes.has(name)))nets.push(net);
+        if(nets.length===200)break;
       }
-      return result;
+      localClassCache={model:netModel,path,config:classConfig,selection,nets};
+      return nets;
     }
     function highlightedNets(){
       const path=currentFile(),local=pcb?[...pinnedNets.values()].filter(net=>net.path===path):pinnedNets.size?localSchematicNets():[];
@@ -1187,6 +1206,37 @@
       const symbolUuid=root.KiCadPairedReview?.symbolUuid?.(source)||symbolUuidFromPath(source);
       return {kind:'part',reference:source.reference,path:source.path,...(source.uuid?{uuid:source.uuid}:{}),...(symbolUuid?{symbolUuid}:{})};
     }
+    function paintBomHover(parts){
+      const canvas=getCanvas(),path=currentFile();
+      if(!canvas)return;
+      const ids=new Set(parts.filter(part=>part.path===path&&part.uuid).map(part=>part.uuid));
+      if(!ids.size||scene){canvas.setHoverParts?.(null);return;}
+      const geometry=[],unindexed=new Set();
+      for(const id of ids){
+        const owned=canvas.ownedGeometry?.get(id);
+        if(owned?.length)geometry.push(...owned.slice(0,1800-geometry.length));
+        else unindexed.add(id);
+        if(geometry.length===1800)break;
+      }
+      if(unindexed.size&&geometry.length<1800)for(const primitive of canvas.primitives||[]){
+        if(unindexed.has(primitive.uuid)||unindexed.has(primitive.ownerUuid))geometry.push(primitive);
+        if(geometry.length===1800)break;
+      }
+      canvas.setHoverParts?.(geometry.length?geometry:null);
+    }
+    function hoverBomPart(selection){
+      const api=root.KiCadPairedReview,parts=[];
+      if(selection&&api?.validSelection(selection)){
+        const items=selection.kind==='group'?selection.items:[selection],path=currentFile();
+        for(const item of items){
+          if(item.kind!=='part')continue;
+          const exact=item.path===path&&item.uuid?objects.find(object=>object.path===path&&object.uuid===item.uuid&&object.reference===item.reference&&['symbol','footprint'].includes(object.kind)):null;
+          const part=exact||api.relatedPart(objects,item).object;
+          if(part?.path===path)parts.push(part);
+        }
+      }
+      paintBomHover(parts);
+    }
     function emitHighlightGroup(){
       const items=new Map();for(const object of highlightObjects){const item=partSelection(object);if(item&&root.KiCadPairedReview?.validSelection(item))items.set(JSON.stringify(item),item);}
       for(const net of highlightedNets()){const item=root.KiCadPairedReview.netSelection(net,objects,{instancePath:options.getSheetInstance?.(net.path)});if(root.KiCadPairedReview?.validSelection(item))items.set(JSON.stringify(item),item);}
@@ -1230,7 +1280,36 @@
       selectObject(object,false,move&&!(scene&&object.kind==='pad'),false,true,true);if(!multi)highlightObjects=[object];if(removed){selected=null;properties();}updateHighlights();renderObjects();emitHighlightGroup();navigation?.renderSearch();
     }
     function cycleConnection(step){const nets=highlightedNets();const seen=new Set(),members=nets.flatMap(n=>n.members).filter(m=>m.position&&['pin','pad'].includes(m.kind)&&!seen.has(JSON.stringify([m.uuid,m.position]))&&seen.add(JSON.stringify([m.uuid,m.position])));if(!members.length){notice('Select a net or class to navigate its connections.');return;}connectionCursor=connectionCursor<0?(step<0?members.length-1:0):(connectionCursor+step+members.length)%members.length;const member=members[connectionCursor];activeConnection=member;focus(member.position);$('selectionStatus').textContent=`Connection ${connectionCursor+1}/${members.length}: ${member.reference||''} ${member.pin||member.pad||''}`;}
-    function renderNetClasses(){const value=$('netClassSelect').value;$('netClassSelect').replaceChildren();const names=new Set();if(classConfig)for(const net of netModel.nets)if(net.path===currentFile())for(const name of root.KiCadProjectSearch.netClasses(net.name,classConfig))names.add(name);for(const name of [...names].sort()){const option=make('option',name);option.value=name;$('netClassSelect').append(option);}if(names.has(value))$('netClassSelect').value=value;$('highlightNetClass').disabled=!names.size;$('highlightNetClass').setAttribute('aria-pressed',String(pinnedClasses.has(JSON.stringify([currentFile(),$('netClassSelect').value]))));$('netClassStatus').textContent=classConfig?'Highlighted classes: '+([...pinnedClasses.values()].filter(c=>c.path===currentFile()).map(c=>c.name).join(', ')||'none')+'. '+(classConfig.warnings||[]).join(' '):'Import .kicad_pro in Project search to use saved net classes.';}
+    function renderNetClasses(){
+      const path=currentFile(),select=$('netClassSelect'),highlight=$('highlightNetClass');
+      if(classOptionsCache?.model!==netModel||classOptionsCache.path!==path||classOptionsCache.config!==classConfig){
+        const names=new Set(),value=select.value;
+        let limited=false;
+        const add=name=>{
+          if(names.size<512)names.add(name);
+          else if(!names.has(name))limited=true;
+        };
+        for(const net of netModel.nets){
+          if(net.path!==path)continue;
+          for(const entry of net.classAssignments||[])add(entry.name);
+          for(const name of projectNetClasses(net))add(name);
+        }
+        select.replaceChildren();
+        for(const name of [...names].sort()){
+          const option=make('option',name);
+          option.value=name;select.append(option);
+        }
+        if(names.has(value))select.value=value;
+        classOptionsCache={model:netModel,path,config:classConfig,names,limited};
+      }
+      const {names,limited}=classOptionsCache;
+      highlight.disabled=!names.size;
+      highlight.setAttribute('aria-pressed',String(pinnedClasses.has(JSON.stringify([path,select.value]))));
+      const active=[...pinnedClasses.values()].filter(c=>c.path===path).map(c=>c.name).join(', ')||'none';
+      $('netClassStatus').textContent=names.size||classConfig?
+        [`Highlighted classes: ${active}.`,limited?'Showing up to 512 class names.':'',...(classConfig?.warnings||[])].filter(Boolean).join(' '):
+        'Import .kicad_pro in Project search to use saved project net classes.';
+    }
     function selectTerminal(object,pinNumber,primitives,move=false,emit=true,sceneId=null){
       if(!object||!primitives?.length)return false;
       const identity=root.KiCadPairedReview?.partSelection?.(object,{objects,instancePath:options.getSheetInstance?.(object.path)}),tstampPath=identity?.tstampPath||root.KiCadPairedReview?.tstampPath?.(object);
@@ -2104,11 +2183,16 @@
       const up=(event)=>{if(measurementTouches.has(event.pointerId)){measurementTouches.delete(event.pointerId);if(touchAborted){event.preventDefault();event.stopImmediatePropagation();lens?.hide();if(!measurementTouches.size)touchAborted=false;return;}}if(measureTouch===event.pointerId){measureTouch=null;canvas.canvas.releasePointerCapture?.(event.pointerId);lens?.hide();if(measureMode){pick(event);suppressTouchClickUntil=Date.now()+400;}return;}if(!areaStart||commentMode!=='area')return;event.preventDefault();event.stopImmediatePropagation();const a=areaStart,b=point(event);canvas.canvas.releasePointerCapture?.(event.pointerId);ignoreClick=true;try{const area=KiCadReviewTools.area(a,b);setCommentMode(null);editComment(null,{...anchor({x:area.x+area.width/2,y:area.y+area.height/2},null),area});}catch(error){areaStart=areaEnd=null;commentStatus(error.message,true);draw();}};
       const leave=()=>{if(measureTouch!==null)return;lens?.hide();pointerWorld=null;if(measureMode&&measurePoints.length<($('rulerKind').value==='angle'?3:2)){measurePreview=rulerSnap=null;$("rulerSnapStatus").textContent="Move over the drawing to preview";draw();}};
       const cancel=()=>{measurementTouches.clear();touchAborted=false;measureTouch=null;lens?.hide();measurePreview=null;rulerSnap=null;areaStart=areaEnd=null;ignoreClick=false;draw();};
-      let hoverFrame=null,hoverEvent=null;
+      let hoverFrame=null,hoverEvent=null,hoverOwner=null;
+      const clearPartHover=()=>{
+        if(!hoverOwner)return;
+        hoverOwner=null;canvas.setHoverParts?.(null);options.onBomHover?.(null);
+      };
       const clearHover=()=>{
         hoverEvent=null;
         if(hoverFrame!==null){root.cancelAnimationFrame?.(hoverFrame);hoverFrame=null;}
         canvas.setHoverNet?.(null);
+        clearPartHover();
         if(canvas.canvas.style.cursor)canvas.canvas.style.cursor='';
         if(canvas.canvas.title)canvas.canvas.title='';
       };
@@ -2121,9 +2205,18 @@
           const latest=hoverEvent;hoverEvent=null;
           if(!latest||measureMode||commentMode||scene||canvas.isMoving?.()){clearHover();return;}
           const links=drawingLinks(latest);
-          let net=null;
-          if(!links.length&&['all','net'].includes(selectionMode.value)){
-            const at=point(latest);
+          const at=point(latest);let net=null;
+          if(options.onBomHover){
+            const hit=!links.length&&at?canvas.query?.(at,4,p=>Boolean(p.ownerUuid||p.reference&&p.uuid),{ignoreSelectionMode:true})?.[0]:null;
+            const id=hit?.ownerUuid||hit?.uuid||null;
+            if(id!==hoverOwner){
+              const part=id?objects.find(item=>item.path===currentFile()&&item.uuid===id&&['symbol','footprint'].includes(item.kind)):null;
+              const selection=partSelection(part);
+              if(selection){hoverOwner=id;paintBomHover([part]);options.onBomHover(selection);}
+              else clearPartHover();
+            }
+          }
+          if(!hoverOwner&&!links.length&&['all','net'].includes(selectionMode.value)){
             updateTouchIndex(currentFile());
             if(at&&touchIndex.size){
               const hit=canvas.query?.(at,4,p=>touchIndex.has(p)&&p.kind!=='zone'&&p.kind!=='zone-outline')?.[0];
@@ -2517,20 +2610,21 @@
       dialog.addEventListener('cancel',event=>{if(close.disabled)event.preventDefault();});dialog.append(status,create,close);dialog.addEventListener('close',()=>dialog.remove(),{once:true});dialog.addEventListener('click',event=>{if(event.target===dialog&&!create.disabled)dialog.close();});document.body.append(dialog);dialog.addEventListener('keydown',event=>{if(event.key==='Escape')event.stopPropagation();});dialog.showModal();destination.focus();
     }
     const repositoryButton=button('Repository',()=>{if(!root.KiCadRepositoryExplorer)return;root.KiCadRepositoryExplorer.open({repository,ref,file:currentFile(),provider,host,local:Boolean(!root.KiCadAndroidOnline&&(root.KiCadVSCodeContext||root.KiCadLocalRuntime)),canOpenHistorical:Boolean(root.KiCadVSCodeContext?.canOpenHistorical||remoteAvailable),onOpenRevision:openCommit,onCompareCurrent:compareCommit,onDownloadRevision:downloadCommit,onCopyRevision:copyCommit,...(remoteAvailable?{onForkRevision:forkCommit}:{}),request,canOpenFile:path=>root.KiCadVSCodeContext&&!root.KiCadAndroidRuntime?true:root.KiCadAndroidRuntime||root.KiCadLocalRuntime?files.some(f=>f.path===path):/\.kicad_(sch|pcb|pro)$/i.test(path),onOpenFile:async(path,sha)=>{if(root.KiCadVSCodeContext?.canOpenHistorical&&sha){await request('repository-open-file',{repository,ref,file:currentFile(),path,sha});return;}if(root.KiCadAndroidRuntime&&sha){await openCommit(sha);root.top.KiCadAndroid.openDrawing(path);return;}await request(root.KiCadVSCodeContext&&!root.KiCadAndroidRuntime?(/\.(?:kicad_(?:sch|pcb)|sch)$/i.test(path)?'open-project-drawing':'open-project-file'):'open-viewer-window',{repository,ref:sha||ref,file:path});}});});repositoryButton.id='openRepositoryExplorer';repositoryButton.setAttribute('data-icon','repository');repositoryButton.className='icon-only';repositoryButton.setAttribute('aria-label','Repository files and commit history');repositoryButton.title='Repository tree, branches and commit graph';repositoryButton.disabled=!root.KiCadRepositoryExplorer;$('drawingTools').append(repositoryButton);
-    const reportsButton=button('Saved reports',()=>{
-      $('androidToolsSheet')?.close?.();const dialog=make('dialog');dialog.className='bom-manager saved-reports-dialog';dialog.setAttribute('aria-label','Saved analysis and KiCad Monkey reports');
-      const heading=make('header'),close=button('Close',()=>dialog.close());heading.className='bom-manager-heading';heading.append(make('h2','Saved reports'),close);
-      const body=make('section'),search=make('input'),status=make('p','Finding saved reports…'),list=make('div');search.type='search';search.placeholder='Find analysis, simulation or KiCad Monkey report…';search.setAttribute('aria-label','Find saved report');list.className='saved-report-list';status.setAttribute('role','status');
-      const family=make('select');family.setAttribute('aria-label','Saved report source');for(const [value,label]of [['all','All saved results'],['kicad','KiCad simulation'],['wayricad','wayriCAD analysis'],['other','Other / unclassified exports']]){const option=make('option',label);option.value=value;family.append(option);}family.value='all';const familyHint=make('p','KiCad simulation and wayriCAD plugin results are separate. Unknown CSV/JSON exports remain unclassified until opened.');familyHint.className='meta';body.className='saved-reports-content';body.append(family,familyHint,search,status,list);dialog.append(heading,body);document.body.append(dialog);let disposed=false,paths=[],snapshot=ref;
-      const render=()=>{list.replaceChildren();const matches=paths.filter(path=>path.toLowerCase().includes(search.value.trim().toLowerCase())&&(family.value==='all'||(root.KiCadAnalysisData?.family(path)||(/\.(wbk|raw)$/i.test(path)?'kicad':'other'))===family.value));for(const path of matches.slice(0,100)){
-        const action=button(path,async()=>{action.disabled=true;try{await root.KiCadEngineeringLauncher.open('analysis-viewer.html',{repository,ref:snapshot,file:path,...providerContext});dialog.close();}catch(error){status.textContent=error.message;action.disabled=false;}});action.title=path;const row=make('div');row.className='saved-report-entry';row.append(action);
-        if(root.KiCadAnalysisData?.family(path)==='wayricad')for(const [resultView,label]of [['2d','2D + probe'],['3d','3D + probe']]){const overlayAction=button(label,async()=>{overlayAction.disabled=true;try{await root.KiCadEngineeringLauncher.open('analysis-viewer.html',{repository,ref:snapshot,file:path,...providerContext,resultView});if(!disposed)dialog.close();}catch(error){if(!disposed){status.textContent=error.message;overlayAction.disabled=false;}}});overlayAction.className='quiet-button';overlayAction.title='Open saved spatial fields in '+resultView.toUpperCase()+' with probing. Nonspatial results remain plots.';row.append(overlayAction);}
-        if(root.KiCadSimulationResults&&/\.(csv|tsv|raw|json)$/i.test(path)){const probes=button('Link net plots',async()=>{probes.disabled=true;status.textContent='Loading saved samples…';try{const signals=await bindSimulation(path,snapshot);if(disposed)return;const select=make('select');select.setAttribute('aria-label','Saved waveform signal');const placeholder=make('option','Select a saved voltage signal…');placeholder.value='';select.append(placeholder);signals.slice(0,2000).forEach((entry,index)=>{const option=make('option',entry.series.name+' · '+entry.plot.title);option.value=String(index);select.append(option);});select.onchange=()=>{if(select.value==='')return;selectSavedSignal(signals[Number(select.value)]);dialog.close();};row.append(select);status.textContent=signals.length+' saved signals linked. Select a signal here or a matching net in the drawing. Source design revision is not verified by signal names.';}catch(error){status.textContent=error.message;}finally{probes.disabled=false;}});probes.className='quiet-button';row.append(probes);}list.append(row);
-      }status.textContent=paths.length?`${matches.length} matching reports${matches.length>100?' · first 100 shown':''}`:'No saved reports found. Add a KiCad Monkey design/netlist JSON or analysis export to this project.';};
-      search.oninput=render;family.onchange=render;dialog.addEventListener('click',event=>{if(event.target===dialog){const r=dialog.getBoundingClientRect();if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)dialog.close();}});
-      dialog.addEventListener('close',()=>{disposed=true;dialog.remove();},{once:true});dialog.showModal();search.focus();
-      request('project-inventory',{repository,ref,file:currentFile()}).then(result=>{if(disposed)return;snapshot=result.snapshotRef||ref;paths=[...new Set((result.files||[]).map(file=>file.path).filter(path=>typeof path==='string'&&/\.(json|csv|tsv|wbk|raw|html?)$/i.test(path)||typeof path==='string'&&/\.txt$/i.test(path)&&/(report|analysis|sim|thermal|mechanic)/i.test(path)))].sort();render();if(result.warnings?.length)status.textContent+=' · '+result.warnings.join(' ');}).catch(error=>{if(!disposed)status.textContent=error.message;});
-    });reportsButton.id='openSavedReports';reportsButton.setAttribute('data-icon','analytics');reportsButton.setAttribute('aria-label','Saved analysis and KiCad Monkey reports');reportsButton.title='Saved analysis, simulations and KiCad Monkey design/netlist reports';reportsButton.className='icon-only';reportsButton.disabled=!root.KiCadEngineeringLauncher;$('drawingTools').append(reportsButton);
+    let reportsDialog=null;
+    resizeCleanups.push(()=>{if(reportsDialog?.open)reportsDialog.close();});
+    const reportsButton=button('Simulation results',()=>{
+      if(reportsDialog?.open)return;
+      $('androidToolsSheet')?.close?.();
+      reportsDialog=root.KiCadSimulationResults.openLibrary({
+        document,storage:root.localStorage,
+        loadInventory:()=>request('project-inventory',{repository,ref,file:currentFile()}),
+        classify:path=>root.KiCadAnalysisData.family(path),
+        openReport:(path,snapshot,resultView)=>root.KiCadEngineeringLauncher.open('analysis-viewer.html',{repository,ref:snapshot||ref,file:path,drawingFile:currentFile(),...providerContext,...(resultView?{resultView}:{})}),
+        linkReport:bindSimulation,locateSignal:selectSavedSignal,
+        openFastDrop:pcb?()=>$('openFastPI')?.click():undefined
+      });
+    });
+    reportsButton.id='openSavedReports';reportsButton.setAttribute('data-icon','analytics');reportsButton.setAttribute('aria-label','Simulation results');reportsButton.title='Browse saved simulation results';reportsButton.className='icon-only';reportsButton.disabled=!root.KiCadEngineeringLauncher||!root.KiCadSimulationResults?.openLibrary;$('drawingTools').append(reportsButton);
     const testpointButton=button('Testpoints & nets',()=>{$('androidToolsSheet')?.close?.();refreshNets();let table;table=root.KiCadTestpointTools.open({sourceKind:pcb?'footprint':'symbol',model:{objects,nets:netModel.nets,designs:options.getDesigns?.()},onExport:content=>engineeringExport('testpoint-summary.csv',content,'text/csv;charset=utf-8'),onLocate:row=>{table.close();const object=objects.find(o=>o.id===row.objectId&&o.path===row.path);if(object)selectObject(object,true,true);if(row.position)focus(row.position);},onSchematic:row=>{const object=objects.find(o=>o.id===row.objectId&&o.path===row.path);if(object)schematicMatches(object);}});});testpointButton.id='openTestpoints';
     const highlightTestpoints=button('Highlight testpoints',()=>{
       refreshNets();const found=testpointsForPath(currentFile());
@@ -2776,7 +2870,7 @@
     if(!remoteAvailable){if(commentHelp)commentHelp.textContent=localCollaborationMessage;for(const id of ['reviewSettings','refreshCommentPolicy','refreshGitHub','loadCategories','discussionCategoryLabel','threadNumberLabel'])$(id).hidden=true;$('commentDestination').parentElement.hidden=true;}
     if(root.KiCadLocalRuntime){collaborationGroup.hidden=true;for(const id of ['githubPane','postComment','showGitHub'])$(id).hidden=true;}
     $('sheetBack').onclick=()=>historySheet(-1);$('sheetForward').onclick=()=>historySheet(1);$('sheetUp').onclick=parentSheet;$('sheetHome').onclick=homeSheet;
-    $('highlightNetClass').onclick=()=>{const name=$('netClassSelect').value;if(!classConfig||!name)return;const key=JSON.stringify([currentFile(),name]),existed=pinnedClasses.has(key);if(!$('multiHighlight').checked){pinnedNets.clear();pinnedClasses.clear();highlightObjects=[];selectedNet=null;}if(existed)pinnedClasses.delete(key);else if(pinnedClasses.size<64)pinnedClasses.set(key,{path:currentFile(),name});activeConnection=null;connectionCursor=-1;updateHighlights();renderNets();renderNetClasses();emitHighlightGroup();};
+    $('highlightNetClass').onclick=()=>{const name=$('netClassSelect').value;if(!classOptionsCache?.names.has(name))return;const key=JSON.stringify([currentFile(),name]),existed=pinnedClasses.has(key);if(!$('multiHighlight').checked){pinnedNets.clear();pinnedClasses.clear();highlightObjects=[];selectedNet=null;}if(existed)pinnedClasses.delete(key);else if(pinnedClasses.size<64)pinnedClasses.set(key,{path:currentFile(),name});activeConnection=null;connectionCursor=-1;updateHighlights();renderNets();renderNetClasses();emitHighlightGroup();};
     root.KiCadUIIcons?.decorate();$("schematicLayersHint").hidden=pcb;navigate(pcb?"parts":"sheets");showNavigator(false);variants();
     const workspaceChrome=root.KiCadWorkspaceChrome?.install(document,root);if(workspaceChrome)resizeCleanups.push(()=>workspaceChrome.dispose());
     let reviewImportSource=root;try{if(root.top?.location.origin===root.location.origin)reviewImportSource=root.top;}catch{}
@@ -2845,6 +2939,7 @@
         }
         selectObject(object,false,false,true);
       },
+      hoverBomPart,
       comment3D(record){let object=resolveObject(objects,rootFile,record);const pinNumber=record?.pinNumber??(record?.type==='Pad'?record.name:null);if(object&&pinNumber!=null){const position=object.position;if(object.parentId)object=objects.find(o=>o.id===object.parentId&&o.path===rootFile);if(object)editComment(null,anchor(position,{...object,kind:'pad',reference:object.reference+'.'+pinNumber,uuid:record.uuid||object.uuid}));return;}if(object){editComment(null,anchor(object.position,object));return;}const net=savedNetFor3D(netModel.nets,rootFile,record);if(net){editComment(null,KiCadReviewComments.normalizeAnchor({...anchor(null,{path:rootFile,kind:'drawing'}),kind:'net',netName:net.name}));return;}notice("This 3D object has no unambiguous saved anchor; switch to 2D to place a comment.");},
       setScene(next){attach?.hideMagnifier?.();scene=next;fastPISession?.viewportChanged?.();applyObjectVisibility();if(simulationNet)showSimulation(simulationNet);scene?.setSelectionMode?.($('selectionMode').value||'all');$("measureButton").setAttribute("aria-pressed","false");$("highlightControls").hidden=Boolean(scene&&!scene.setSelection);$("highlightDnp").disabled=Boolean(scene);$("measureButton").disabled=Boolean(scene&&!scene.setMeasurementMode);for(const id of ["navLayers","pointComment","areaComment","drawCommentArea"])$(id).disabled=Boolean(scene);$("navNets").disabled=Boolean(scene&&!scene.setSelection);if(scene&&!["parts","files","bom"].includes(navigatorTab))navigate("parts");if(scene){setCommentMode(null);measureMode=false;measurePoints=[];getCanvas()?.canvas.classList?.toggle("ruler-mode",false);measurePreview=rulerSnap=boardMeasure=null;$("rulerControls").hidden=true;$("measureButton").setAttribute("aria-pressed","false");$("measurementStatus").textContent="";scene.setPopulation(objects.filter((item)=>item.kind==="footprint").map((item)=>({reference:item.reference,populated:item.populated})));}updateHighlights();draw();},
       dispose(){pinFunctionsDialog?.remove();variableDialog?.remove();variableButton?.remove();variableResolvers.clear();navigationHelp?.dispose();fastPISession?.dispose();draftsmanSession?.dispose();reviewStatesDisposed=true;reviewThreadStates.clear();commentFocus?.dispose();projectFilesDisposed=true;objectVisibilityDisposed=true;root.removeEventListener?.('kicad-review:analysis-net-focus',analysisNetFocus);simulationTicket++;simulationView?.dispose();chatPanel?.dispose();conversationTicket++;if(root.KiCadChatDraft===chatDraftFacade){if(previousChatDraft)root.KiCadChatDraft=previousChatDraft;else delete root.KiCadChatDraft;}root.removeEventListener?.('pointerdown',outsideTouchPicker,true);dismissTouchPicker();netColorDisposed=true;netColorTicket++;threadTicket++;releasePastePreview();pasteGeneration++;mentionDisposed=true;mentionGeneration++;clearTimeout(mentionTimer);loadId++;remoteLoad++;netBuilder?.clear();reviewToolsObserver?.disconnect();sidebarObserver?.disconnect();root.removeEventListener?.('resize',layoutSidebars);root.removeEventListener?.('resize',ruleResize);ruleWindowObserver?.disconnect();for(const cleanup of resizeCleanups)cleanup();root.removeEventListener?.('keydown',reviewKeydown);narrowPanels.removeEventListener?.("change",keepDrawingVisible);navigation?.dispose();attach?.dispose();}}

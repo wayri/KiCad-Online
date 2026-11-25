@@ -73,5 +73,15 @@
   if(file)params.set('current',file);
   return getURL('project-launcher.html')+'?'+params;
  }
- const api={context,viewerURL,fabricationURL,repositoryProjectsURL};root.KiCadProjectLaunch=api;if(typeof module==='object'&&module.exports)module.exports=api;
+ function folderURL(info,directory,getURL){
+  const sha=info.sha,repository=info.headRepository||info.repository,gitlab=info.provider==='gitlab';
+  if(!/^[a-f0-9]{40}$/i.test(sha||'')||directory&&!root.KiCadGitHub.filePath(directory+'/folder.kicad_pro'))throw Error('Invalid repository folder.');
+  const base=repositoryProjectsURL({repository,ref:sha,provider:info.provider,host:info.host},getURL);
+  if(!base)throw Error('Invalid repository folder.');
+  const url=new URL(base),source=url.searchParams.get('source'),segments=directory?directory.split('/').map(encodeURIComponent):[];
+  if(segments.length)url.searchParams.set('source',source+'/'+segments.join('/'));
+  url.searchParams.set('folder','1');
+  return url.href;
+ }
+ const api={context,viewerURL,fabricationURL,repositoryProjectsURL,folderURL};root.KiCadProjectLaunch=api;if(typeof module==='object'&&module.exports)module.exports=api;
 })(globalThis);

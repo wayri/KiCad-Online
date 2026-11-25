@@ -15,7 +15,7 @@ ASSETS = ('analysis-data.js', 'analysis-viewer.html', 'analysis-viewer.css', 'an
     'revision-viewer.html', 'revision-viewer.css', 'revision-viewer.js', 'terms.html',
     'ui-icons.js', 'browser-data.js', 'legacy-kicad.js', 'design-diff.js', 'design-model.js',
     'net-model.js', 'overview-connectivity.js', 'ratsnest.js', 'paired-review.js', 'project-search.js', 'workspace-search.js', 'rule-reports.js', 'review-navigation.js', 'view-state.js', 'review-comments.js', 'comment-compose.js', 'review-workspace.js', 'review-tools.js', 'project-download.js', 'interactive-pdf.js', 'repo-models.js',
-    'worksheet.js', 'schematic-renderer.js', 'pcb-renderer.js', 'pad-labels.js', 'owned-canvas.js', 'touch-canvas.js', 'motion-webgl.js',
+    'worksheet.js', 'schematic-renderer.js', 'pcb-renderer.js', 'pad-labels.js', 'embedded-models.js', 'vendor/fzstd/fzstd.js', 'vendor/fzstd/LICENSE', 'owned-canvas.js', 'touch-canvas.js', 'motion-webgl.js',
     'vendor/spike-board3d.bundle.js', 'vendor/SPIKE-ENGINE-NOTICE.md', 'vendor/THREE-LICENSE',
 )
 ASSETS += ('population-inspection.js','population-photo.js','population-review.js','testpoint-tools.js','photo-alignment.js','component-links.js','photo-review.js','photo-review.css')

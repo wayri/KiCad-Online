@@ -30,9 +30,10 @@
     const word = (at, count) => { let n = 0n; for (let i = 0; i < count; i++) n |= BigInt(bytes[at + i] || 0) << BigInt(i * 8); return n; };
     const mix = n => { n ^= n >> 33n; n = n * 0xff51afd7ed558ccdn & mask; n ^= n >> 33n; n = n * 0xc4ceb9fe1a85ec53n & mask; return n ^ n >> 33n; };
     let h1 = 0xabba2345n, h2 = h1;
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     const body = bytes.length - bytes.length % 16;
     for (let at = 0; at < body; at += 16) {
-      let k1 = word(at, 8), k2 = word(at + 8, 8);
+      let k1 = view.getBigUint64(at, true), k2 = view.getBigUint64(at + 8, true);
       k1 = rot(k1 * c1 & mask, 31n) * c2 & mask; h1 ^= k1;
       h1 = ((rot(h1, 27n) + h2) * 5n + 0x52dce729n) & mask;
       k2 = rot(k2 * c2 & mask, 33n) * c1 & mask; h2 ^= k2;
@@ -84,11 +85,12 @@
     if (at !== bytes.length) throw Error('Embedded model has trailing or missing frame data.');
     return size;
   }
-  async function decode(asset, decompressor = root.fzstd?.decompress) {
+  async function decode(asset, decompressor = root.fzstd?.decompress, maxBytes = MAX_BYTES) {
     const base64 = asset?.base64;
     const bytes = decodeBase64(base64, {padded: true});
     if (bytes.length > MAX_BYTES) throw Error('Compressed embedded model exceeds 8 MiB.');
     const size = frameSize(bytes);
+    if (size > maxBytes) throw Error('Embedded asset exceeds its allocation budget.');
     if (typeof decompressor !== 'function') throw Error('Embedded model decoder unavailable.');
     const output = decompressor(bytes, new Uint8Array(size));
     if (!(output instanceof Uint8Array) || output.length !== size) throw Error('Embedded model size mismatch.');
@@ -104,6 +106,83 @@
     }
     return output;
   }
-  root.KiCadEmbeddedModels = {decode, decodeBase64, frameSize, murmur, MAX_BYTES};
+  function fontNames(bytes) {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const names = new Set();
+    if (view.byteLength < 12 || ![0x00010000, 0x4f54544f, 0x74727565].includes(view.getUint32(0))) return names;
+    const tables = view.getUint16(4);
+    if (tables > 256 || 12 + tables * 16 > view.byteLength) return names;
+    for (let at = 12; at < 12 + tables * 16; at += 16) {
+      if (view.getUint32(at) !== 0x6e616d65) continue;
+      const start = view.getUint32(at + 8), length = view.getUint32(at + 12);
+      if (length < 6 || start + length > view.byteLength) break;
+      const count = view.getUint16(start + 2), storage = start + view.getUint16(start + 4);
+      if (count > 2048 || storage < start + 6 + count * 12 || storage > start + length) break;
+      const decoder = new TextDecoder('utf-16be');
+      for (let i = 0; i < count; i++) {
+        const row = start + 6 + i * 12, platform = view.getUint16(row), id = view.getUint16(row + 6);
+        if (![0, 3].includes(platform) || ![1, 4, 6, 16].includes(id)) continue;
+        const size = view.getUint16(row + 8), offset = storage + view.getUint16(row + 10);
+        if (!size || size > 512 || size % 2 || offset + size > start + length) continue;
+        const name = decoder.decode(bytes.subarray(offset, offset + size)).trim().toLowerCase();
+        if (name && !name.includes('\u0000')) names.add(name);
+      }
+      break;
+    }
+    return names;
+  }
+  function fontStyle(bytes) {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const count = view.getUint16(4);
+    for(let at=12;at<12+count*16;at+=16){
+      if(view.getUint32(at)!==0x68656164)continue;
+      const start=view.getUint32(at+8),length=view.getUint32(at+12);
+      if(length<46||start+length>bytes.length)break;
+      const style=view.getUint16(start+44);
+      return {weight:style&1?'bold':'normal',style:style&2?'italic':'normal'};
+    }
+    return {weight:'normal',style:'normal'};
+  }
+  let fontSetId=0;
+  function mountFonts(assets, faces, onReady, onWarning, host=root) {
+    if (!assets?.length || !faces.size || typeof host.FontFace !== 'function' || !host.document?.fonts) return null;
+    const id=++fontSetId, families=new Map(), loaded=[], styles=new Set();
+    const fontSet=host.document.fonts;
+    let cancelled=false, budget=8*1024*1024;
+    async function load() {
+      for(const asset of assets){
+        // Yield between assets so loading fonts does not block the first drawing or input.
+        await new Promise(resolve=>setTimeout(resolve,0));
+        if(cancelled||budget<=0)return;
+        try {
+          const bytes=await decode(asset,host.fzstd?.decompress,Math.min(budget,2*1024*1024));
+          if(cancelled)return;
+          budget-=bytes.length;
+          const names=[...fontNames(bytes)].filter(name=>faces.has(name));
+          if(!names.length)continue;
+          const style=fontStyle(bytes);
+          for(const name of names){
+            const key=JSON.stringify([name,style.weight,style.style]);
+            if(styles.has(key))continue;
+            const family=families.get(name)||'kivi-embedded-'+id+'-'+families.size;
+            const font=await new host.FontFace(family,bytes,style).load();
+            if(cancelled)return;
+            fontSet.add(font);
+            loaded.push(font);
+            styles.add(key);
+            families.set(name,family);
+          }
+        }catch(error){if(!cancelled)onWarning?.(asset.name,error.message);}
+      }
+      if(!cancelled&&loaded.length)onReady();
+    }
+    load();
+    return {
+      family(name){return typeof name==='string'?families.get(name.trim().toLowerCase()):undefined;},
+      dispose(){cancelled=true;for(const font of loaded)fontSet.delete(font);loaded.length=0;families.clear();}
+    };
+  }
+  root.KiCadEmbeddedFonts = {mount:mountFonts,fontNames};
+  root.KiCadEmbeddedModels = {decode, decodeBase64, frameSize, murmur, MAX_BYTES, fontNames, mountFonts};
   if (typeof module === 'object' && module.exports) module.exports = root.KiCadEmbeddedModels;
 })(typeof globalThis === 'object' ? globalThis : this);

@@ -76,7 +76,8 @@ test('omitted board forms still reject malformed strings, structure, numbers and
  assert.throws(()=>parse('(kicad_pcb (segment '+'('.repeat(96)+'x'+')'.repeat(96)+'))',{file:'x.kicad_pcb'}),/too deep/);
  assert.throws(()=>parse('(kicad_pcb (setup '+'('.repeat(65)+'x'+')'.repeat(65)+'))',{file:'x.kicad_pcb'}),/nesting/);
  assert.throws(()=>parse('(kicad_pcb (setup '+'x '.repeat(100001)+'))',{file:'x.kicad_pcb'}),/too many values/);
- assert.throws(()=>parse('(kicad_pcb (segment '+'x '.repeat(6000000)+'))',{file:'x.kicad_pcb'}),/too many S-expression nodes/);
+ const dense=parse('(kicad_pcb (zone (filled_polygon (pts '+'(xy 0 0)'.repeat(1500001)+'))) (setup (future 1)))',{file:'x.kicad_pcb'});
+ assert.deepEqual(dense.tree,['kicad_pcb',null,['setup',['future',1]]]);
 });
 test('board input accepts the PCB parser size cap while other settings retain 8 MiB',()=>{
  const source='(kicad_pcb (segment "'+'x'.repeat(LIMITS.bytes)+'") (setup (future 1)))';

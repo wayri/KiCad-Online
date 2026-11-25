@@ -31,6 +31,11 @@
   const source=context(value);
   if(value.sourceFile!==undefined){if(page!=='bom-viewer.html'||!path(value.sourceFile))throw Error('Invalid BoM discovery source.');source.sourceFile=value.sourceFile;}
   if(value.resultView!==undefined){if(page!=='analysis-viewer.html'||!['map','2d','3d'].includes(value.resultView))throw Error('Invalid saved result view.');source.resultView=value.resultView;}
+  if(page==='analysis-viewer.html'){
+   const theme=root.document?.body?.dataset?.uiTheme;
+   if(theme==='light'||theme==='dark')source.uiTheme=theme;
+   if(value.drawingFile!==undefined&&path(value.drawingFile)&&/\.kicad_(sch|pcb)$/i.test(value.drawingFile))source.drawingFile=value.drawingFile;
+  }
   if(page==='analysis-viewer.html'&&(!source.repository||!source.ref||!source.file||!/\.(json|csv|tsv|wbk|raw|txt|html?)$/i.test(source.file)))throw Error('Choose a saved simulation or results report from the project tree.');
   let android;try{android=root.top?.KiCadAndroid;}catch{}
   if(android){

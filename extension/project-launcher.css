@@ -10,3 +10,12 @@
 .project-choice.current-project{border-color:var(--accent)}
 #launchOther{margin-top:22px;font-size:13px;color:var(--muted)}
 #launchOther a{text-decoration:underline;text-underline-offset:3px}
+#launchBrowse,#launchResultsPages{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 16px}
+#launchBrowse input{flex:1 1 220px;min-width:0;background:#14202a;color:inherit;border:1px solid var(--line);border-radius:7px;padding:9px 12px;font:inherit}
+#launchBrowse a,#launchFolderLinks a{padding:7px 10px;border:1px solid var(--line);border-radius:6px;overflow-wrap:anywhere}
+#launchBrowse button[aria-pressed=true],#launchFolderLinks a:hover{border-color:var(--accent)}
+#launchResultsPages{justify-content:center;margin:16px 0}
+#launchResultsPages button:disabled{opacity:.45;cursor:default}
+#launchFolders{margin-top:18px}
+#launchFolders summary{cursor:pointer}
+#launchFolderLinks{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:6px;margin:8px 0}

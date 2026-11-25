@@ -72,9 +72,11 @@
       const sheets=files.filter(file=>/\.(kicad_sch|sch)$/i.test(file.path));
       const design=(pcb?KiCadPCBRenderer:KiCadSchematicRenderer).build(KiCadDesignDiff.preparedFile(snapshot,initialFile),initialFile,{packedZones:pcb,textVariables:files.find(f=>f.path===initialFile)?.textVariables,sheetNumber:sheets.findIndex(file=>file.path===initialFile)+1,sheetCount:sheets.length,sheetName:'/',...(globalThis.KiCadFileCompatibility?.textContext?.(files,initialFile,{rootFile:initialFile,parse:(content,file)=>KiCadDesignDiff.preparedFile(snapshot,file.path)})||{})});
       const nets=globalThis.KiCadNetModel?.build(files,new Map([[initialFile,design]]),snapshot);
-      return {model,design,nets};
+      const rootAst=rootFile!==initialFile&&KiCadDesignDiff.preparedFile(snapshot,rootFile);
+      const projectFonts=rootAst?globalThis.KiCadFileCompatibility?.embeddedFonts?.(rootAst):design.embeddedFonts;
+      return {model,design,nets,projectFonts};
     };
-    const prepared=globalThis.KiCadLoading?await KiCadLoading.run('drawing',{files,rootFile:initialFile,pcb},prepare,{signal:loadController?.signal,onStage:stage=>loading.show(stage)}):prepare();
+    const prepared=globalThis.KiCadLoading?await KiCadLoading.run('drawing',{files,rootFile:initialFile,projectRootFile:rootFile,pcb},prepare,{signal:loadController?.signal,onStage:stage=>loading.show(stage)}):prepare();
     if(disposed)return;if(loadController?.signal.aborted)throw loadController.signal.reason;
     if(pcb)KiCadPCBRenderer.hydrateZonePoints?.(prepared.design);
     if(prepared.rules)Object.defineProperty(prepared.model,'_rules',{value:new Map(prepared.rules)});
@@ -308,7 +310,7 @@
       if(!instancePath&&context.viaSheet?.uuid){const parent=sheetContext(context.viaSheet.path,sheetInstances.get(context.viaSheet.path));if(parent.instancePath)instancePath=parent.instancePath+'/'+context.viaSheet.uuid;}
       buildSheet(path,instancePath||sheetInstances.get(path));syncSheetInstance(path);
 
-      canvas.setDocument(designs.get(path),path);compatibilityUI?.refresh();layers();workspace?.attachCanvas(canvas);workspace?.draw();
+      canvas.setDocument(designs.get(path),path,prepared.projectFonts);compatibilityUI?.refresh();layers();workspace?.attachCanvas(canvas);workspace?.draw();
 
       $('engineNotice').textContent=canvas.design.warnings?.join(' ')||'';$('engineNotice').hidden=!$('engineNotice').textContent;updateDiagnostics();
 
@@ -435,6 +437,7 @@
       getDesigns:()=>designs,getSheetInstance:path=>sheetInstances.get(path),resolveProbeViews,getSchematicProbeRows,mountProbe3D,updateDiagnostics,onOverviewHighlights:()=>sheetOverview?.refresh(),
       onHierarchy(hierarchy){if(!disposed)parent.postMessage({type:'kicad-review:hierarchy',repository,ref,hierarchy},ownOrigin);},
       onAssemblyVariant({variant,config}){if(!disposed)parent.postMessage({type:'kicad-review:assembly-variant',repository,ref,file:requestedFile,rootFile,variant,config},ownOrigin);},
+      onBomHover:bomCompanion?selection=>{if(!disposed)parent.postMessage({type:'kicad-review:bom-hover',selection},ownOrigin);}:undefined,
       onSelection(selection){if(crossApplying||!globalThis.KiCadPairedReview?.validSelection(selection))return;windowLink?.publish(selection);if(globalThis.KiCadVSCodeBridge?.selection)globalThis.KiCadVSCodeBridge.selection(selection);else parent.postMessage({type:'kicad-review:selection',selection},ownOrigin);},
       onCommentsChanged(){if(globalThis.KiCadVSCodeBridge?.onCommentsChanged)globalThis.KiCadVSCodeBridge.onCommentsChanged();else parent.postMessage({type:'kicad-review:comments-changed'},ownOrigin);},pullNumber:Number(params.get('pullNumber'))||null,pullRepository:params.get('pullRepository')||repository});
 
@@ -767,6 +770,7 @@
       if(msg.command==='sheet-map-shortcut'){sheetOverview?.miniatureShortcut();return;}
       if(msg.command==='open-sheet'){workspace.followSheet?.(msg.file);return;}
       if(msg.command==='refresh-comments'){workspace.refreshComments?.();return;}
+      if(msg.command==='hover-bom-part'&&bomCompanion){workspace.hoverBomPart?.(msg.selection);return;}
       if(msg.command==='highlight-related'){related(msg.selection);return;}
       if(msg.command==='comparison-highlight'){if(msg.file===currentFile()&&Array.isArray(msg.uuids)&&msg.uuids.length<=200&&msg.uuids.every(v=>typeof v==='string'&&v.length<=128)&&(!msg.focusUuid||typeof msg.focusUuid==='string'&&msg.focusUuid.length<=128))workspace.highlightComparison?.(msg.file,msg.uuids,msg.focusUuid);return;}
       if(msg.command==='fit-drawing'&&scene){scene.fit?.();return;}

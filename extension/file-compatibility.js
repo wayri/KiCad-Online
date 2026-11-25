@@ -1,8 +1,32 @@
 /* Saved-format capability disclosure; never upgrades or rewrites a design. */
 ((root)=>{'use strict';
  const value=x=>x&&typeof x==='object'&&!Array.isArray(x)?x.quoted:x;
+ // Keep only compressed font data. Decode during viewport use, after the drawing is visible.
+ function embeddedFonts(ast){
+  const entries=ast.find(node=>Array.isArray(node)&&node[0]==='embedded_files');
+  if(!entries)return undefined;
+  const fonts=new Map();let encodedBytes=0;
+  for(const entry of entries){
+   if(!Array.isArray(entry)||entry[0]!=='file')continue;
+   const field=key=>entry.find(node=>Array.isArray(node)&&node[0]===key);
+   const name=value(field('name')?.[1]);
+   if(value(field('type')?.[1])!=='font'||typeof name!=='string'||name.length>255||!/[.](ttf|otf)$/i.test(name))continue;
+   if(fonts.has(name)){fonts.set(name,null);continue;}
+   const data=field('data');
+   if(!data)continue;
+   let length=0;
+   for(let i=1;i<data.length&&length<=3000000;i++)length+=String(value(data[i])).length;
+   if(length>3000000||encodedBytes+length>8000000||fonts.size>=16)continue;
+   const encoded=data.slice(1).map(value).join('');
+   if(!encoded.startsWith('|')||!encoded.endsWith('|'))continue;
+   encodedBytes+=length;
+   fonts.set(name,{name,base64:encoded.slice(1,-1),checksum:value(field('checksum')?.[1])});
+  }
+  const assets=[...fonts.values()].filter(Boolean);
+  return assets.length?assets:undefined;
+ }
  const common='version generator generator_version uuid paper title_block embedded_fonts embedded_files legacy_source legacy_diagnostic'.split(' ');
- const known={kicad_pcb:new Set([...common,...'general layers setup net footprint module host page net_class segment arc via zone gr_line gr_arc gr_rect gr_circle gr_poly gr_text gr_curve gr_text_box gr_bitmap dimension target property group image'.split(' ')]),kicad_sch:new Set([...common,...'lib_symbols symbol sheet wire bus bus_entry junction no_connect label global_label hierarchical_label netclass_flag text text_box table image rule_area polyline rectangle circle arc bezier sheet_instances symbol_instances group'.split(' ')])};
+ const known={kicad_pcb:new Set([...common,...'general layers setup net footprint module host page net_class segment arc via zone gr_line gr_arc gr_rect gr_circle gr_poly gr_text gr_curve gr_text_box gr_bitmap dimension target property group image'.split(' ')]),kicad_sch:new Set([...common,...'lib_symbols symbol sheet wire bus bus_entry junction no_connect label global_label hierarchical_label netclass_flag directive_label text text_box table image rule_area polyline rectangle circle arc bezier sheet_instances symbol_instances group'.split(' ')])};
  // Deliberately bounded numeric subset of KiCad 10 text expressions. See
  // https://docs.kicad.org/10.0/en/eeschema/eeschema.html#text-expressions
  // Units, strings, logical/time/random functions and unknown syntax stay literal.
@@ -191,9 +215,9 @@
   {id:'hierarchy',label:'Sheet navigation and cross-sheet highlighting',since:4,implemented:true},
   {id:'copper',label:'Saved copper fills and zone outlines',since:4,implemented:true},
   {id:'models',label:'Repository-linked 3D models',since:4,implemented:true},
-  {id:'embeddedAssets',label:'Embedded fonts and 3D assets',since:9,implemented:false},
-  {id:'componentClasses',label:'Component-class rules',since:9,implemented:false},
-  {id:'netclassRuleAreas',label:'Schematic net-class rule areas',since:9,implemented:false},
+  {id:'embeddedAssets',label:'Embedded fonts and 3D assets',since:9,implemented:true,limitation:'Uses saved TrueType or OpenType faces and supported embedded PCB models. Invalid or oversized assets are skipped.'},
+  {id:'componentClasses',label:'Component classes',since:9,implemented:true,limitation:'Shows saved PCB and schematic classes and rule-area matches supported by drawing geometry. Dynamic PCB conditions and custom DRC expressions require native KiCad.'},
+  {id:'netclassRuleAreas',label:'Schematic net-class rule areas',since:9,implemented:true,limitation:'Shows saved directives, rule areas and sheet-local net assignments. Bus expansion and cross-sheet rule resolution require native KiCad.'},
   {id:'schematicTables',label:'Native schematic tables (horizontal)',since:9,implemented:true,limitation:'Horizontal tables with saved cell geometry are rendered. Rotated tables are omitted with a drawing diagnostic; table-cell contextual variables are not implemented.'}
  ]);
  function capability(info,id){
@@ -227,5 +251,5 @@
   const refresh=()=>{const info=read();button.textContent=info?.restrictedPreview?'Legacy · Restricted':info?.majorVersion?`KiCad ${info.majorVersion} · Features`:'File features';if(dialog.open)dialog.close();};refresh();
   return {refresh,check(id){const feature=features.find(f=>f.id===id);return feature?explain(feature):false;},dispose(){dialog.remove();button.remove();}};
  }
- root.KiCadFileCompatibility={textResolver,textContext,textExpressions,textLinks,inspect,features,capability,mountStatus};if(typeof module==='object'&&module.exports)module.exports=root.KiCadFileCompatibility;
+ root.KiCadFileCompatibility={embeddedFonts,textResolver,textContext,textExpressions,textLinks,inspect,features,capability,mountStatus};if(typeof module==='object'&&module.exports)module.exports=root.KiCadFileCompatibility;
 })(typeof globalThis==='object'?globalThis:this);

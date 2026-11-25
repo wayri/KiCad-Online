@@ -48,5 +48,7 @@ body[data-bom-companion=true] #frameControls .top-sheet-navigation #sheetLabel{f
 body[data-bom-companion=true] #frameControls .top-sheet-navigation #sheetSelect{width:130px;max-width:100%}
 .bom-browser-parts tr[data-group=true]>td:first-child{white-space:normal;min-width:160px;max-width:240px;overflow-wrap:normal}
 .bom-browser-parts td:first-child button{display:inline-flex;white-space:nowrap;vertical-align:middle}
+.bom-browser-parts tr[data-hovered=true]>td{background:color-mix(in srgb,#ffbf52 16%,var(--panel,#19252f))}
+.bom-browser-parts button[data-hovered=true]{outline:2px solid #c2791b;outline-offset:1px}
 
 .bom-field-pick{cursor:pointer;border-radius:3px}.bom-field-pick:focus-visible{outline:2px solid var(--accent);outline-offset:3px}

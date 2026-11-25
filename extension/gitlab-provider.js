@@ -98,7 +98,14 @@
     if(files.length>root.KiCadBrowserData.PROJECT_MAX_FILES)throw new Error('More than 128 parent-sheet candidates; open the project root directly.');
     return files.sort();
   }
-  async function inventory(repository,ref,path){scope(repository,ref,path);const snapshot=await resolve(repository,ref,path),listing=await tree(repository,snapshot.sha);return {files:listing.entries.filter(item=>root.KiCadGitHub.filePath(item.path)).sort((a,b)=>a.path.localeCompare(b.path)).map(item=>({path:item.path,size:0})),snapshotRef:snapshot.sha,warnings:listing.warnings};}
+  async function inventory(repository,ref,path){
+    scope(repository,ref,path);
+    const snapshot=await resolve(repository,ref,path);
+    const directory=/\.(?:kicad_pro|pro)$/i.test(path)?path.split('/').slice(0,-1).join('/'):'';
+    const listing=await tree(repository,snapshot.sha,directory);
+    const files=listing.entries.filter(item=>root.KiCadGitHub.filePath(item.path)&&(!directory||item.path.startsWith(directory+'/')));
+    return {files:files.sort((a,b)=>a.path.localeCompare(b.path)).map(item=>({path:item.path,size:0})),snapshotRef:snapshot.sha,warnings:listing.warnings};
+  }
   async function modelIndex(repository,ref){
     if(!validRepository(repository)||!SHA.test(ref||''))throw Error('Model discovery requires a repository and immutable revision.');
     const listing=await tree(repository,ref);

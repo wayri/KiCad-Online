@@ -57,6 +57,28 @@ test('denied website reads offer local rendering without requesting account auth
 test('project chooser excludes standalone drawings when listing project cards',async()=>{const view=await ui({ok:true,result:{sha:'c'.repeat(40),projects:['root.kicad_pro','sub/child.kicad_pro','elsewhere/sheet.kicad_sch','other/board.kicad_pcb']}});const cards=view.nodes.get('launchProjects').children;assert.equal(cards.length,2);assert.deepEqual(cards.map(c=>new URL(c.href).searchParams.get('file')),['root.kicad_pro','sub/child.kicad_pro']);assert.equal(cards[1].children[1].textContent,'child');assert.equal(cards[1].children[2].textContent,'sub');assert.equal(cards[1].className,'project-choice');});
 test('drawing-only repositories do not mislabel individual drawings as projects',async()=>{const view=await ui({ok:true,result:{sha:'d'.repeat(40),projects:['sheet.kicad_sch','board.kicad_pcb']}});assert.equal(view.nodes.get('launchProjects').children.length,0);assert.equal(view.replaced.length,0);});
 
+test('hundreds of projects remain filterable with a bounded page of cards and pinned folder links',async()=>{
+ const sha='e'.repeat(40),items=Array.from({length:600},(_,index)=>'design/Archive '+index+'/Board.'+(index%2?'pro':'kicad_pro'));
+ const view=await ui({ok:true,result:{sha,projects:[...items,'loose/harness.sch'],folders:['design','loose'],truncated:true}});
+ const n=id=>view.nodes.get(id),cards=n('launchProjects');
+ assert.equal(cards.children.length,36);
+ assert.equal(n('launchPage').textContent,'Page 1 of 17');
+ await n('launchNext').onclick();
+ assert.equal(n('launchPage').textContent,'Page 2 of 17');
+ n('launchFilter').value='archive 599/';n('launchFilter').oninput();
+ assert.equal(cards.children.length,1);
+ assert.equal(new URL(cards.children[0].href).searchParams.get('file'),items.at(-1));
+ n('launchFilter').value='';n('launchFilter').oninput();n('launchDrawings').onclick();
+ assert.equal(new URL(cards.children[0].href).searchParams.get('file'),'loose/harness.sch');
+ const folder=new URL(n('launchFolderLinks').children[0].href);
+ assert.equal(folder.searchParams.get('source'),'https://github.com/owner/repo/tree/'+sha+'/design');
+ assert.equal(folder.searchParams.get('folder'),'1');
+ const nested=await ui({ok:true,result:{sha,projects:[items[0]],folders:[],directory:'design/Archive 0'}},
+   new URLSearchParams({source:'https://github.com/owner/repo/tree/'+sha+'/design/Archive%200',ref:sha,folder:'1',projects:'1'}).toString());
+ assert.equal(nested.requests[0].folderOnly,true);
+ assert.equal(new URL(nested.nodes.get('launchFolderUp').href).searchParams.get('source'),'https://github.com/owner/repo/tree/'+sha+'/design');
+});
+
 
 test('Gerber-only and mixed repositories offer a dedicated fabrication card without redirecting',async()=>{
  for(const projects of [[],['main.kicad_pro']]){

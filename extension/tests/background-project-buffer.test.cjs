@@ -12,6 +12,28 @@ require('../background.js');
 const viewer=(name='revision-viewer.html')=>({id:'buffer-test',url:origin+name,tab:{id:80},frameId:0,documentId:name});
 function message(request,sender=viewer()){return new Promise(resolve=>{if(!listener(request,sender,resolve))resolve({ignored:true});});}
 
+test('large repository catalogue lists mixed projects without reading designs and opens an unscanned folder at the same revision',async()=>{
+ const sources=Object.fromEntries(Array.from({length:240},(_,index)=>{
+  const dir='batch-'+String(index).padStart(3,'0');
+  return Array.from({length:4},(_,item)=>[dir+'/board-'+item+(item%2?'.kicad_pro':'.pro'),'']);
+ }).flat());
+ sources['batch-239/rev/a/deep/loose.sch']='';
+ const scope=setup('buffer/large-catalogue',sources),source='https://github.com/'+scope.repository;
+ const launcher=viewer('project-launcher.html');
+ const first=await message({type:'repository-detect',repository:scope.repository,source,ref:'HEAD'},launcher);
+ assert.equal(first.ok,true,first.error);
+ assert.ok(first.result.projects.length>700);
+ assert.equal(first.result.truncated,true);
+ assert.ok(first.result.folders.includes('batch-239'));
+ const direct=await message({type:'repository-detect',repository:scope.repository,source:source+'/tree/'+SHA+'/batch-239',ref:SHA,folderOnly:true},launcher);
+ assert.equal(direct.ok,true,direct.error);
+ assert.equal(direct.result.sha,SHA);
+ assert.deepEqual(direct.result.projects,['batch-239/board-0.pro','batch-239/board-1.kicad_pro','batch-239/board-2.pro','batch-239/board-3.kicad_pro']);
+ assert.deepEqual(direct.result.folders,['batch-239/rev']);
+ assert.equal(fixture.session.some(read=>read.action==='file'),false);
+ assert.equal(fixture.fetches.length,0);
+});
+
 test('large saved source is chunked across both repository and viewer message boundaries',async()=>{
  const chunks=require('../chunked-replies.js'),source='(kicad_sch ;'+'x'.repeat(2*1024*1024)+'\n)',scope=setup('buffer/chunked',{'large.kicad_sch':source}),store=chunks.createStore(),old=chrome.tabs.sendMessage;
  let sourceChunks=0,viewerChunks=0,maxWire=0;

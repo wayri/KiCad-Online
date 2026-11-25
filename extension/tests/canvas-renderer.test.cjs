@@ -661,3 +661,25 @@ test('selection fit waits for real dimensions when a hidden drawing is revealed'
  assert.deepEqual([camera.center.x,camera.center.y],[20,41]);
  canvas.dispose();
 });
+
+test('BoM component hover uses amber independently of net hover and selection',()=>{
+ const palette=require('../layer-colors.js'),{canvas}=runtime(1,{KiCadLayerColors:palette});
+ const track={uuid:'track',type:'line',kind:'track',layer:'F.Cu',points:[{x:0,y:0},{x:10,y:0}]};
+ const part={...track,uuid:'outline',ownerUuid:'r1',kind:'footprint',layer:'F.SilkS'};
+ const primitives=[track,part],design={primitives,layers:primitives.map(p=>p.layer)};
+ canvas.setDocument(design,'board.kicad_pcb');
+ canvas.selected=track;
+ const painted=[],paint=canvas.paint;
+ canvas.paint=function(p,style){paint.call(this,p,style);if(style.hover)painted.push([p.uuid,this.ctx.strokeStyle]);};
+ canvas.setHoverNet({primitives:[track]});
+ painted.length=0;
+ canvas.setHoverParts([part]);
+ assert.deepEqual(painted.splice(0),[['track',palette.reviewColorFor('F.Cu',true)],['outline','#ffbf52']]);
+ canvas.setHoverNet(null);
+ assert.deepEqual(painted.splice(0),[['outline','#ffbf52']]);
+ assert.equal(canvas.selected,track);
+ canvas.setDocument(design,'other.kicad_pcb');
+ assert.equal(canvas.hoverCanvas.hidden,true);
+ assert.equal(canvas.hoverParts,null);
+ canvas.dispose();
+});

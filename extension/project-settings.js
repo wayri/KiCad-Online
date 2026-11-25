@@ -13,9 +13,10 @@
     if(typeof text!=='string')throw new TypeError('KiCad settings source must be text.');
     if(text.length>maxBytes||new TextEncoder().encode(text).byteLength>maxBytes)throw new Error('Settings file exceeds '+maxBytes/(1024*1024)+' MiB.');
   }
-  function copyTree(input){
+  function copyTree(input,boardGeometrySlots=false){
     let nodes=0;
     function copy(v,depth){
+      if(boardGeometrySlots&&depth===1&&v===null)return null;
       if(++nodes>LIMITS.nodes)throw new Error('Settings contain too many values.');
       if(depth>LIMITS.depth)throw new Error('Settings nesting exceeds 64 levels.');
       if(v===null||typeof v!=='object'){
@@ -41,7 +42,7 @@
     }
     visit(tree,base);return entries;
   }
-  const sectionLabel={board:'Board setup',schematic:'Schematic setup',erc:'Electrical rules (ERC)',net_settings:'Net classes and assignments',text_variables:'Text variables',pcbnew:'PCB editor settings',eeschema:'Schematic editor settings',libraries:'Libraries',meta:'File metadata',boards:'Board files',cvpcb:'Footprint assignment','3dviewports':'Saved 3D views'};
+  const sectionLabel={board:'Board setup',schematic:'Schematic setup',erc:'Electrical rules (ERC)',net_settings:'Net classes and assignments',component_class_settings:'Component class rules',text_variables:'Text variables',pcbnew:'PCB editor settings',eeschema:'Schematic editor settings',libraries:'Libraries',meta:'File metadata',boards:'Board files',cvpcb:'Footprint assignment','3dviewports':'Saved 3D views'};
   function jsonSections(tree){
     const sections=[];
     for(const key of Object.keys(tree)){
@@ -53,19 +54,22 @@
   }
   const GEOMETRY=new Set(['footprint','segment','arc','via','zone','net','group','target','dimension','image','embedded_files']);
   const isGeometry=form=>GEOMETRY.has(tag(form))||tag(form).startsWith('gr_');
-  // Validate every token, but allocate only saved settings. Skipped drawing
-  // forms still consume parser depth/node budgets and preserve their root slot.
+  // Validate geometry without charging its skipped tokens to the settings budget.
+  // Keep a null slot for each skipped root form to preserve source pointers.
   function boardSettingsTree(source){
     const stack=[],roots=[],number=/^[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?$/;
     let i=0,nodes=0;
     function append(value){
-      if(++nodes>6000000)throw new Error('KiCad file has too many S-expression nodes.');
       const frame=stack.at(-1);
       if(!frame){roots.push(value);return;}
       if(frame.keep){
         if(stack.length===2&&frame.tree.length===0&&isGeometry([value])){
           frame.keep=false;frame.parent[frame.index]=null;frame.tree=null;
-        }else frame.tree.push(value);
+        }else {
+          if(stack.length===1&&frame.tree.length>=1500000)throw new Error('KiCad board has too many top-level forms.');
+          if(stack.length>1&&++nodes>LIMITS.nodes)throw new Error('Settings contain too many values.');
+          frame.tree.push(value);
+        }
       }
     }
     while(i<source.length){
@@ -103,7 +107,7 @@
       append(value);
     }
     if(stack.length||roots.length!==1||!Array.isArray(roots[0]))throw new Error('Incomplete KiCad S-expression.');
-    return copyTree(roots[0]);
+    return copyTree(roots[0],true);
   }
   function sexpr(text,multiple=false,boardSettings=false){
     if(boardSettings)return boardSettingsTree(text);

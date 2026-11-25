@@ -1,7 +1,7 @@
 const test=require('node:test'),assert=require('node:assert/strict'),{rank,mount}=require('../bom-browser.js');
 test('ranks drawing-local BoMs, exact board filenames, common names and spelling variants',()=>{const r=rank(['logs.csv','BoM.csv','encoder/Encoder.csv','encoder/Encoder_BOM.csv','encoder/parts-list.tsv','encoder/Encodre.csv','encoder/bom.csv'],'encoder/Encoder.kicad_pcb');assert.equal(r[0].path,'encoder/Encoder_BOM.csv');assert(r.find(x=>x.path==='encoder/Encodre.csv').score>0);assert.equal(r.find(x=>x.path==='logs.csv').score,0);assert(r.find(x=>x.path==='encoder/bom.csv').score>r.find(x=>x.path==='BoM.csv').score);});
 test('rejects unsafe and non-CSV paths, deduplicates and bounds discovery',()=>{assert.deepEqual(rank(['../bom.csv','/bom.csv','C:/bom.csv','x\\bom.csv','bom.csv?x','bom.csv#x','bom.csv','bom.csv','bom.exe'],'Encoder.kicad_pcb').map(x=>x.path),['bom.csv']);assert.equal(rank(Array.from({length:20001},(_,i)=>i+'.csv')).length,20000);});
-function harness(files,extra={}){let doc;class Node{constructor(tag){this.tagName=tag;this.children=[];this.value='';this.classList={add(){},remove(){}};this.listeners={};}append(...n){this.children.push(...n);}replaceChildren(...n){this.children=n;}setAttribute(k,v){this[k]=v;}addEventListener(k,v){this.listeners[k]=v;}focus(){doc.activeElement=this;}scrollIntoView(options){this.scrolled=options;}click(){return this.listeners.click?.();}}const holder=new Node('section'),api=mount({document:doc={createElement:t=>new Node(t)},holder,scope:{repository:'fork/board',ref:'a'.repeat(40),file:'board.kicad_pcb'},inventory:async()=>({files:files.map(path=>({path}))}),url:p=>'https://viewer.test/'+p,onDrawing(){},...extra});return {api,holder,doc};}
+function harness(files,extra={}){let doc;class Node{constructor(tag){this.tagName=tag;this.children=[];this.value='';this.classList={add(){},remove(){}};this.listeners={};}append(...n){this.children.push(...n);}replaceChildren(...n){this.children=n;}setAttribute(k,v){this[k]=v;}removeAttribute(k){delete this[k];}addEventListener(k,v){this.listeners[k]=v;}focus(){doc.activeElement=this;}scrollIntoView(options){this.scrolled=options;}click(){return this.listeners.click?.();}}const holder=new Node('section'),api=mount({document:doc={createElement:t=>new Node(t)},holder,scope:{repository:'fork/board',ref:'a'.repeat(40),file:'board.kicad_pcb'},inventory:async()=>({files:files.map(path=>({path}))}),url:p=>'https://viewer.test/'+p,onDrawing(){},...extra});return {api,holder,doc};}
 test('multiple plausible files require explicit choice; selection carries exact scope',async()=>{const {api,holder}=harness(['BoM.csv','board.csv']);await api.show();const bar=holder.children[0],select=bar.children[0].children[0],stage=holder.children[2];assert.equal(stage.children.length,0);select.value='board.csv';select.listeners.change();bar.children[1].click();const u=new URL(stage.children[0].src);assert.equal(u.searchParams.get('repository'),'fork/board');assert.equal(u.searchParams.get('ref'),'a'.repeat(40));assert.equal(u.searchParams.get('file'),'board.csv');});
 test('one likely file opens automatically and keeps its frame on repeated tab visits',async()=>{const {api,holder}=harness(['BoM.csv','unrelated.csv']);await api.show();const frame=holder.children[2].children[0];assert(frame);await api.show();assert.equal(holder.children[2].children[0],frame);});
 
@@ -47,3 +47,39 @@ test('unresolved and recursive BoM variables stay explicit instead of inventing 
 test('value fields select their source part while parser diagnostics stay out of the status area',async()=>{const picks=[],part={kind:'symbol',reference:'R8',path:'root.kicad_sch',properties:{Value:'47k'}};const h=harness([],{loadDrawing:async()=>({objects:[part],warnings:['Missing sheet context, test diagnostic']}),onSelect:p=>picks.push(p)});await h.api.show();const field=walk(h.holder).find(n=>n.textContent==='47k');assert.equal(field.role,'button');field.click();assert.equal(picks[0],part);assert(!walk(h.holder).some(n=>(n.textContent||'').includes('Missing sheet context')));});
 
 test('grouped field activation selects every source reference and accepts incoming multi-part highlights',async()=>{const selected=[],parts=['R1','R2'].map(reference=>({kind:'symbol',path:'root.kicad_sch',reference,properties:{Value:'10k'}})),h=harness([],{loadDrawing:async()=>({objects:parts}),onSelect:s=>selected.push(s)});await h.api.show();const group=walk(h.holder).find(n=>n['aria-label']==='Group parts by value, footprint and population');group.checked=true;group.listeners.change();walk(h.holder).find(n=>n.textContent==='10k').click();assert.equal(selected[0].kind,'group');assert.deepEqual(selected[0].items.map(p=>p.reference),['R1','R2']);assert.equal(h.api.select({kind:'group',items:parts}),true);for(const ref of ['R1','R2'])assert.equal(walk(h.holder).find(n=>n.tagName==='button'&&n.textContent===ref)['aria-pressed'],'true');});
+
+test('BoM hover previews a grouped row or individual reference and receives drawing hover without selecting',async()=>{
+ const previews=[],clicks=[];
+ const parts=['R1','R2'].map(reference=>({
+  kind:'symbol',path:'root.kicad_sch',uuid:reference,reference,properties:{Value:'10k'}
+ }));
+ const {api,holder}=harness([],{
+  loadDrawing:async()=>({objects:parts}),
+  onHover:part=>previews.push(part),onSelect:part=>clicks.push(part)
+ });
+ await api.show();
+ const group=walk(holder).find(node=>node['aria-label']==='Group parts by value, footprint and population');
+ group.checked=true;
+ group.listeners.change();
+ const find=ref=>walk(holder).find(node=>node.tagName==='button'&&node.textContent===ref);
+ const r1=find('R1'),r2=find('R2'),row=walk(holder).find(node=>node.children.some(cell=>cell.children.includes(r2)));
+ row.listeners.pointerover({pointerType:'mouse',target:{closest:()=>null}});
+ assert.deepEqual(previews,[{kind:'group',items:parts}]);
+ row.listeners.pointerover({pointerType:'mouse',target:{closest:()=>r2}});
+ row.listeners.pointerover({pointerType:'mouse',target:{closest:()=>r2}});
+ assert.deepEqual(previews,[{kind:'group',items:parts},parts[1]]);
+ assert.equal(r1['data-hovered'],undefined);
+ assert.equal(r2['data-hovered'],'true');
+ row.listeners.pointerleave();
+ assert.equal(previews.at(-1),null);
+ assert.equal(row['data-hovered'],undefined);
+ r1.click();
+ api.hover({...parts[1],kind:'part'});
+ assert.equal(r1['aria-pressed'],'true');
+ assert.equal(r2['aria-pressed'],'false');
+ assert.equal(r2['data-hovered'],'true');
+ assert.deepEqual(row.scrolled,{block:'nearest',inline:'nearest'});
+ api.hover(null);
+ assert.equal(r2['data-hovered'],undefined);
+ assert.deepEqual(clicks,[parts[0]]);
+});

@@ -32,6 +32,20 @@ test('GitLab inventory pins trees to a SHA, handles pagination and excludes syml
 test('GitLab bounded discovery discloses omitted tree pages',async t=>{
  let count=0;transport(t,async url=>{if(url.includes('/commits/'))return json({id:sha});count++;return json([] ,{'x-next-page':String(count+1)});});const result=await api.inventory('group/board','main','main.kicad_pcb');assert.equal(count,10);assert.match(result.warnings.join(' '),/incomplete/);
 });
+test('GitLab nested project inventory reads its own pinned subtree',async t=>{
+ const directory='released/archive 205/hardware';
+ transport(t,async url=>{
+  if(url.includes('/commits/'))return json({id:sha});
+  const query=new URL(url).searchParams;
+  assert.equal(query.get('ref'),sha);
+  assert.equal(query.get('path'),directory);
+  assert.equal(query.get('recursive'),'true');
+  return json(['board.kicad_pro','sch/main.kicad_sch','pcb/board.kicad_pcb'].map(file=>({path:directory+'/'+file,type:'blob',mode:'100644'})));
+ });
+ const result=await api.inventory('group/sub/board','main',directory+'/board.kicad_pro');
+ assert.equal(result.snapshotRef,sha);
+ assert.deepEqual(result.files.map(file=>file.path),['board.kicad_pro','pcb/board.kicad_pcb','sch/main.kicad_sch'].map(file=>directory+'/'+file));
+});
 test('GitLab commits and compare use immutable refs with direct comparison',async t=>{
  transport(t,async url=>{if(/\/commits\/main$/.test(url))return json({id:sha});if(/\/commits\/feature%2Fpcb$/.test(url))return json({id:'b'.repeat(40)});if(url.includes('/compare?')){const query=new URL(url).searchParams;assert.equal(query.get('straight'),'true');assert.equal(query.get('from'),sha);assert.equal(query.get('to'),'b'.repeat(40));return json({compare_timeout:false,diffs:[{old_path:'old.kicad_pcb',new_path:'new.kicad_pcb',renamed_file:true},{old_path:'notes.txt',new_path:'notes.txt'}]});}assert.equal(new URL(url).searchParams.get('ref_name'),sha);return json([{id:sha,title:'Change',author_name:'A',authored_date:'2026-01-01'}]);});
  const history=await api.commits('group/board','main','new.kicad_pcb');assert.equal(history.commits[0].sha,sha);

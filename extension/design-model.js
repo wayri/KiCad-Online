@@ -163,6 +163,23 @@
     }
     return frozenTree(saved);
   }
+  function componentClasses(form, kind) {
+    const names = new Set();
+    const add = (name) => {
+      const text = textValue(name);
+      if (safeText(text, MAX_SAVED_PROPERTY_VALUE_CHARS) && names.size < MAX_SAVED_PROPERTIES) names.add(text);
+    };
+    if (kind === "footprint") {
+      for (const group of children(form, "component_classes")) {
+        for (const entry of children(group, "class")) add(entry[1]);
+      }
+    } else if (kind === "symbol") {
+      for (const property of children(form, "property")) {
+        if (textValue(property[1]) === "Component Class") add(property[2]);
+      }
+    }
+    return [...names].sort();
+  }
   function validPropertyName(name) {
     return safeText(name, 100) && !["__proto__", "constructor", "prototype"].includes(name.toLowerCase()) &&
       !RESERVED.has(name.toLowerCase());
@@ -379,7 +396,11 @@
         populated: part ? flags.populated : parent ? parent.populated : null,
         populationReason: part ? flags.populationReason : parent?.populationReason || null,
         excludeFromBom: part ? flags.excludeFromBom : parent ? parent.excludeFromBom : null };
-      if (part) record.association = sourceAssociation(item.form, rootUuids.get(item.path));
+      if (part) {
+        record.association = sourceAssociation(item.form, rootUuids.get(item.path));
+        const names = componentClasses(item.form, item.kind);
+        if (names.length) record.savedComponentClasses = Object.freeze(names);
+      }
       objects.push(record);
       if (!byRawKey.has(item.key)) byRawKey.set(item.key, record);
     }

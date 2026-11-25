@@ -43,3 +43,13 @@ test('saved spatial view choice survives browser, Android and VS Code routing an
  const delegated=[],android=host({KiCadAndroid:{openAnalysis:(...args)=>delegated.push(args)}});android.api.open('analysis-viewer.html',source);assert.equal(delegated[0][2].resultView,'3d');
  const messages=[],native=host({KiCadVSCodeContext:{drawingFile:'board.kicad_pcb'},chrome:{runtime:{sendMessage:async m=>{messages.push(m);return{ok:true,result:{opened:true}};}}}});await native.api.open('analysis-viewer.html',source);assert.equal(messages[0].resultView,'3d');
 });
+
+test('analysis inherits the active browser theme and only carries a valid drawing path',()=>{
+ const {api}=host({document:{body:{dataset:{uiTheme:'dark'}}}});
+ const source={repository:'owner/repo',ref:'abc',file:'sim/Encoder.wbk',drawingFile:'encoder/Encoder.kicad_sch'};
+ const url=new URL(api.open('analysis-viewer.html',source));
+ assert.equal(url.searchParams.get('uiTheme'),'dark');
+ assert.equal(url.searchParams.get('drawingFile'),source.drawingFile);
+ const invalid=new URL(api.open('analysis-viewer.html',{...source,drawingFile:'../Encoder.kicad_sch'}));
+ assert.equal(invalid.searchParams.has('drawingFile'),false);
+});

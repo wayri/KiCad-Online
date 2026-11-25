@@ -15,6 +15,25 @@ test('saved text and text-box links retain page targets and resolved web URLs wi
 const render = (source, path = "hardware/root.kicad_sch") => build(parse(source), path);
 const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-6, `${actual} != ${expected}`);
 
+test("saved rule area and directive markers agree with KiCad 10.0.6 native SVG landmarks", () => {
+  const source = require("node:fs").readFileSync(require("node:path").join(__dirname, "fixtures/schematic-rule-areas.kicad_sch"), "utf8");
+  const drawing = render(source);
+  const area = drawing.primitives.find(p => p.kind === "rule_area");
+  assert.equal(area.uuid, "7785290c-7d47-47b9-ac4b-d408c6ad807a");
+  assert.equal(area.type, "polygon");
+  assert.equal(area.lineStyle, "dash");
+  assert.equal(area.width, 0.25);
+  assert.deepEqual(area.points, [{x:50,y:50},{x:70,y:50},{x:70,y:70},{x:50,y:70}]);
+  const markers = drawing.primitives.filter(p => p.kind === "netclass_flag");
+  const stems = markers.filter(p => p.type === "line");
+  assert.deepEqual(stems.map(p => p.points.flatMap(({x,y}) => [x,y])), [
+    [60,50,60,47.968], [80,60,77.968,60], [85,75,85,72.8156], [80,85,77.8664,85]
+  ]);
+  assert.deepEqual(markers.filter(p => p.type === "circle").map(p => [p.x,p.y,p.r]),
+    [[77.46,60,.508],[85,72.46,.3556]]);
+  assert.deepEqual(markers.filter(p => p.type === "text").map(p => p.text), ["Plane","Direct","Unattached"]);
+});
+
 test('native graphic RGBA, independent fills, dash styles and font colors survive symbol transforms',()=>{
  const source=`(kicad_sch (lib_symbols (symbol "X" (symbol "X_0_1" (rectangle (start -2 -1) (end 2 1) (stroke (width .2) (type dash_dot) (color 132 0 0 .5)) (fill (type color) (color 10 80 240 .25)))))) (symbol (lib_id "X") (at 50 60 90) (unit 1) (uuid "u1")) (circle (center 10 10) (radius 3) (stroke (width .3) (type dot) (color 0 0 0 0)) (fill (type cross_hatch) (color 20 30 40 1)) (uuid "hatch")) (text "Saved color" (at 20 30) (effects (font (size 1 1) (color 1 2 3 .7))) (uuid "text")))`;
  const before=parse(source),snapshot=JSON.stringify(before),result=build(before,'native.kicad_sch'),body=result.primitives.find(p=>p.uuid==='u1'&&p.type==='polygon'&&p.stroke!==false),hatch=result.primitives.find(p=>p.uuid==='hatch'),text=result.primitives.find(p=>p.uuid==='text');

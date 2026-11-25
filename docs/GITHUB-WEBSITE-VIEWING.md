@@ -14,8 +14,14 @@ The cache holds at most 128 MiB and 256 entries. Eviction, expiration or browser
 worker shutdown may require downloading again. This is a temporary optimization,
 not an offline project backup. Private file contents are not cached by this buffer.
 
-Website discovery is bounded to 64 directories and 1,000 entries. Incomplete
-results are identified, and uncertain library-model matching is disabled.
+The project chooser scans up to 192 directories and 8,000 entries within its
+time budget. Filter the results by project name or folder path. When the scan
+is partial, use **Browse folders** to open folders directly at the pinned commit.
+**Standalone drawings** shows saved drawings in folders without a project file.
+The chooser pages the results and reads file metadata before you open a drawing.
+
+Other website inventories are bounded to 64 directories and 1,000 entries.
+Incomplete results are identified, and uncertain library-model matching is disabled.
 Linked files named explicitly by the saved drawing can still be fetched directly.
 Missing model libraries on the author's computer cannot be inferred or downloaded
 from unrelated sources.

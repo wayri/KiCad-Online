@@ -16,14 +16,16 @@
   const toolbar = $("toolbar"), comparison = $("comparison");
   const frames = new Map(), views = new Map();
   let workspaceTheme=null,themeControl=null;
-  function applyWorkspaceTheme(value,broadcast=true){
+  function applyWorkspaceTheme(value,broadcast=true,persist=true){
     if(!value||!['light','dark'].includes(value.uiTheme)||!['light','dark'].includes(value.drawingTheme))return;
     workspaceTheme={uiTheme:value.uiTheme,drawingTheme:value.drawingTheme};if(document.body?.dataset){document.body.dataset.uiTheme=value.uiTheme;document.body.dataset.drawingTheme=value.drawingTheme;}
     $('historyWorkspace')?.querySelector?.('.history-workspace-dialog')?.setAttribute('data-theme',value.uiTheme);themeControl?.setAttribute('aria-pressed',String(value.drawingTheme==='dark'));
-    try{globalThis.localStorage?.setItem('kicad:workspace-theme:v1',JSON.stringify(workspaceTheme));}catch{}
+    if(persist)try{globalThis.localStorage?.setItem('kicad:workspace-theme:v1',JSON.stringify(workspaceTheme));}catch{}
     if(broadcast)for(const [side,frame]of frames)frame.contentWindow?.postMessage({type:'kicad-review:command',command:'set-theme',theme:value.drawingTheme,...workspaceTheme,syncDetached:side==='head'},origin());
   }
   try{const saved=JSON.parse(globalThis.localStorage?.getItem('kicad:workspace-theme:v1')||'null');if(saved)applyWorkspaceTheme(saved,false);}catch{}
+  const initialTheme=params.get('uiTheme');
+  if(initialTheme==='light'||initialTheme==='dark')applyWorkspaceTheme({uiTheme:initialTheme,drawingTheme:workspaceTheme?.drawingTheme||initialTheme},false,false);
   const pendingSelections=new Map();
   let workspaceSelection=null;
   const outerLoads=new Map(),loadRows=new Map();
@@ -66,7 +68,20 @@
   let workspaceHelpers=null;const tabs=new Map();let bomBrowser=null,bomReturnWorkspace=null,bomModelPromise=null,bomMode='schematic',bomSelection=null,bomAssembly=null,bomAssemblyEpoch=0;
   async function loadBomDrawing(){if(!bomModelPromise)bomModelPromise=(async()=>{let file=isDrawing(request.file)?request.file:null;if(!file){const result=await inventory(),drawings=result.files.map(f=>f.path).filter(isDrawing),stem=entryFile.replace(/\.[^.]+$/,''),matching=drawings.filter(path=>path.replace(/\.kicad_[^.]+$/i,'')===stem);file=matching.find(path=>!isBoard(path))||matching[0]||(drawings.length===1?drawings[0]:null);}if(!file)throw Error('Open the schematic or PCB for this project before choosing BoM.');return send({type:'project',repository:request.headRepository,ref:request.head,file});})().then(reply=>{if(!reply?.ok)throw Error(reply?.error||'Could not read drawing parts.');const files=reply.result;if(!Array.isArray(files)||files.length>128)throw Error('Invalid drawing project.');const snapshot=KiCadDesignDiff.prepareProject(files),model=KiCadDesignModel.buildProject(files,null,snapshot);return{files,snapshot,model,warnings:files.map(f=>f.discoveryWarning).filter(Boolean)};}).catch(error=>{bomModelPromise=null;throw error;});const saved=await bomModelPromise,model=bomAssembly?KiCadDesignModel.buildProject(saved.files,bomAssembly.config,saved.snapshot):saved.model,variant=bomAssembly?.variant||'default';const applied=KiCadDesignModel.applyVariant(model,variant),resolved=globalThis.KiCadBomBrowser?.resolveDrawing?.(applied,saved.files,{rootFile:request.file,sheets:model.sheets.filter(sheet=>sheet.kind==='schematic'),snapshot:saved.snapshot})||{objects:applied,warnings:[]};return{objects:resolved.objects,variant,variantName:model.variants.find(v=>v.id===variant)?.name||'Saved design',warnings:[...saved.warnings,...model.warnings,...resolved.warnings]};}
   async function bomCompanion(mode,chosen){const board=mode!=='schematic',result=await inventory(),choices=result.files.map(f=>f.path).filter(file=>isDrawing(file)&&isBoard(file)===board),stem=entryFile.replace(/\.kicad_[^.]+$/i,''),matching=choices.filter(file=>file.replace(/\.kicad_[^.]+$/i,'')===stem),file=chosen&&choices.includes(chosen)?chosen:isBoard(entryFile)===board&&isDrawing(entryFile)?entryFile:matching.length===1?matching[0]:choices.length===1?choices[0]:null;if(!file)return{choices,message:choices.length?'Choose the companion drawing for this project.':'No matching saved drawing was found.'};bomMode=mode;return{file,url:chrome.runtime.getURL(board?'pcb-viewer.html':'schematic-viewer.html')+'?'+new URLSearchParams({repository:request.headRepository,ref:request.head,file,workspace:'1',headerViews:'1',headerSearch:'1',bomCompanion:'1',viewSession,...providerContext})};}
-  function selectBomPart(part){const api=globalThis.KiCadPairedReview,selection=part?.kind==='group'?{kind:'group',items:part.items.map(item=>api?.partSelection(item)).filter(Boolean).slice(0,200)}:api?.partSelection(part);if(!selection||!api?.validSelection(selection))return;bomSelection=selection;for(const [side,frame]of frames)if(side!=='base')frame.contentWindow?.postMessage({type:'kicad-review:command',command:'highlight-related',selection},origin());}
+  function bomPartSelection(part){
+    const api=globalThis.KiCadPairedReview;
+    const selection=part?.kind==='group'?{kind:'group',items:part.items.map(item=>api?.partSelection(item)).filter(Boolean).slice(0,200)}:api?.partSelection(part);
+    return api?.validSelection(selection)?selection:null;
+  }
+  function selectBomPart(part){
+    const selection=bomPartSelection(part);if(!selection)return;
+    bomSelection=selection;
+    for(const [side,frame]of frames)if(side!=='base')frame.contentWindow?.postMessage({type:'kicad-review:command',command:'highlight-related',selection},origin());
+  }
+  function hoverBomPart(part){
+    if(activeWorkspace!=='bom')return;
+    frames.get('bom')?.contentWindow?.postMessage({type:'kicad-review:command',command:'hover-bom-part',selection:bomPartSelection(part)},origin());
+  }
   const drawingSources=new Map(),drawingMembers=new Map();
   function readDrawing(file){
     if(!drawingSources.has(file)){
@@ -99,7 +114,7 @@
     frame.contentWindow?.postMessage({type:'kicad-review:command',command:'workspace-view',mode,...(selection?{selection}:{})},origin());
     for(const [key,button]of tabs){button.classList.toggle('active',key===mode);button.setAttribute('aria-pressed',String(key===mode));}
   }
-  async function openWorkspaceView(name){if(name==='bom'){tabEpoch++;pairEpoch++;pendingViewAction=null;if(activeWorkspace!=='bom')bomReturnWorkspace=activeWorkspace;markWorkspace('bom');$('changesPanel').hidden=true;if(!bomBrowser&&globalThis.KiCadBomBrowser)bomBrowser=KiCadBomBrowser.mount({document,holder:$('bomWorkspace'),scope:{repository:request.headRepository,ref:request.head,file:entryFile,...providerContext},inventory:()=>inventory(()=>bomBrowser.show()),url:page=>chrome.runtime.getURL(page),loadDrawing:loadBomDrawing,companion:bomCompanion,onSelect:selectBomPart,onFrame:frame=>{frames.delete('bom');views.delete('bom');if(frame)frames.set('bom',frame);},onDrawing:async()=>{const mode=isBoard(request.file)?'layout':'schematic';await openWorkspaceView(mode);pendingViewAction='bom';dispatchWorkspaceView();}});await bomBrowser?.show();return;}if(name==='history'){
+  async function openWorkspaceView(name){if(name==='bom'){tabEpoch++;pairEpoch++;pendingViewAction=null;if(activeWorkspace!=='bom')bomReturnWorkspace=activeWorkspace;markWorkspace('bom');$('changesPanel').hidden=true;if(!bomBrowser&&globalThis.KiCadBomBrowser)bomBrowser=KiCadBomBrowser.mount({document,holder:$('bomWorkspace'),scope:{repository:request.headRepository,ref:request.head,file:entryFile,...providerContext},inventory:()=>inventory(()=>bomBrowser.show()),url:page=>chrome.runtime.getURL(page),loadDrawing:loadBomDrawing,companion:bomCompanion,onSelect:selectBomPart,onHover:hoverBomPart,onFrame:frame=>{frames.delete('bom');views.delete('bom');if(frame)frames.set('bom',frame);},onDrawing:async()=>{const mode=isBoard(request.file)?'layout':'schematic';await openWorkspaceView(mode);pendingViewAction='bom';dispatchWorkspaceView();}});await bomBrowser?.show();return;}if(name==='history'){
     mountPicker();
     if(revisionPicker?.openGraph){
       if(!$('historyWorkspace').hidden){revisionPicker.closeGraph();return;}
@@ -375,6 +390,11 @@
       const message=event.data,source=new URL(frames.get(side).src);if(message.repository!==source.searchParams.get('repository')||message.ref!==source.searchParams.get('ref')&&message.ref!==views.get(side)?.ref||message.file!==source.searchParams.get('file')||!['light','dark'].includes(message.uiTheme)||!['light','dark'].includes(message.drawingTheme))return;
       if(workspaceTheme&&!views.has(side)&&side!=='project'||!workspaceTheme&&side!=='head'&&side!=='project')return;
       if(workspaceTheme?.uiTheme===message.uiTheme&&workspaceTheme?.drawingTheme===message.drawingTheme)return;applyWorkspaceTheme(message);return;
+    }
+    if(event.data?.type==='kicad-review:bom-hover'){
+      const selection=event.data.selection;
+      if(side==='bom'&&activeWorkspace==='bom'&&(selection===null||selection?.kind==='part'&&globalThis.KiCadPairedReview?.validSelection(selection)))bomBrowser?.hover(selection);
+      return;
     }
     if(event.data?.type==='kicad-review:selection'&&globalThis.KiCadPairedReview?.validSelection(event.data.selection)&&activeWorkspace==='bom'){bomSelection=event.data.selection;bomBrowser?.select(event.data.selection);if(crossLinked)for(const [target,frame]of frames)if(target!==side&&target!=='base')frame.contentWindow?.postMessage({type:'kicad-review:command',command:'highlight-related',selection:event.data.selection},origin());return;}
     if(event.data?.type==='kicad-review:assembly-variant'){

@@ -75,3 +75,49 @@ test('embedded base64 checks the decoded budget before using either decoder',()=
   assert.equal(calls,0);
   assert.deepEqual([...decodeBase64('AAEC',{host})],[0,1,2]);
 });
+
+test('saved embedded font metadata and font lifecycle use only referenced verified faces',async()=>{
+ const {embeddedFonts}=require('../file-compatibility.js');
+ const {mountFonts,fontNames}=require('../embedded-models.js');
+ const {parse}=require('../design-diff.js');
+ const name='Fixture Sans';
+ const encodedName=Buffer.from(name,'utf16le').swap16();
+ const font=Buffer.alloc(46+encodedName.length);
+ font.writeUInt32BE(0x00010000,0);
+ font.writeUInt16BE(1,4);
+ font.write('name',12);
+ font.writeUInt32BE(28,20);
+ font.writeUInt32BE(18+encodedName.length,24);
+ font.writeUInt16BE(1,30);
+ font.writeUInt16BE(18,32);
+ font.writeUInt16BE(3,34);
+ font.writeUInt16BE(1,40);
+ font.writeUInt16BE(encodedName.length,42);
+ encodedName.copy(font,46);
+ assert.deepEqual([...fontNames(font)],['fixture sans']);
+ assert.equal(fontNames(font.subarray(0,28)).size,0);
+ const checksum=createHash('sha256').update(font).digest('hex');
+ const asset='(file (name "test.ttf") (type font) (data |'+frame(font).toString('base64')+'|) (checksum "'+checksum+'"))';
+ const source='(kicad_sch (embedded_files '+asset+' (file (name "ignored.wrl") (type model))) (text "custom" (at 1 1 0) (effects (font (face "Fixture Sans") (size 1 1)))))';
+ const ast=parse(source),assets=embeddedFonts(ast);
+ assert.equal(assets.length,1);
+ const rendered=require('../schematic-renderer.js').build(ast);
+ assert.deepEqual(rendered.embeddedFonts,assets);
+ assert(rendered.primitives.some(p=>p.fontFace===name));
+ assert.equal(embeddedFonts(parse('(kicad_sch (embedded_files '+asset+asset+'))')),undefined);
+ const loaded=new Set();
+ class FontFace {
+   constructor(family,bytes){assert.deepEqual(Buffer.from(bytes),font);this.family=family;}
+   async load(){return this;}
+ }
+ const host={FontFace,document:{fonts:loaded},fzstd:{decompress}};
+ const warnings=[];
+ let fonts;
+ await new Promise(resolve=>{fonts=mountFonts(assets,new Set(['fixture sans']),resolve,(...warning)=>warnings.push(warning),host);});
+ assert.deepEqual(warnings,[]);
+ assert.match(fonts.family(name),/^kivi-embedded-/);
+ assert.equal(loaded.size,1);
+ fonts.dispose();
+ assert.equal(loaded.size,0);
+ assert.equal(fonts.family(name),undefined);
+});

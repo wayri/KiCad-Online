@@ -1336,6 +1336,22 @@ function countRepositoryFabrication(entries){
   return files.size;
 }
 
+function catalogueFolders(entries,directory){
+  const prefix=directory?directory+'/':'',folders=new Set();
+  for(const entry of entries){
+    if(entry.type!=='tree'||!entry.path.startsWith(prefix))continue;
+    const path=entry.path.slice(prefix.length);
+    if(path&&!path.includes('/')||entry.hasSimplifiedPath)folders.add(entry.path);
+  }
+  return [...folders].sort((a,b)=>a.localeCompare(b));
+}
+
+function catalogueEntries(snapshot){
+  return snapshot.entries?snapshot.entries.filter(item=>item.type==='file'||item.type==='directory').map(item=>({
+    path:item.path,type:item.type==='directory'?'tree':'blob',hasSimplifiedPath:item.hasSimplifiedPath===true
+  })):snapshot.files.map(item=>({path:item.path,type:'blob'}));
+}
+
 async function repositoryDetection(message,sender){
   const launcher=launcherSender(sender);
   if(launcher&&(sender.frameId??0)>0&&!repositorySessions().frameAllowed(sender))throw Error('Unbound in-page project launcher.');
@@ -1356,17 +1372,19 @@ async function repositoryDetection(message,sender){
       if(!resolved)throw Error('Open the PR head repository '+headRepository+' and click the extension there to authorize its website session, then retry this PR.');head=resolved.sha;
       warning=['PR head loaded; merge-base comparison is unavailable from this website metadata.'];
     }
-    const snapshot=await projectBuffer().inventory(headRepository,head,undefined,{refresh:message.refresh===true});
+    const snapshot=await projectBuffer().inventory(headRepository,head,undefined,{refresh:message.refresh===true,catalogue:true});
     if(snapshot.snapshotRef!==head)throw Error('Revision changed during project discovery.');
-    const entries=snapshot.files.map(item=>({path:item.path,type:'blob'}));
+    const entries=catalogueEntries(snapshot);
     const projects=KiCadGitHub.detectedProjects(entries),fabricationCount=countRepositoryFabrication(entries);
-    return {repository:revision.repository,ref:revision.kind==='commit'?revision.ref:head,sha:head,headRepository,...(pullNumber?{pullNumber,pullRepository:revision.repository}:{}),projects,fabricationCount,truncated:projects.length===100||snapshot.warnings.some(w=>/incomplete|limited|limit reached/i.test(w)),warnings:[...new Set([...warning,...snapshot.warnings])]};
+    return {repository:revision.repository,ref:revision.kind==='commit'?revision.ref:head,sha:head,headRepository,...(pullNumber?{pullNumber,pullRepository:revision.repository}:{}),projects,fabricationCount,folders:catalogueFolders(entries,''),truncated:snapshot.warnings.some(w=>/incomplete|limited|limit reached/i.test(w)),warnings:[...new Set([...warning,...snapshot.warnings])]};
   }
   if(!route||route.repository!==message.repository||(route.provider||'github')!==(message.provider||'github')||(route.host||'https://github.com')!==host)throw Error('Repository discovery does not match the host page.');
   let ref=message.ref,contextSnapshot=null;
   if(!ref&&route.tail&&(!message.provider||message.provider==='github')){const context=await projectBuffer().context(launcher?message.source:sender.url);ref=context.ref;contextSnapshot=context.sha;}
   if(!KiCadBrowserData.validRef(ref)||(!route.tail&&ref!=='HEAD')||route.tail&&!(route.tail.join('/')===ref||route.tail.join('/').startsWith(ref+'/')))throw Error('Repository branch does not match the host page.');
-  const directory=message.provider!=='gitlab'&&route.tail?route.tail.join('/').slice(ref.length).replace(/^\//,''):'';
+  const directory=route.tail?route.tail.join('/').slice(ref.length).replace(/^\//,''):'';
+  const folderOnly=launcher&&message.folderOnly===true;
+  if(folderOnly&&!/^[a-f0-9]{40}$/i.test(ref))throw Error('Folder browsing requires an immutable revision.');
   let listing;
   if(message.provider==='gitlab'){
     if(globalThis.KiCadGitLabHosts?!await KiCadGitLabHosts.allowed(host):host!=='https://gitlab.com')throw Error('Configure and grant access to this GitLab host first.');
@@ -1376,20 +1394,24 @@ async function repositoryDetection(message,sender){
       const metadata=response&&JSON.parse(new TextDecoder().decode(response.bytes));ref=metadata?.default_branch;
       if(!KiCadBrowserData.validRef(ref))throw Error('GitLab did not return a default branch.');
     }
-    listing=await api.repositoryTree(message.repository,ref,{page:1});
-    for(let page=2;listing.hasMore&&page<=10;page++){
-      const next=await api.repositoryTree(message.repository,listing.sha,{page});
+    const treeOptions=folderOnly||directory?{directory}:{},started=Date.now();
+    listing=await api.repositoryTree(message.repository,ref,{...treeOptions,page:1});
+    for(let page=2;listing.hasMore&&page<=30&&Date.now()-started<15000;page++){
+      const next=await api.repositoryTree(message.repository,listing.sha,{...treeOptions,page});
       if(next.sha!==listing.sha)throw Error('Repository revision changed during discovery.');
       listing.entries.push(...next.entries);listing.hasMore=next.hasMore;listing.warnings.push(...(next.warnings||[]));
     }
     listing.truncated=Boolean(listing.hasMore||listing.warnings.length);
+  }else if(folderOnly){
+    const folder=await projectBuffer().directory(message.repository,ref,directory);
+    listing={sha:folder.sha,entries:catalogueEntries({entries:folder.items}),warnings:[]};
   }else{
-    const snapshot=await projectBuffer().inventory(message.repository,contextSnapshot||ref,undefined,{directory,scoped:Boolean(directory),refresh:message.refresh===true});
-    listing={sha:snapshot.snapshotRef,entries:snapshot.files.map(item=>({path:item.path,type:'blob'})),warnings:snapshot.warnings,truncated:snapshot.warnings.some(warning=>/incomplete|limited|limit reached/i.test(warning))};
+    const snapshot=await projectBuffer().inventory(message.repository,contextSnapshot||ref,undefined,{directory,scoped:Boolean(directory),refresh:message.refresh===true,catalogue:true});
+    listing={sha:snapshot.snapshotRef,entries:catalogueEntries(snapshot),warnings:snapshot.warnings,truncated:snapshot.warnings.some(warning=>/incomplete|limited|limit reached/i.test(warning))};
   }
   const projects=KiCadGitHub.detectedProjects(listing.entries),fabricationCount=countRepositoryFabrication(listing.entries);
-  return {repository:message.repository,ref,sha:listing.sha,projects,fabricationCount,...(directory?{directory}:{}),
-    truncated:Boolean(listing.truncated||listing.hasMore||projects.length===100),warnings:[...new Set(listing.warnings||[])]};
+  return {repository:message.repository,ref,sha:listing.sha,projects,fabricationCount,folders:catalogueFolders(listing.entries,directory),...(directory?{directory}:{}),
+    truncated:Boolean(listing.truncated||listing.hasMore),warnings:[...new Set(listing.warnings||[])]};
 }
 
 let nativeKiCadService=null;

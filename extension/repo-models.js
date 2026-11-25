@@ -123,15 +123,24 @@
         const name = scalar(form, 'name');
         if (!isPath(name) || name.split('/').some(part => !part || part === '.' || part === '..')) continue;
         if (files.has(name)) { files.set(name, null); warn(`Duplicate embedded model name: ${name}`); continue; }
-        const data = child(form, 'data');
-        const pieces = data?.slice(1).map(value);
-        const encoded = pieces?.join('') || '';
-        const base64 = encoded.startsWith('|') && encoded.endsWith('|') ? encoded.slice(1, -1) : '';
-        files.set(name, {base64, checksum: String(scalar(form, 'checksum') || '')});
+        files.set(name, form);
       }
       return files;
     }
-    const boardEmbedded = embeddedFiles(ast);
+    const boardEmbedded = embeddedFiles(ast), embeddedPayloads = new WeakMap();
+    function embeddedPayload(form) {
+      if (!form) return null;
+      if (embeddedPayloads.has(form)) return embeddedPayloads.get(form);
+      const data = child(form, 'data');
+      let length = 0;
+      for (let i = 1; i < (data?.length || 0) && length <= 11200002; i++) length += String(value(data[i])).length;
+      const encoded = length && length <= 11200002 ? data.slice(1).map(value).join('') : '';
+      const payload = encoded.startsWith('|') && encoded.endsWith('|')
+        ? {base64:encoded.slice(1,-1),checksum:String(scalar(form,'checksum')||'')}
+        : null;
+      embeddedPayloads.set(form,payload);
+      return payload;
+    }
     for (const [footprintIndex, footprint] of children(ast, "footprint").entries()) {
       const modelForms = children(footprint, "model");
       if (!modelForms.length) continue;
@@ -150,7 +159,7 @@
         const rawPath = value(entry[1]);
         const embeddedName = typeof rawPath === 'string' && rawPath.startsWith('kicad-embed://') ? rawPath.slice(14) : null;
         if (embeddedName !== null) footprintEmbedded ??= embeddedFiles(footprint);
-        const embeddedAsset = embeddedName !== null ? (footprintEmbedded.has(embeddedName) ? footprintEmbedded.get(embeddedName) : boardEmbedded.get(embeddedName)) : null;
+        const embeddedAsset = embeddedName !== null ? embeddedPayload(footprintEmbedded.has(embeddedName) ? footprintEmbedded.get(embeddedName) : boardEmbedded.get(embeddedName)) : null;
         if (embeddedName !== null && !embeddedAsset) { warn(`${ref}: embedded model is missing or ambiguous: ${embeddedName}`); continue; }
         const path = embeddedName !== null ? rawPath : repositoryPath(rawPath, ref);
         if (!path) { warn(`${ref}: model path is not a repository-relative file: ${String(rawPath).slice(0, 100)}`); continue; }

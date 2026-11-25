@@ -15,6 +15,54 @@ const schematic = (content,path="root.kicad_sch") => file(path,`(kicad_sch ${con
 const wire = (id,a,b) => `(wire (pts (xy ${a[0]} ${a[1]}) (xy ${b[0]} ${b[1]})) (uuid "${id}"))`;
 const label = (id,name,x,y,type="label") => `(${type} "${name}" (at ${x} ${y}) (uuid "${id}"))`;
 const rendered = (files) => new Map(files.map((f)=>[f.path,pcb.build(diff.parse(f.content),f.path)]));
+test("saved schematic net and component class assignments retain area/directive identity", () => {
+  const path = "schematic-rule-areas.kicad_sch";
+  const source = require("node:fs").readFileSync(require("node:path").join(__dirname, "fixtures", path), "utf8");
+  const files = [file(path, source)];
+  const drawing = sch.build(diff.parse(source), path);
+  const designs = new Map([[path,drawing]]);
+  const cache = require("../net-model.js").createBuilder();
+  for (const result of [build(files,designs), cache.build(files,designs), cache.build(files,designs)]) {
+    const signal = result.nets.find(net => net.name === "SIGNAL");
+    const outside = result.nets.find(net => net.name === "OUTSIDE");
+    const area = "7785290c-7d47-47b9-ac4b-d408c6ad807a";
+    assert.deepEqual(signal.classAssignments.map(({name,ruleAreaUuid}) => [name,ruleAreaUuid]).sort(),
+      [["Direct",undefined],["Plane",area]]);
+    assert.equal(signal.classAssignments.every(entry => !!entry.directiveUuid),true);
+    assert.equal(outside.classAssignments,undefined);
+    const areaAssignments=result.objectClasses.get(`${path}/rule_area:uuid:${area}`);
+    assert.deepEqual(areaAssignments.map(entry => entry.name).sort(), ["Drive","Plane"]);
+    const partAssignments=result.objectClasses.get(`${path}/symbol:uuid:44fb66e2-b53b-4167-ad16-c88035a566af`);
+    assert.deepEqual(partAssignments.map(entry => entry.name), ["Drive"]);
+  }
+});
+
+test("area evidence catches a crossing wire outside both endpoints without merging crossing nets", () => {
+  const sheet = schematic(`
+    (rule_area (polyline (pts (xy 10 10) (xy 15 10) (xy 15 15) (xy 10 15)) (uuid "area")))
+    (directive_label "" (at 15 12 0) (property "Netclass" "Protected") (uuid "directive"))
+    (directive_label "" (at 11 11 0) (property "Netclass" "Interior") (uuid "interior"))
+    (directive_label "" (at 18 13 0) (property "Netclass" "Ambiguous") (uuid "ambiguous"))
+    ${wire("horizontal",[5,13],[20,13])} ${label("name-a","H",5,13)}
+    ${wire("vertical",[18,6],[18,17])} ${label("name-b","V",18,6)}
+  `);
+  const result = build([sheet]);
+  assert.deepEqual(result.nets.map(net => [net.name, net.classAssignments?.map(entry => entry.name)]),
+    [["H",["Protected"]],["V",undefined]]);
+  assert.ok(result.warnings.some(warning => warning.includes("ambiguous electrical crossing")));
+});
+
+test("oversized rule-area work keeps ordinary connectivity and omits partial assignments", () => {
+  const areas = Array.from({length:10001}, (_,i) =>
+    `(rule_area (polyline (pts (xy 0 0) (xy 10 0) (xy 10 10)) (uuid "area-${i}")))`);
+  const sheet = schematic(`${areas.join(" ")} ${wire("wire",[2,2],[6,2])}
+    (directive_label "" (at 2 2 0) (property "Netclass" "Direct") (uuid "directive"))`);
+  const result = build([sheet]);
+  assert.equal(result.nets.length, 1);
+  assert.equal(result.nets[0].stats.lengthMm, 4);
+  assert.equal(result.nets[0].classAssignments,undefined);
+  assert.ok(result.warnings.some(warning => warning.includes("rule area or directive limit")));
+});
 test('KiCad 10 saved named nets keep per-file identities and rendered track membership',()=>{
  const fs=require('node:fs'),path=require('node:path'),content=fs.readFileSync(path.join(__dirname,'fixtures/board-analytics/tracks.kicad_pcb'),'utf8'),files=[file('a.kicad_pcb',content),file('b.kicad_pcb',content)];
  const result=build(files,rendered(files));assert.equal(result.nets.length,2);assert.equal(new Set(result.nets.map(n=>n.id)).size,2);assert.equal(result.nets[0].name,'GND');assert.equal(result.nets[0].code,'name:GND');assert.equal(result.nets[0].primitives.length,3);assert.equal(result.nets[0].stats.tracks,3);assert.deepEqual(result.warnings,[]);

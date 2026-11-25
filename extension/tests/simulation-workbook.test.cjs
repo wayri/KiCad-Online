@@ -2,6 +2,21 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 require('../analysis-data.js');const M=require('../simulation-workbook.js');
 const dir=path.join(__dirname,'fixtures/simulation/native'),read=n=>fs.readFileSync(path.join(dir,n),'utf8'),file=n=>({path:n,content:read(n)}),manifest=JSON.parse(read('project.json'));
 const session=()=>M.createSession(manifest.files.map(file),{bindings:manifest.bindings});
+test('loading a saved result for a second tab leaves the first tab and cursor intact',()=>{
+ const transient='native-opamp-transient.raw',ac='native-opamp-ac.raw';
+ const current=M.createSession([file('native-opamp.wbk'),file(transient)],{bindings:{'tab-0':{path:transient}}});
+ const {tab,traces}=current.active();
+ tab.cursors.A=M.sample(traces[0],0.000247);
+ const before=current.getState();
+ current.addResult(file(ac));
+ current.bindResult('tab-1',ac);
+ assert.deepEqual(current.getState().tabs[0],before.tabs[0]);
+ assert.deepEqual(current.getState().cursors,before.cursors);
+ const results=current.availableResults.length;
+ assert.throws(()=>current.addResult({path:'invalid.raw',content:'invalid'}));
+ assert.equal(current.availableResults.length,results);
+ current.dispose();
+});
 test('native workbook explicit binding, byte-exact export and AC complex reference',()=>{const s=session();assert.equal(s.tabs.length,2);assert.equal(s.exportWorkbook().content,read('native-opamp.wbk'));s.selectTab('tab-1');const traces=s.active().traces,out=traces.find(t=>t.expression.toLowerCase()==='v(/out)'&&t.mode==='db'),phase=traces.find(t=>t.expression.toLowerCase()==='v(/out)'&&t.mode==='phase');const a=M.sample(out,1000),b=M.sample(phase,1000);assert.ok(Math.abs(a.y-19.998984153199164)<1e-8);assert.ok(Math.abs(b.y-179.7898120099)<1e-7);s.dispose();});
 test('native transient A/B cursor reference and exact selection identity',()=>{const s=session(),t=s.active().traces.find(t=>t.expression.toLowerCase()==='v(/in)');const a=M.sample(t,.0002471143025685134),b=M.sample(t,.0007471143025685134);assert.equal(a.index,33);assert.equal(b.index,83);assert.ok(Math.abs(b.x-a.x-.0005)<1e-12);assert.ok(Math.abs(b.y-a.y+.19996712624)<1e-9);assert.notEqual(M.key('V(/In)'),M.key('V(/in)'));});
 test('explicit workbook pairing rejects wrong analysis without changing prior binding',()=>{const s=session(),old={...s.tabs[0].binding};assert.throws(()=>s.bindResult('tab-0','native-opamp-ac.raw'),/does not match/);assert.deepEqual(s.tabs[0].binding,old);assert.equal(M.createSession([file('native-opamp.wbk')]).active().plot,null);});

@@ -24,7 +24,7 @@
   const resolver=path=>{if(resolvers.has(path))return resolvers.get(path);const source=files.find(file=>file.path===path);let ast=[];try{if(source)ast=snapshot?diff.preparedFile(snapshot,path):diff.parse(source.content,{libraries:source.legacyLibraries});else warn(path+': saved variable context is unavailable.');}catch(error){warn(path+': variable context could not be read: '+error.message);}const result=compatibility?.textResolver(ast,{textVariables:source?.textVariables,path,sheetNumber:sheets.findIndex(sheet=>sheet.path===path)+1,sheetCount:sheets.length,sheetName:path===rootFile?'/':'/'+path.split('/').at(-1).replace(/\.(?:kicad_sch|sch)$/i,'')+'/',...(compatibility?.textContext?.(files,path,{rootFile,parse:(content,file)=>snapshot?diff.preparedFile(snapshot,file.path):diff.parse(content,{libraries:file.legacyLibraries})})||{})},text=>warn(path+': '+text));resolvers.set(path,result);return result;};
   return {objects:objects.map(object=>{if(!['symbol','footprint'].includes(object.kind))return object;const resolved=resolver(object.path)?.properties(object.properties);if(!resolved){if(Object.values(object.properties||{}).some(value=>String(value).includes('${')))warn(object.path+': text variable resolver is unavailable.');return object;}return{...object,properties:resolved.values,variableProvenance:resolved.provenance};}),warnings};
  }
- function mount({document,holder,scope,inventory,url,onDrawing,loadDrawing,companion,onSelect,onFrame}){
+ function mount({document,holder,scope,inventory,url,onDrawing,loadDrawing,companion,onSelect,onHover,onFrame}){
   const make=(tag,text)=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=text;return n;};
   const bar=make('div'),label=make('label','Saved BoM '),select=make('select'),all=make('input'),allLabel=make('label','Show all CSV / TSV files '),open=make('button','Open saved BoM'),native=make('button','Drawing parts'),notice=make('p'),stage=make('div');
   bar.className='bom-browser-tools';stage.className='bom-browser-stage';notice.setAttribute('role','status');select.setAttribute('aria-label','Saved BoM file');all.type='checkbox';allLabel.append(all);label.append(select);open.type=native.type='button';native.addEventListener('click',loadDrawing?()=>showNative():onDrawing);bar.append(label,open,allLabel,native);holder.replaceChildren(bar,notice,stage);holder.classList.add('bom-browser');
@@ -32,6 +32,28 @@
   const tableHost=make('div'),drawingHost=make('div'),viewTools=make('div'),drawingChoice=make('select'),viewButtons=new Map();tableHost.className='bom-browser-parts';drawingHost.className='bom-browser-companion';viewTools.className='bom-browser-views';drawingChoice.setAttribute('aria-label','Companion drawing');drawingChoice.hidden=true;
   if(loadDrawing){const importButton=make('button','Import CSV / iBOM');importButton.type='button';importButton.addEventListener('click',()=>{const frame=make('iframe');frame.title='Import CSV or iBOM';frame.src=url('bom-viewer.html')+'?embeddedBom=1';showingNative=false;stage.replaceChildren(frame);viewTools.hidden=true;onFrame?.(null);notice.textContent='Imported files are separate from the saved drawing parts.';});bar.append(importButton);for(const [mode,title]of [['none','Parts only'],['schematic','Schematic'],['layout','Layout'],['3d','3D']]){const button=make('button',title);button.type='button';button.setAttribute('aria-pressed',String(mode==='none'));button.addEventListener('click',()=>openCompanion(mode));viewButtons.set(mode,button);viewTools.append(button);}viewTools.append(drawingChoice);bar.append(viewTools);stage.append(tableHost,drawingHost);}
   const partKey=part=>JSON.stringify([part.path,part.kind,part.reference]);
+  let hovered=[],hoverFromTable=false;
+  function markHover(entries){
+   for(const {row,pick}of hovered){row.removeAttribute('data-hovered');pick.removeAttribute('data-hovered');}
+   hovered=entries;
+   for(const {row,pick}of hovered){row.setAttribute('data-hovered','true');pick.setAttribute('data-hovered','true');}
+  }
+  function tableHover(entries){
+   if(hoverFromTable&&entries.length===hovered.length&&entries.every((entry,index)=>entry===hovered[index]))return;
+   hoverFromTable=entries.length>0;markHover(entries);
+   const items=entries.map(entry=>entry.part);
+   onHover?.(items.length>1?{kind:'group',items:items.slice(0,200)}:items[0]||null);
+  }
+  function drawingHover(selection){
+   if(hoverFromTable&&!selection)return;
+   hoverFromTable=false;
+   const api=root.KiCadPairedReview;
+   const exact=selection&&parts.find(part=>part.path===selection.path&&part.reference===selection.reference&&(!selection.uuid||part.uuid===selection.uuid));
+   const part=exact||selection&&api?.relatedPart?.(parts,selection)?.object;
+   const entry=part&&partRows.get(partKey(part));
+   markHover(entry?[entry]:[]);
+   entry?.row.scrollIntoView?.({block:'nearest',inline:'nearest'});
+  }
   const reportedWarnings=new Set();function reportWarnings(warnings){for(const warning of warnings||[])if(!reportedWarnings.has(warning)){reportedWarnings.add(warning);root.console?.warn?.('KiCad Online BoM:',warning);}}
   const grouped=make('input'),groupLabel=make('label','Grouped view ');grouped.type='checkbox';grouped.setAttribute('aria-label','Group parts by value, footprint and population');groupLabel.append(grouped);if(loadDrawing)bar.append(groupLabel);grouped.addEventListener('change',()=>{partSignature='';renderParts();});
   let selectedReferences=[];
@@ -41,10 +63,18 @@
    for(const part of parts){const key=grouped.checked?JSON.stringify([part.properties?.Value||'',part.properties?.Footprint||part.properties?.['Library ID']||'',part.populated!==false,!!part.excludeFromBom]):partKey(part);if(!groups.has(key))groups.set(key,[]);groups.get(key).push(part);}
    const signature=JSON.stringify([grouped.checked,[...groups.values()].map(group=>group.map(partKey))]);
    if(signature!==partSignature||!tableHost.children.length){
+    if(hoverFromTable)tableHover([]);else markHover([]);
     partSignature=signature;partRows.clear();tableHost.replaceChildren();const title=make('h2','Parts from saved drawing'),table=make('table'),head=make('tr');for(const text of ['Reference','Qty','Value','Footprint','Population','BoM','Source'])head.append(make('th',text));table.append(head);
     for(const group of groups.values()){
      const row=make('tr'),reference=make('td'),quantity=make('td',String(group.length)),cells=Array.from({length:5},()=>make('td'));row.setAttribute('data-group',String(group.length>1));
      for(const part of group){const pick=make('button',part.reference||'Unnamed part'),entry={row,pick,cells,part};partRows.set(partKey(part),entry);pick.type='button';pick.addEventListener('click',()=>{selectedReferences=[];selected=entry.part;markSelected();onSelect?.(entry.part);});reference.append(pick);}
+     row.addEventListener('pointerover',event=>{
+      if(event.pointerType==='touch')return;
+      const entries=group.map(part=>partRows.get(partKey(part))),target=event.target.closest?.('button');
+      const clicked=entries.find(entry=>entry.pick===target);
+      tableHover(clicked?[clicked]:entries);
+     });
+     row.addEventListener('pointerleave',()=>{if(hoverFromTable)tableHover([]);});
      row.append(reference,quantity,...cells);table.append(row);
     }
     table.setAttribute('aria-label','Saved schematic or layout parts');tableHost.append(title,table);if(!parts.length)tableHost.append(make('p','No saved symbols or footprints were found in this drawing.'));
@@ -64,7 +94,7 @@
   function openFile(){const item=entries.find(e=>e.path===select.value);if(!item)return;const frame=make('iframe');frame.title='BoM: '+item.path;frame.src=url('bom-viewer.html')+'?'+new URLSearchParams({...scope,file:item.path,embeddedBom:'1'});showingNative=false;stage.replaceChildren(frame);viewTools.hidden=true;onFrame?.(null);notice.textContent='Saved file: '+item.path;}
   select.addEventListener('change',()=>{open.disabled=!select.value;});all.addEventListener('change',render);open.addEventListener('click',openFile);
   async function show(){if(loaded||promise)return promise;promise=(async()=>{try{if(loadDrawing){await showNative();if(companion)await openCompanion('schematic');}if(dead)return;const result=await inventory();if(dead)return;entries=rank(result.files,scope.file);loaded=true;render();if(loadDrawing)return;const matches=entries.filter(e=>e.score);notice.textContent=(matches.length?'Choose a saved BoM file.':'No likely BoM filename found. Show all CSV files, import a file below, or use BoM from drawing.');reportWarnings(result.warnings);if(matches.length===1){select.value=matches[0].path;open.disabled=false;openFile();}else if(!matches.length){const frame=make('iframe');frame.title='Import BoM';frame.src=url('bom-viewer.html')+'?embeddedBom=1';stage.replaceChildren(frame);}}catch(error){if(!dead){notice.textContent='BoM discovery failed: '+error.message;const retry=make('button','Retry discovery');retry.addEventListener('click',()=>show());notice.append(retry);}}finally{promise=null;}})();return promise;}
-  return {show,refreshDrawing(result){if(dead)return;installDrawing(result);},select(selection){if(selection?.kind==='group'){selectedReferences=parts.filter(part=>(selection.items||[]).some(item=>item.reference===part.reference&&(item.path===part.path||parts.filter(p=>p.reference===item.reference).length===1)));if(!selectedReferences.length)return false;selected=selectedReferences[0];markSelected(true);return true;}selectedReferences=[];const matching=parts.filter(part=>part.reference===selection?.reference&&(part.path===selection.path||parts.filter(p=>p.reference===selection.reference).length===1));if(matching.length!==1)return false;selected=matching[0];markSelected(true);return true;},destroy(){dead=true;viewTicket++;onFrame?.(null);holder.replaceChildren();}};
+  return {show,hover:drawingHover,refreshDrawing(result){if(dead)return;installDrawing(result);},select(selection){if(selection?.kind==='group'){selectedReferences=parts.filter(part=>(selection.items||[]).some(item=>item.reference===part.reference&&(item.path===part.path||parts.filter(p=>p.reference===item.reference).length===1)));if(!selectedReferences.length)return false;selected=selectedReferences[0];markSelected(true);return true;}selectedReferences=[];const matching=parts.filter(part=>part.reference===selection?.reference&&(part.path===selection.path||parts.filter(p=>p.reference===selection.reference).length===1));if(matching.length!==1)return false;selected=matching[0];markSelected(true);return true;},destroy(){dead=true;viewTicket++;onFrame?.(null);holder.replaceChildren();}};
  }
  root.KiCadBomBrowser={rank,mount,resolveDrawing};if(typeof module==='object'&&module.exports)module.exports=root.KiCadBomBrowser;
 })(globalThis);

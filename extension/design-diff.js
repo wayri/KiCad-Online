@@ -9,9 +9,11 @@
   const MAX_RENDER_PRIMITIVES = 1500000;
   const MAX_DEPTH = 96;
   const MAX_NODES = 1000000;
+  const MAX_PACKED_FILL_POINTS = 8000000;
   const SCHEMATIC = new Set(["symbol", "sheet", "wire", "bus", "bus_entry", "label",
     "global_label", "hierarchical_label", "junction", "no_connect", "text", "text_box",
-    "polyline", "rectangle", "circle", "arc", "bezier", "image"]);
+    "polyline", "rectangle", "circle", "arc", "bezier", "image", "rule_area",
+    "netclass_flag", "directive_label"]);
   const BOARD = new Set(["module", "footprint", "segment", "arc", "via", "zone", "gr_line",
     "gr_rect", "gr_circle", "gr_arc", "gr_poly", "gr_curve", "gr_text", "gr_text_box",
     "gr_bitmap", "dimension", "target"]);
@@ -37,13 +39,54 @@
   const spaceCode=code=>code===32||(code>=9&&code<=13)||(code>127&&/\s/.test(String.fromCharCode(code)));
   const METADATA_FIELDS=new Set(["version","generator","generator_version","uuid","paper","title_block","property","sheet","symbol","footprint","module","sheet_instances","legacy_source","legacy_diagnostic"]);
   const METADATA_OBJECT_FIELDS=new Set(["property","uuid","path","instances"]);
+  // Scan common saved contours directly into bounded numeric batches. Let the
+  // ordinary parser handle unfamiliar forms without dropping their fields.
+  function readPackedFill(source, start, point, remaining) {
+    let i = start, count = 0, batch;
+    const batches = [], batchSize = 4096;
+    while (i < source.length) {
+      const ch = source[i];
+      if (spaceCode(source.charCodeAt(i))) { i++; continue; }
+      if (ch === ';') { const end = source.indexOf('\n', i); i = end < 0 ? source.length : end + 1; continue; }
+      if (ch === ')') {
+        if (count < 3) return null;
+        const points = new Float64Array(count * 2);
+        for (const [index, values] of batches.entries()) {
+          const offset = index * batchSize * 2;
+          points.set(values.subarray(0, points.length - offset), offset);
+        }
+        return {points, end:i + 1, count};
+      }
+      point.lastIndex = i;
+      const match = point.exec(source);
+      if (!match) return null;
+      const x = Number(match[1]), y = Number(match[2]);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error("Invalid numeric KiCad value.");
+      if (count >= remaining) throw new Error("KiCad board exceeds the saved copper limit of 8 million vertices.");
+      const offset = count % batchSize;
+      if (!offset) {
+        batch = new Float64Array(Math.min(32, remaining - count) * 2);
+        batches.push(batch);
+      } else if (offset * 2 === batch.length) {
+        const next = new Float64Array(Math.min(batch.length * 2, batchSize * 2, (remaining - count + offset) * 2));
+        next.set(batch);
+        batch = next;
+        batches[batches.length - 1] = batch;
+      }
+      batch[offset * 2] = x;
+      batch[offset * 2 + 1] = y;
+      count++;
+      i = point.lastIndex;
+    }
+    return null;
+  }
   // Packed points are private to prepared viewer trees. Comparison keeps the saved AST shape.
   function packSavedFill(form) {
-    if (form.length < 4) return;
+    if (form.length < 4) return 0;
     for (let i = 1; i < form.length; i++) {
       const point = form[i];
       if (!Array.isArray(point) || point.length !== 3 || point[0] !== 'xy' ||
-          !Number.isFinite(point[1]) || !Number.isFinite(point[2])) return;
+          !Number.isFinite(point[1]) || !Number.isFinite(point[2])) return 0;
     }
     const coordinates = new Float64Array((form.length - 1) * 2);
     for (let i = 1; i < form.length; i++) {
@@ -52,6 +95,7 @@
     }
     form.length = 1;
     form.push(coordinates);
+    return coordinates.length / 2;
   }
   function parse(source, options = {}) {
     if (typeof source !== "string") throw new TypeError("KiCad source must be a string.");
@@ -69,12 +113,15 @@
     if(source.length>byteLimit||source.length>byteLimit/3&&sourceByteLength(source)>byteLimit)throw new Error("KiCad file exceeds browser parser size limits.");
     const nodeLimit = modern ? 12000000 : MAX_NODES;
     const stack = [], roots = [];
-    // Saved copper vertices can bypass temporary growable parser frames.
-    const coordinate = /\(xy[ \t]+([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)[ \t]+([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)[ \t]*\)/y;
-    let i = 0, nodes = 0, skippedDepth=0;
+    const coordinate = /\(\s*xy\s+([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)\s+([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)\s*\)/y;
+    const pointsHeader = /\(\s*pts(?=\s|\(|\)|;)/y;
+    let i = 0, nodes = 0, packedPoints = 0, skippedDepth=0;
+    const isSavedZoneFill = () => board && options.compactCopper && !options.metadataOnly &&
+      stack.length === 3 && stack[1][0] === 'zone' && stack[2][0] === 'filled_polygon';
     const append = (item) => {
+      if(skippedDepth)return;
       if (++nodes > nodeLimit) throw new Error("KiCad file has too many S-expression nodes.");
-      if(!skippedDepth)(stack.at(-1) || roots).push(item);
+      (stack.at(-1) || roots).push(item);
     };
     while (i < source.length) {
       const ch = source[i];
@@ -83,6 +130,19 @@
       if (ch === ";") { while (i < source.length && source[i] !== "\n") i++; continue; }
       if (ch === "(") {
         if (stack.length >= MAX_DEPTH) throw new Error("KiCad S-expression is too deep.");
+        if (isSavedZoneFill()) {
+          pointsHeader.lastIndex = i;
+          if (pointsHeader.test(source)) {
+            const fill = readPackedFill(source, pointsHeader.lastIndex, coordinate, MAX_PACKED_FILL_POINTS - packedPoints);
+            if (fill) {
+              packedPoints += fill.count;
+              nodes++; // The pts head plus the retained form.
+              append(['pts', fill.points]);
+              i = fill.end;
+              continue;
+            }
+          }
+        }
         if (!options.metadataOnly && stack.length && source.startsWith('(xy', i)) {
           coordinate.lastIndex = i;
           const match = coordinate.exec(source);
@@ -107,8 +167,10 @@
       if (ch === ")") {
         if (!stack.length) throw new Error("Unexpected closing parenthesis in KiCad file.");
         const node=stack.pop();
-        if(!options.metadataOnly&&options.compactCopper&&node[0]==='pts'&&stack.length===3&&
-          stack[0][0]==='kicad_pcb'&&stack[1][0]==='zone'&&stack[2][0]==='filled_polygon')packSavedFill(node);
+        if(node[0]==='pts'&&isSavedZoneFill()) {
+          packedPoints += packSavedFill(node);
+          if(packedPoints > MAX_PACKED_FILL_POINTS)throw new Error("KiCad board exceeds the saved copper limit of 8 million vertices.");
+        }
         // Fixed-size small forms avoid retaining the spare capacity of millions
         // of growable coordinate/attribute arrays. The public tree shape stays
         // identical; replace only a completed child, never a live stack frame.
@@ -169,6 +231,27 @@
   const children = (form, kind) => form.filter((item) => Array.isArray(item) && kindOf(item) === kind);
   const child = (form, kind) => form.find(item => Array.isArray(item) && kindOf(item) === kind);
   const second = (form, kind) => value(child(form, kind)?.[1]);
+  function ruleAreaPoints(form) {
+    const polygon = child(form, "polyline");
+    const coordinates = polygon && child(polygon, "pts");
+    if (!coordinates || coordinates.length < 4 || coordinates.length > 4097) return null;
+    const points = [];
+    for (const item of coordinates.slice(1)) {
+      const x = value(item?.[1]), y = value(item?.[2]);
+      if (!Array.isArray(item) || kindOf(item) !== "xy" || !Number.isFinite(x) || !Number.isFinite(y)) return null;
+      const last = points.at(-1);
+      if (last?.x !== x || last.y !== y) points.push({ x, y });
+    }
+    if (points[0].x === points.at(-1).x && points[0].y === points.at(-1).y) points.pop();
+    if (points.length < 3) return null;
+    const origin = points[0];
+    let area = 0;
+    for (let i = 1; i < points.length - 1; i++) {
+      const a = points[i], b = points[i + 1];
+      area += (a.x - origin.x) * (b.y - origin.y) - (a.y - origin.y) * (b.x - origin.x);
+    }
+    return Number.isFinite(area) && area !== 0 ? points : null;
+  }
   function point(form) {
     for (const name of ["at", "start", "center", "end", "xy"]) {
       const item = child(form, name);
@@ -224,7 +307,8 @@
     return (h >>> 0).toString(16).padStart(8, "0");
   }
   function identity(form, kind, props, signature) {
-    const uuid = second(form, "uuid") ?? second(form, "tstamp");
+    const uuid = second(form, "uuid") ?? second(form, "tstamp") ??
+      (kind === "rule_area" && child(form, "polyline") ? second(child(form, "polyline"), "uuid") : undefined);
     if (uuid !== undefined && uuid !== null && String(uuid)) return { key: `uuid:${uuid}`, uuid: String(uuid) };
     const anchor = kind === "pad" ? props.Number :
       kind === "sheet" ? props.Sheetfile :
@@ -235,7 +319,9 @@
     if (kind === "pad") return `${parentLabel || "Footprint"} pad ${props.Number || ""}`.trim();
     return props.Reference || props.Sheetname || props['Sheet name'] || props.Text ||
       (kind === "footprint" ? String(value(form[1] ?? "Footprint")) :
-        kind === "symbol" ? props.lib_id || "symbol" : kind.replace(/_/g, " "));
+        kind === "symbol" ? props.lib_id || "symbol" :
+        kind === "netclass_flag" || kind === "directive_label" ? "Directive label" :
+        kind === "rule_area" ? "Rule area" : kind.replace(/_/g, " "));
   }
   function padPosition(local, placement) {
     if (!local || !placement?.position) return null;
@@ -250,7 +336,7 @@
   function objectRecord(path, form, parent = null, librarySignature = null, forConnectivity = false) {
     const kind = kindOf(form);
     const props = properties(form, kind);
-    const local = point(form);
+    const local = point(kind === "rule_area" ? child(form, "polyline") || form : form);
     const position = kind === "pad" ? padPosition(local, parent) : local;
     let retainedSignature;
     const signature = () => retainedSignature ??= JSON.stringify([
@@ -342,12 +428,13 @@
       const size = sourceByteLength(file.content);
       total += size;
       if (size > sourceByteLimit(file.path) || total > MAX_PROJECT) throw new Error("KiCad project exceeds browser comparison size limits.");
-      for (const object of collect(file.path, file.content, ast => onParsed?.(file, ast), {libraries:file.legacyLibraries, forConnectivity, parseOnly, compactCopper: forConnectivity&&compactCopper})) objects.push(object);
+      for (const object of collect(file.path, file.content, ast => onParsed?.(file, ast), {libraries:file.legacyLibraries, forConnectivity, parseOnly, compactCopper})) objects.push(object);
     }
     return objects;
   }
   function compareProjects(baseFiles, headFiles) {
-    const base = projectObjects(baseFiles), head = projectObjects(headFiles);
+    const options = {compactCopper:true};
+    const base = projectObjects(baseFiles,null,null,options), head = projectObjects(headFiles,null,null,options);
     const grouped = new Map();
     for (const record of base) {
       if (!grouped.has(record.key)) grouped.set(record.key, { before: [], after: [] });
@@ -382,6 +469,6 @@
     changes.sort((a, b) => a.path.localeCompare(b.path) || a.id.localeCompare(b.id) || a.status.localeCompare(b.status));
     return { changes, counts };
   }
-  root.KiCadDesignDiff = { compareProjects, projectObjects, parse, parseMetadata, prepareProject, preparedFile, MAX_FILES, MAX_PROJECT, MAX_RENDER_PRIMITIVES, sourceByteLimit, sourceByteLength };
+  root.KiCadDesignDiff = { compareProjects, projectObjects, parse, parseMetadata, prepareProject, preparedFile, MAX_FILES, MAX_PROJECT, MAX_RENDER_PRIMITIVES, sourceByteLimit, sourceByteLength, ruleAreaPoints };
   if (typeof module === "object" && module.exports) module.exports = root.KiCadDesignDiff;
 })(typeof globalThis === "object" ? globalThis : this);
