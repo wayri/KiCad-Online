@@ -151,9 +151,16 @@ class ProductVersionTests(unittest.TestCase):
 
     def test_hosted_web_archive_has_generated_about_data_and_root_version(self):
         web=load('package_app_web');self.put('app_web/index.html','<html>Fixture</html>')
-        with patch.multiple(web,ROOT=self.root,SOURCE=self.root/'app_web',RENDERER=self.root/'extension',VENDOR=self.root/'extension/vendor',OUTPUT=self.root/'.vizdiff/app-web',ARCHIVE=self.root/'web.zip',PAGES=('index.html',),ASSETS=(),RENDERERS=('product-version.js','product-info.js')):
+        vendor_assets = ('fzstd/fzstd.js', 'fzstd/LICENSE')
+        for name in vendor_assets:
+            self.assertIn(name, web.ASSETS)
+            self.assertNotIn(f'vendor/{name}', web.RENDERERS)
+            self.put(f'extension/vendor/{name}', name)
+        with patch.multiple(web,ROOT=self.root,SOURCE=self.root/'app_web',RENDERER=self.root/'extension',VENDOR=self.root/'extension/vendor',OUTPUT=self.root/'.vizdiff/app-web',ARCHIVE=self.root/'web.zip',PAGES=('index.html',),ASSETS=vendor_assets,RENDERERS=('product-version.js','product-info.js')):
             web.package()
         with zipfile.ZipFile(self.root/'web.zip') as z:
             self.check({n:z.read(n) for n in z.namelist()},platform='Web viewer')
+            for name in vendor_assets:
+                self.assertEqual(z.read(f'vendor/{name}'), name.encode())
 
 if __name__=='__main__':unittest.main()

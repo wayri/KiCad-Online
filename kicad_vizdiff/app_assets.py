@@ -5,10 +5,11 @@ _PDF_VENDOR = ('pdfjs/cmaps/LICENSE', 'pdfjs/LICENSE', 'pdfjs/standard_fonts/LIC
 VIEWER_PAGES = ('index.html', 'styles.css', 'app.js', 'public-data.js',
                 'revision.html', 'revision.js', 'setup.html', 'setup.css',
                 'setup.js', 'README.md')
-RENDERER_ASSETS = ('analysis-data.js', 'analysis-viewer.html', 'analysis-viewer.css', 'analysis-viewer.js', 'BRAND-ASSETS.md', 'ui-icons.js', 'file-compatibility.js', 'legacy-kicad.js', 'design-diff.js', 'pad-labels.js', 'embedded-models.js', 'vendor/fzstd/fzstd.js', 'vendor/fzstd/LICENSE', 'owned-canvas.js', 'touch-canvas.js', 'worksheet.js',
+RENDERER_ASSETS = ('analysis-data.js', 'analysis-viewer.html', 'analysis-viewer.css', 'analysis-viewer.js', 'BRAND-ASSETS.md', 'ui-icons.js', 'file-compatibility.js', 'legacy-kicad.js', 'design-diff.js', 'pad-labels.js', 'embedded-models.js', 'owned-canvas.js', 'touch-canvas.js', 'worksheet.js',
                    'schematic-renderer.js', 'layer-colors.js', 'pcb-renderer.js', 'step-decoder.js', 'step-worker.js')
 VENDOR_ASSETS = ('spike-board3d.bundle.js', 'SPIKE-ENGINE-NOTICE.md',
-                 'THREE-LICENSE', 'occt/occt-import-js.js', 'occt/occt-import-js.wasm',
+                 'THREE-LICENSE', 'fzstd/fzstd.js', 'fzstd/LICENSE',
+                 'occt/occt-import-js.js', 'occt/occt-import-js.wasm',
                  'occt/license.occt-import-js.txt', 'occt/license.occt.txt', 'occt/NOTICE.md',
                  'occt/OCCT_LGPL_EXCEPTION.txt', 'occt/EMSCRIPTEN-LICENSE.txt')
 RENDERER_ASSETS += ('ui-foundation.css','analysis-simulation.js','analysis-simulation.css','revision-actions.js','overview-routing.js')
