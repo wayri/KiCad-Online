@@ -22,9 +22,11 @@
     function buildIndex(objects,nets,classes=null,sheets=[]){
       const networkObjects=nets.map(net=>({id:net.id,path:net.path,kind:'net',label:net.name,position:net.members.find(m=>m.position)?.position,properties:{Net:net.name},netName:net.name}));
       const indexNets=nets.map(net=>({...net,objectIds:[...(net.objectIds||[]),net.id]}));
+      const busObjects=KiCadProjectSearch.extractBuses?KiCadProjectSearch.extractBuses(objects,nets):[];
+      const varObjects=KiCadProjectSearch.extractTextVariables?KiCadProjectSearch.extractTextVariables(objects):[];
       const classObjects=[];
       if(classes){const groups=new Map();for(const net of nets)for(const name of KiCadProjectSearch.netClasses(net.name,classes)){const key=JSON.stringify([net.path,name]);if(!groups.has(key))groups.set(key,{path:net.path,name,nets:[]});groups.get(key).nets.push(net);}for(const group of groups.values()){const id=`${group.path}/class:${group.name}`;classObjects.push({id,path:group.path,kind:'netclass',label:group.name,className:group.name,properties:{Class:group.name,Net:group.nets.map(n=>n.name).join(' ')}});for(const net of indexNets)if(group.nets.some(n=>n.id===net.id))net.objectIds.push(id);}}
-      return KiCadProjectSearch.createIndex([...objects,...networkObjects,...classObjects],{nets:indexNets,netClasses:classes,sheets});
+      return KiCadProjectSearch.createIndex([...objects,...networkObjects,...busObjects,...varObjects,...classObjects],{nets:indexNets,netClasses:classes,sheets});
     }
     function renderSearch(){
       const objects=currentObjects(),nets=options.getNets();

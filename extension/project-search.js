@@ -188,6 +188,140 @@
     if(pending || negate) return {groups:[],error:"Search ends with an incomplete operator."};
     return {groups:tokens.length?groups:[],error:null};
   }
+  // Bounded KiCad bus expansion: PREFIX[0..7]SUFFIX, PREFIX{A B C}, and {ALIAS}.
+  function expandBusExpression(expr, aliases = new Map()) {
+    if (typeof expr !== "string") return [];
+    const raw = expr.trim();
+    if (!raw || raw.length > 256) return [];
+    const members = [];
+    const push = (name) => {
+      const clean = String(name || "").trim();
+      if (clean && members.length < 256 && !members.includes(clean)) members.push(clean);
+    };
+    const vec = raw.match(/^([^{}\[\]]*)\[(\d+)\.\.(\d+)\]([^{}\[\]]*)$/);
+    if (vec) {
+      const [, prefix, aStr, bStr, suffix] = vec;
+      const a = Number(aStr), b = Number(bStr);
+      if (Number.isSafeInteger(a) && Number.isSafeInteger(b) && Math.abs(b - a) < 256) {
+        const pad = aStr.length > 1 && aStr.startsWith("0") ? aStr.length : (bStr.length > 1 && bStr.startsWith("0") ? bStr.length : 0);
+        const step = a <= b ? 1 : -1;
+        for (let n = a; step > 0 ? n <= b : n >= b; n += step) {
+          push(`${prefix}${pad ? String(n).padStart(pad, "0") : String(n)}${suffix}`);
+        }
+      }
+      return members;
+    }
+    const grp = raw.match(/^([^{}\[\]]*)\{([^{}]+)\}$/);
+    if (grp) {
+      const prefix = grp[1] ? (grp[1].endsWith(".") || grp[1].endsWith("_") || grp[1].endsWith("/") ? grp[1] : `${grp[1]}.`) : "";
+      const parts = grp[2].trim().split(/[\s,;]+/).filter(Boolean);
+      for (const part of parts) {
+        if (members.length >= 256) break;
+        const aliasMembers = aliases instanceof Map ? aliases.get(part) : null;
+        if (aliasMembers?.length) {
+          for (const m of aliasMembers) push(prefix ? `${prefix}${m}` : m);
+        } else {
+          const expanded = /[\[\]{}]/.test(part) ? expandBusExpression(part, aliases) : [part];
+          for (const m of expanded) push(prefix ? `${prefix}${m}` : m);
+        }
+      }
+      return members;
+    }
+    return [];
+  }
+  function extractBuses(objects, nets = []) {
+    const aliases = new Map(), explicit = new Map(), byPathNets = new Map();
+    for (const net of nets || []) {
+      if (!net?.path || !net?.name) continue;
+      if (!byPathNets.has(net.path)) byPathNets.set(net.path, []);
+      byPathNets.get(net.path).push(net);
+    }
+    for (const obj of objects || []) {
+      if (!obj?.path) continue;
+      const text = String(obj.label || obj.properties?.Name || obj.properties?.Text || "").trim();
+      if (!text || text.length > 256) continue;
+      if (obj.kind === "bus_alias" && Array.isArray(obj.members)) aliases.set(text, obj.members.slice(0, 256));
+      if (/(\[\d+\.\.\d+\]|\{[^{}]+\})/.test(text) && ["label", "global_label", "hierarchical_label", "bus", "bus_alias", "sheet"].includes(obj.kind)) {
+        const key = `${obj.path}::${text}`;
+        if (!explicit.has(key)) {
+          const members = expandBusExpression(text, aliases);
+          if (members.length >= 2) {
+            explicit.set(key, {
+              id: `${obj.path}/bus:${text}`, path: obj.path, kind: "bus", label: text, busName: text,
+              busMembers: members, position: obj.position || null,
+              properties: { Bus: text, Members: members.slice(0, 32).join(" ") }
+            });
+          }
+        }
+      }
+    }
+    for (const [path, pathNets] of byPathNets) {
+      const families = new Map();
+      for (const net of pathNets) {
+        const clean = net.name.replace(/^\/+/, "");
+        const m = clean.match(/^([A-Za-z_][A-Za-z0-9_/-]*?)(\d+)(_[A-Za-z0-9_]+)?$/);
+        if (!m) continue;
+        const [, prefix, numStr, suffix = ""] = m;
+        if (/^(Net-|unconnected-|GND|VCC|VDD|VSS)/i.test(prefix)) continue;
+        const famKey = `${prefix}[*]${suffix}`;
+        if (!families.has(famKey)) families.set(famKey, { prefix, suffix, entries: [] });
+        families.get(famKey).entries.push({ num: Number(numStr), numStr, net });
+      }
+      for (const [, fam] of families) {
+        if (fam.entries.length < 3) continue;
+        fam.entries.sort((a, b) => a.num - b.num);
+        const busName = `${fam.prefix}[${fam.entries[0].numStr}..${fam.entries.at(-1).numStr}]${fam.suffix}`;
+        const key = `${path}::${busName}`;
+        if (explicit.has(key)) continue;
+        const memberNames = [...new Set(fam.entries.map(e => e.net.name))].slice(0, 256);
+        explicit.set(key, {
+          id: `${path}/bus:${busName}`, path, kind: "bus", label: busName, busName,
+          busMembers: memberNames, netIds: fam.entries.map(e => e.net.id),
+          position: fam.entries[0].net.members?.find(m => m.position)?.position || null,
+          properties: { Bus: busName, Members: memberNames.slice(0, 32).join(" "), Count: String(memberNames.length) }
+        });
+      }
+    }
+    for (const bus of explicit.values()) {
+      const pathNets = byPathNets.get(bus.path) || [];
+      const memberSet = new Set(bus.busMembers.map(m => fold(m.replace(/^\/+/, ""))));
+      const matched = pathNets.filter(n => {
+        const clean = fold(n.name.replace(/^\/+/, ""));
+        const tail = clean.includes("/") ? clean.slice(clean.lastIndexOf("/") + 1) : clean;
+        return memberSet.has(clean) || memberSet.has(tail);
+      });
+      bus.netIds = [...new Set([...(bus.netIds || []), ...matched.map(n => n.id)])].slice(0, 256);
+      if (!bus.position && matched.length) bus.position = matched[0].members?.find(m => m.position)?.position || null;
+      bus.properties = { ...bus.properties, MatchedNets: String(bus.netIds.length) };
+    }
+    return [...explicit.values()];
+  }
+  function extractTextVariables(objects, textVars = {}) {
+    const vars = new Map();
+    const ensure = (name, path) => {
+      const key = `${path}::${name}`;
+      if (!vars.has(key)) vars.set(key, { name, path, value: textVars?.[name] ?? "", objectIds: new Set() });
+      return vars.get(key);
+    };
+    const paths = new Set((objects || []).map(o => o?.path).filter(Boolean));
+    for (const path of paths) for (const [k, v] of Object.entries(textVars || {})) if (typeof k === "string" && k) ensure(k, path).value = String(v ?? "");
+    const varRegex = /\$\{([A-Za-z0-9_.-]{1,128})\}/g;
+    for (const obj of objects || []) {
+      if (!obj?.path || !obj?.id) continue;
+      for (const raw of [obj.label, obj.reference, ...Object.values(obj.properties || {})]) {
+        if (typeof raw !== "string" || !raw.includes("${")) continue;
+        varRegex.lastIndex = 0;
+        let m;
+        while ((m = varRegex.exec(raw)) !== null) ensure(m[1], obj.path).objectIds.add(obj.id);
+      }
+    }
+    return [...vars.values()].map(v => ({
+      id: `${v.path}/var:${v.name}`, path: v.path, kind: "variable",
+      label: `\${${v.name}}${v.value ? ` = ${v.value}` : ""}`,
+      varName: v.name, varValue: v.value, refObjectIds: [...v.objectIds].slice(0, 256),
+      properties: { Variable: v.name, Value: v.value, References: String(v.objectIds.size) }
+    }));
+  }
   function createIndex(objects, options={}) {
     if(!Array.isArray(objects)) throw new TypeError("Search requires design objects.");
     const warnings=new Set(),entries=[],netNames=new Map(),sheetNames=new Map(),classMembership=new Map();let chars=0,links=0;
@@ -220,13 +354,24 @@
         const display=previous&&previous.display!==bounded?`${previous.display} ${bounded}`.slice(0,LIMITS.fieldChars):bounded;
         fields.set(key,{display,folded:fold(display)});
       };
-      for(const [key,value] of Object.entries(object.properties||{}).slice(0,LIMITS.fields))put(key,value);
+      const propPairs=[];const varNames=[];
+      for(const [key,value] of Object.entries(object.properties||{}).slice(0,LIMITS.fields)){
+        put(key,value);
+        if(value!==undefined&&value!==null&&typeof value!=="object"){
+          const s=String(value);propPairs.push(`${key}=${s}`);
+          if(s.includes("${")){const ms=s.match(/\$\{[A-Za-z0-9_.-]{1,128}\}/g);if(ms)for(const m of ms)varNames.push(m.slice(2,-1),m);}
+        }
+      }
       if(Object.keys(object.properties||{}).length>LIMITS.fields)warnings.add(`Only ${LIMITS.fields} saved properties per object are indexed.`);
       // Canonical aliases never disappear behind a custom property with the same name.
-      put("ref",object.reference||object.properties?.Reference||"");put("value",object.properties?.Value||"");
+      put("ref",object.reference||object.properties?.Reference||"");put("value",object.properties?.Value||object.varValue||"");
       put("type",object.kind);put("sheet",`${object.path} ${sheetNames.get(object.path)||""}`);
       put("uuid",object.uuid);put("footprint",object.properties?.Footprint||object.properties?.["Library ID"]||"");
       put("net",[...names].join(" "));put("label",object.label);
+      if(propPairs.length){put("prop",propPairs.join(" "));put("property",propPairs.join(" "));}
+      if(object.varName)varNames.push(object.varName,`\${${object.varName}}`);
+      if(varNames.length){const uniq=[...new Set(varNames)].join(" ");put("var",uniq);put("variable",uniq);}
+      if(object.busName){put("bus",`${object.busName} ${(object.busMembers||[]).slice(0,32).join(" ")}`);}
       if(options.netClasses) {
         const classes=[...new Set([...names].flatMap(name=>{if(!classMembership.has(name))classMembership.set(name,netClasses(name,options.netClasses));return classMembership.get(name);} ))].join(" ");
         put("netclass",classes);put("class",classes);
@@ -294,6 +439,6 @@
     return {results,total,truncated:total>limit,error:null,warnings};
   }
 
-  const api={LIMITS,compile,createIndex,search,parseNetClasses,netClasses,savedColor,netClassColor};root.KiCadProjectSearch=api;
+  const api={LIMITS,compile,createIndex,search,parseNetClasses,netClasses,savedColor,netClassColor,expandBusExpression,extractBuses,extractTextVariables};root.KiCadProjectSearch=api;
   if(typeof module==="object" && module.exports)module.exports=api;
 })(typeof globalThis==="object"?globalThis:this);

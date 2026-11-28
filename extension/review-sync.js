@@ -17,9 +17,9 @@
   visit(result);return [...people.values()].slice(0,100);
  }
  function create({load,onUpdate=()=>{},onState=()=>{},isVisible=()=>!root.document?.hidden,isOnline=()=>root.navigator?.onLine!==false,
-  setTimer=(fn,ms)=>setTimeout(fn,ms),clearTimer=id=>clearTimeout(id),now=()=>Date.now(),intervalMs=3000,maxIntervalMs=120000}={}){
-  if(typeof load!=='function')throw Error('A provider refresh function is required.');
-  const interval=Math.max(2000,Math.min(60000,Number(intervalMs)||3000)),maximum=Math.max(interval,Math.min(600000,Number(maxIntervalMs)||120000));
+   setTimer=(fn,ms)=>setTimeout(fn,ms),clearTimer=id=>clearTimeout(id),now=()=>Date.now(),intervalMs=30000,maxIntervalMs=180000}={}){
+   if(typeof load!=='function')throw Error('A provider refresh function is required.');
+   const interval=Math.max(5000,Math.min(60000,Number(intervalMs)||30000)),maximum=Math.max(interval,Math.min(600000,Number(maxIntervalMs)||180000));
   let scope=null,generation=0,running=false,disposed=false,active=false,timer=null,again=false,failures=0,syncedAt=null,state='idle';
   const report=(status,detail={})=>{state=status;onState({status,syncedAt,...detail});};
   const cancel=()=>{if(timer!==null){clearTimer(timer);timer=null;}};

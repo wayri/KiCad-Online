@@ -18,17 +18,18 @@
 
 /* KiCad-style neutral chrome, independently selectable from the drawing canvas. */
 
-:root{--surface:#242629;--panel:#2d3034;--raised:#383c41;--line:#50545b;--muted:#b1b8c1;--text:#eef0f3;--accent:#68b6ff;--selected:#314964;--control:#24272b;--hover:#41464d;font-family:system-ui,"Segoe UI",sans-serif}
+:root{--surface:#0d1117;--panel:#131720;--raised:#161b22;--line:#232a36;--muted:#8b949e;--text:#f0f6fc;--accent:#3b82f6;--selected:#2563eb;--selected-ink:#ffffff;--control:#0d1117;--hover:#1f2633;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
 
-body[data-ui-theme=light]{color-scheme:light;--surface:#eceef0;--panel:#f7f8f9;--raised:#fff;--line:#bcc2ca;--muted:#52606c;--text:#17212b;--accent:#006cc4;--selected:#dbeaf8;--control:#fff;--hover:#e3e9ef}
+body[data-ui-theme=light]{color-scheme:light;--surface:#eceef0;--panel:#f7f8f9;--raised:#fff;--line:#bcc2ca;--muted:#52606c;--text:#17212b;--accent:#006cc4;--selected:#dbeaf8;--selected-ink:#17212b;--control:#fff;--hover:#e3e9ef}
 
-body #frameControls,body #variantBar,body .review-footer,body .diagnostics,body #objectMenu{background:var(--panel);color:var(--text)}
+body #frameControls{background:#090c10;color:var(--text);border-bottom-color:var(--line)}body[data-ui-theme=light] #frameControls{background:var(--panel)}
+body #variantBar,body .review-footer,body .diagnostics,body #objectMenu{background:var(--panel);color:var(--text);border-color:var(--line)}body #drawingHost{background:var(--surface)}
 
 body input,body select,body textarea{background:var(--control);border-color:var(--line);color:var(--text)}
 
 body button:hover{background:var(--hover);border-color:var(--accent)}
 
-body button[aria-pressed=true],body button[aria-selected=true]{background:var(--selected);color:var(--text);border-color:var(--accent)}
+body button[aria-pressed=true],body button[aria-selected=true]{background:var(--selected);color:var(--selected-ink,var(--text));border-color:var(--accent)}
 
 body a{color:var(--accent)}body .ref-badge,body h3{color:var(--muted)}
 
@@ -563,3 +564,16 @@ body .review-control-popover{
 .compact-layer-rows .compact-layer-item>button:first-child{flex:1;min-width:0;justify-content:flex-start}
 .compact-layer-rows .compact-layer-item>button:first-child span:last-child{overflow:hidden;text-overflow:ellipsis}
 .compact-layer-presets{padding-block:5px;border-top:1px solid var(--line)}
+
+/* All-thing top search badges, snippets and group-highlight button (v0.20.4). */
+.universal-search-popup{width:min(440px,calc(100vw - 8px));max-height:min(420px,68vh);border-radius:10px;box-shadow:0 14px 36px #0009}
+.universal-search-actions{display:flex;gap:6px;margin:0 0 8px}
+.universal-search-actions button{flex:1;min-height:30px;font-size:11px;font-weight:600}
+#universalHighlightGroup{background:var(--selected);color:var(--selected-ink,#ffffff);border-color:var(--accent)}
+#universalSearchAll{margin-top:0}
+.search-result-head{display:flex;align-items:center;gap:6px;width:100%}
+.search-kind-badge{font-size:9px;font-weight:700;letter-spacing:.04em;padding:1px 6px;border-radius:999px;background:rgba(59,130,246,0.14);color:#60a5fa;border:1px solid rgba(59,130,246,0.35);flex:none}
+.search-kind-badge.kind-net{background:rgba(34,197,94,0.14);color:#4ade80;border-color:rgba(34,197,94,0.35)}
+.search-kind-badge.kind-bus{background:rgba(245,158,11,0.14);color:#fbbf24;border-color:rgba(245,158,11,0.35)}
+.search-kind-badge.kind-variable{background:rgba(168,85,247,0.16);color:#c084fc;border-color:rgba(168,85,247,0.35)}
+.search-snippet{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:10px!important;opacity:.9}

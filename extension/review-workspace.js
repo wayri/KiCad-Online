@@ -1283,16 +1283,56 @@
       properties();renderObjects();renderNets();updateHighlights();navigation?.renderSearch();emitHighlightGroup();draw();
     }
     function clearHighlights(){simulationNet=null;scene?.setAnchor?.(null);simulationView?.hide();selectedPin=null;selected=null;nativePick=null;followedNet=null;dismissTouchPicker();const canvas=getCanvas();if(canvas){canvas.selected=null;canvas.hover=null;}publishSelection({kind:'group',items:[]});dnpHighlight=testpointHighlight=false;$("highlightDnp").checked=false;$("populationHighlight")?.setAttribute("aria-pressed","false");pinnedNets.clear();pinnedClasses.clear();highlightObjects=[];selectedNet=null;connectionCursor=-1;activeConnection=null;canvas?.setNetHighlight(null);$("selectionStatus").textContent="Select a part to inspect its properties.";renderNets();renderNetClasses();renderObjects();properties();updateHighlights();navigation?.renderSearch();draw();}
-    function highlightSearchObjects(items,multi){
-      const local=items.filter(o=>o.path===currentFile()).slice(0,200),derived=local.filter(o=>['net','netclass'].includes(o.kind)),parts=local.filter(o=>!['net','netclass'].includes(o.kind));if(!multi){highlightObjects=local[0]&&!['net','netclass'].includes(local[0].kind)?[local[0]]:[];pinnedNets.clear();pinnedClasses.clear();selectedNet=null;}else{const map=new Map(highlightObjects.map(o=>[o.id,o]));for(const o of parts)map.set(o.id,o);highlightObjects=[...map.values()].slice(0,200);}
-      for(const item of multi?derived:derived.filter(o=>o===local[0])){if(item.kind==='net'){const net=netModel.nets.find(n=>n.path===currentFile()&&n.name===item.netName);if(net&&pinnedNets.size<200)pinnedNets.set(net.id,net);}else if(pinnedClasses.size<64)pinnedClasses.set(JSON.stringify([item.path,item.className]),{path:item.path,name:item.className});}
-      if(!local.length)notice('No matches on the active drawing. Open a result before highlighting it.');else notice(`${highlightedNets().length} nets and ${highlightObjects.length} objects highlighted on this drawing${items.length>200?' (200-object limit)':''}.`);
-      updateHighlights();emitHighlightGroup();navigation?.renderSearch();
+    function resolveBusGroup(busObj){
+      const path=busObj.path||currentFile(),ids=new Set(busObj.netIds||[]);
+      const memberFold=new Set((busObj.busMembers||[]).map(m=>String(m).replace(/^\/+/,'').toLowerCase()));
+      const nets=netModel.nets.filter(n=>n.path===path&&(ids.has(n.id)||memberFold.has(n.name.replace(/^\/+/,'').toLowerCase())||memberFold.has(n.name.slice(n.name.lastIndexOf('/')+1).toLowerCase())));
+      const busObjs=objects.filter(o=>o.path===path&&(['bus','bus_entry'].includes(o.kind)||o.label===busObj.busName));
+      return {nets,busObjs};
+    }
+    function highlightSearchObjects(items,multi,groupAll=false){
+      const local=items.filter(o=>o.path===currentFile()).slice(0,200);
+      const expandAll=Boolean(multi||groupAll);
+      const derived=local.filter(o=>['net','netclass','bus','variable'].includes(o.kind));
+      const parts=local.filter(o=>!['net','netclass','bus','variable'].includes(o.kind));
+      if(!multi){highlightObjects=expandAll?parts.slice(0,200):(local[0]&&!['net','netclass','bus','variable'].includes(local[0].kind)?[local[0]]:[]);pinnedNets.clear();pinnedClasses.clear();selectedNet=null;}
+      else{const map=new Map(highlightObjects.map(o=>[o.id,o]));for(const o of parts)map.set(o.id,o);highlightObjects=[...map.values()].slice(0,200);}
+      const objMap=new Map(highlightObjects.map(o=>[o.id,o]));
+      for(const item of expandAll?derived:derived.filter(o=>o===local[0])){
+        if(item.kind==='net'){const net=netModel.nets.find(n=>n.path===currentFile()&&n.name===item.netName);if(net&&pinnedNets.size<200)pinnedNets.set(net.id,net);}
+        else if(item.kind==='bus'){const {nets,busObjs}=resolveBusGroup(item);for(const net of nets)if(pinnedNets.size<200)pinnedNets.set(net.id,net);for(const bo of busObjs)if(objMap.size<200)objMap.set(bo.id,bo);}
+        else if(item.kind==='variable'){const refSet=new Set(item.refObjectIds||[]);for(const o of objects)if(o.path===currentFile()&&refSet.has(o.id)&&objMap.size<200)objMap.set(o.id,o);}
+        else if(pinnedClasses.size<64)pinnedClasses.set(JSON.stringify([item.path,item.className]),{path:item.path,name:item.className});
+      }
+      highlightObjects=[...objMap.values()].slice(0,200);
+      if(!local.length)notice('No matches on the active drawing. Open a result before highlighting it.');else notice(`Group highlighted: ${highlightedNets().length} nets and ${highlightObjects.length} objects on this drawing${items.length>200?' (200-object limit)':''}.`);
+      updateHighlights();renderNets();renderObjects();emitHighlightGroup();navigation?.renderSearch();
     }
     function selectSearchObject(object,multi,event,move=true){
       multi=Boolean(multi||event?.ctrlKey||event?.metaKey||event?.shiftKey);
       if(object.kind==='sheet'){selectObject(object,true,true,false,multi,true);highlightSheet(sheetTarget(object),object,multi);return;}
       if(/\.kicad_pcb$/i.test(object.path)!==pcb){request(root.KiCadVSCodeContext?'open-project-drawing':'open-viewer-window',{repository,ref,file:object.path}).catch(error=>notice(error.message));notice(`Opening ${object.path} in another viewer; this result belongs to the other drawing type.`);return;}
+      if(object.kind==='bus'){
+        if(object.path!==currentFile())openSheet(object.path);
+        const {nets,busObjs}=resolveBusGroup(object);
+        if(!multi){pinnedNets.clear();pinnedClasses.clear();highlightObjects=[];selectedNet=null;}
+        for(const net of nets)if(pinnedNets.size<200)pinnedNets.set(net.id,net);
+        const objMap=new Map(highlightObjects.map(o=>[o.id,o]));for(const bo of busObjs)if(objMap.size<200)objMap.set(bo.id,bo);highlightObjects=[...objMap.values()].slice(0,200);
+        updateHighlights();renderNets();renderObjects();emitHighlightGroup();
+        if(move&&nets[0])focusNet(nets[0]);else if(move&&object.position)focus(object.position);
+        notice(`Bus ${object.busName}: ${nets.length} nets and ${busObjs.length} bus objects highlighted.`);
+        navigation?.renderSearch();return;
+      }
+      if(object.kind==='variable'){
+        if(object.path!==currentFile())openSheet(object.path);
+        const refSet=new Set(object.refObjectIds||[]);const matched=objects.filter(o=>o.path===currentFile()&&refSet.has(o.id));
+        if(!multi){pinnedNets.clear();pinnedClasses.clear();highlightObjects=[];selectedNet=null;}
+        const objMap=new Map(highlightObjects.map(o=>[o.id,o]));for(const o of matched)if(objMap.size<200)objMap.set(o.id,o);highlightObjects=[...objMap.values()].slice(0,200);
+        updateHighlights();renderObjects();emitHighlightGroup();
+        if(move&&matched[0]?.position)focus(matched[0].position);
+        notice(`Variable \${${object.varName}}${object.varValue?' = '+object.varValue:''}: ${matched.length} referencing objects highlighted.`);
+        navigation?.renderSearch();return;
+      }
       if(['net','netclass'].includes(object.kind)){
         if(object.path!==currentFile())openSheet(object.path);
         if(object.kind==='net'){const matches=netModel.nets.filter(n=>n.path===currentFile()&&n.name===object.netName);if(matches.length===1)selectNet(matches[0],move&&!scene,true,multi);else notice('The saved network is missing or ambiguous on this drawing.');}
@@ -2331,22 +2371,29 @@
     const resetObjects=button('Reset objects',()=>{objectVisibility={hiddenTypes:[],side:'all'};applyObjectVisibility(true);});resetObjects.className='quiet-button';objectPanel.append(sideControls,allObjects,objectRows,objectHint,resetObjects);objectFilter.append(objectHeading,objectPanel);extraControls.insertBefore(objectFilter,extraControls.firstChild);extraControls.insertBefore(viewOptionsHeading,extraControls.firstChild);
     if(pcb)chrome.storage?.local?.get(objectVisibilityKey).then(saved=>{if(objectVisibilityDisposed||objectVisibilityEdited)return;objectVisibility=normalizeObjectVisibility(saved[objectVisibilityKey]);applyObjectVisibility();}).catch(error=>notice(error.message));
     const searchBox=make('div');searchBox.className='universal-search';
-    const searchInput=make('input');searchInput.id='universalSearch';searchInput.type='search';searchInput.placeholder='Search parts, nets, sheets…';searchInput.setAttribute('aria-label','Search parts, nets and sheets');searchInput.setAttribute('role','combobox');searchInput.setAttribute('aria-autocomplete','list');searchInput.setAttribute('aria-expanded','false');searchInput.setAttribute('aria-controls','universalSearchResults');
+    const searchInput=make('input');searchInput.id='universalSearch';searchInput.type='search';searchInput.placeholder='Search parts, nets, buses, values, vars, props…';searchInput.setAttribute('aria-label','Search parts, nets, buses, values, variables and properties');searchInput.setAttribute('role','combobox');searchInput.setAttribute('aria-autocomplete','list');searchInput.setAttribute('aria-expanded','false');searchInput.setAttribute('aria-controls','universalSearchResults');
     const searchPopup=make('div');searchPopup.id='universalSearchResults';searchPopup.className='universal-search-popup';searchPopup.hidden=true;
     const searchList=make('div');searchList.setAttribute('role','listbox');searchList.setAttribute('aria-label','Drawing search results');
     const searchStatus=make('p');searchStatus.className='hint';searchStatus.setAttribute('role','status');
-    let searchTimer=null,searchRows=[],searchActive=-1;
+    const searchActions=make('div');searchActions.className='universal-search-actions';
+    let searchTimer=null,searchRows=[],searchActive=-1,lastUniversalMatches=[];
+    const highlightGroupBtn=button('Highlight group',event=>{if(!lastUniversalMatches.length)return;highlightSearchObjects(lastUniversalMatches,Boolean($('multiHighlight').checked||event?.ctrlKey||event?.metaKey||event?.shiftKey),true);closeSearch();});highlightGroupBtn.id='universalHighlightGroup';highlightGroupBtn.hidden=true;
     function closeSearch(){searchPopup.hidden=true;searchInput.setAttribute('aria-expanded','false');searchInput.removeAttribute?.('aria-activedescendant');}
-    function positionSearch(){const box=searchInput.getBoundingClientRect();searchPopup.style.left=`${Math.max(4,Math.min(box.left,root.innerWidth-330))}px`;searchPopup.style.top=`${(box.bottom??box.top+30)+4}px`;}
+    function positionSearch(){const box=searchInput.getBoundingClientRect();searchPopup.style.left=`${Math.max(4,Math.min(box.left,root.innerWidth-360))}px`;searchPopup.style.top=`${(box.bottom??box.top+30)+4}px`;}
     function activeSearch(index){searchActive=index;searchRows.forEach((row,i)=>row.setAttribute('aria-selected',String(i===index)));if(index>=0){searchInput.setAttribute('aria-activedescendant',searchRows[index].id);searchRows[index].scrollIntoView?.({block:'nearest'});}}
     function renderUniversalSearch(result,query){
       searchInput.value=query;if(searchPopup.hidden&&document.activeElement!==searchInput)return;searchList.replaceChildren();searchRows=[];searchActive=-1;searchInput.removeAttribute?.('aria-activedescendant');
-      const add=(label,detail,action)=>{const row=button('',event=>{action(event);closeSearch();});row.id=`universalResult${searchRows.length}`;row.setAttribute('role','option');row.setAttribute('aria-selected','false');row.append(make('strong',label),make('small',detail));row.onpointerdown=event=>event.preventDefault();searchRows.push(row);searchList.append(row);};
+      const kindBadge=(kind)=>({symbol:'PART',footprint:'PART',net:'NET',bus:'BUS',variable:'VAR',sheet:'SHEET',netclass:'CLASS',file:'FILE'}[kind]||String(kind||'ITEM').toUpperCase());
+      const add=(label,kind,detail,snippet,action)=>{const row=button('',event=>{action(event);closeSearch();});row.id=`universalResult${searchRows.length}`;row.setAttribute('role','option');row.setAttribute('aria-selected','false');const head=make('span');head.className='search-result-head';const badge=make('span',kindBadge(kind));badge.className=`search-kind-badge kind-${kind}`;head.append(badge,make('strong',label));row.append(head,make('small',detail));if(snippet){const snip=make('small',snippet);snip.className='search-snippet';row.append(snip);}row.onpointerdown=event=>event.preventDefault();searchRows.push(row);searchList.append(row);};
       const term=query.trim().toLowerCase();
-      if(!pcb)for(const command of root.KiCadWorkspaceSearch?.toolResults?.(query)||[])add(command.label,command.detail,()=>$('showSheetTree')?.click());
-      if(term){for(const file of files.filter(file=>file.path.toLowerCase().includes(term)).slice(0,4))add(file.path.split('/').pop(),file.path,event=>openSheet(file.path));
-        for(const match of result.results.slice(0,20-searchRows.length)){const object=match.object;add(object.label||object.reference||object.kind,`${object.kind} · ${object.path}`,event=>selectSearchObject(object,Boolean($('multiHighlight').checked),event));}}
-      searchStatus.textContent=result.error||(!term?'Search references, values, nets or sheet names.':`${result.total} object matches · ${searchRows.length} results shown`);
+      lastUniversalMatches=(result.results||[]).map(m=>m.object);
+      if(!pcb)for(const command of root.KiCadWorkspaceSearch?.toolResults?.(query)||[])add(command.label,'tool',command.detail,'',()=>$('showSheetTree')?.click());
+      if(term){for(const file of files.filter(file=>file.path.toLowerCase().includes(term)).slice(0,4))add(file.path.split('/').pop(),'file',file.path,'',event=>openSheet(file.path));
+        for(const match of result.results.slice(0,24-searchRows.length)){const object=match.object;const snip=(match.snippets||[]).map(s=>typeof s==='string'?s:`${s.field}: ${s.text}`).join(' · ').slice(0,120);add(object.label||object.reference||object.kind,object.kind,`${object.kind} · ${object.path}`,snip,event=>selectSearchObject(object,Boolean($('multiHighlight').checked),event));}}
+      const localCount=lastUniversalMatches.filter(o=>o.path===currentFile()).length;
+      highlightGroupBtn.hidden=!term||localCount===0;
+      highlightGroupBtn.textContent=`Highlight group (${localCount})`;
+      searchStatus.textContent=result.error||(!term?'Search parts, nets, buses, values, variables (var:), properties (prop:) or sheets.':`${result.total} matches · ${searchRows.length} shown`);
       positionSearch();searchPopup.hidden=false;searchInput.setAttribute('aria-expanded','true');
     }
     function runSearch(){clearTimeout(searchTimer);searchTimer=null;searchPopup.hidden=false;if(!pcb&&root.KiCadWorkspaceSearch?.toolResults?.(searchInput.value).length){renderUniversalSearch({results:[],total:0},searchInput.value);return;}if(navigation)navigation.query(searchInput.value);else{searchStatus.textContent='Project search is unavailable in this viewer.';positionSearch();searchPopup.hidden=false;searchInput.setAttribute('aria-expanded','true');}}
@@ -2356,7 +2403,7 @@
     searchPopup.onkeydown=event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeSearch();searchInput.focus();closeSearch();}};
     const searchOutside=event=>{if(!searchBox.contains(event.target)&&!searchPopup.contains(event.target))closeSearch();};document.body.addEventListener('pointerdown',searchOutside);
     const searchBlur=()=>setTimeout(()=>{if(!searchBox.contains(document.activeElement)&&!searchPopup.contains(document.activeElement))closeSearch();},0);searchBox.addEventListener('focusout',searchBlur);searchPopup.addEventListener('focusout',searchBlur);
-    searchBox.append(searchInput);searchPopup.append(searchStatus,searchList,searchAll);document.body.append(searchPopup);$('frameControls').insertBefore(searchBox,$('frameControls').firstChild||$('frameControls').children[0]);
+    searchBox.append(searchInput);searchActions.append(highlightGroupBtn,searchAll);searchPopup.append(searchStatus,searchActions,searchList);document.body.append(searchPopup);$('frameControls').insertBefore(searchBox,$('frameControls').firstChild||$('frameControls').children[0]);
     $('frameControls').addEventListener('scroll',closeSearch);root.addEventListener?.('resize',closeSearch);
     resizeCleanups.push(()=>{clearTimeout(searchTimer);document.body.removeEventListener('pointerdown',searchOutside);root.removeEventListener?.('resize',closeSearch);$('frameControls').removeEventListener('scroll',closeSearch);searchPopup.remove();searchBox.remove();});
     const controlsButton=button("View options",()=>{
